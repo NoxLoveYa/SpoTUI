@@ -38,6 +38,7 @@ const style = `#spotui-tui {
 }
 
 body.spotui-lyrics-panel #spotui-logo,
+body.spotui-dj-panel #spotui-logo,
 body.spotui-playlist-panel #spotui-logo,
 body.spotui-help-panel #spotui-logo,
 body.spotui-theme-panel #spotui-logo,
@@ -188,6 +189,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 }
 
 body:has(#spotui-wallpaper) body.spotui-lyrics-panel #spotui-logo,
+body:has(#spotui-wallpaper) body.spotui-dj-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-playlist-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-help-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-theme-panel #spotui-logo,
@@ -273,6 +275,7 @@ body.spotui-playlist-panel #spotui-output,
 body.spotui-help-panel #spotui-output,
 body.spotui-about-panel #spotui-output,
 body.spotui-theme-panel #spotui-output,
+body.spotui-dj-panel #spotui-output,
 body.spotui-lyrics-panel #spotui-output {
     display: none !important;
 }
@@ -320,7 +323,8 @@ body.spotui-cli-mode #spotui-output {
 .result { padding: 5px; }
 .selected { background: #ff8c42; color: #000; }
 
-body.spotui-lyrics-panel #spotui-logo {
+body.spotui-lyrics-panel #spotui-logo,
+body.spotui-dj-panel #spotui-logo {
     display: flex !important;
 }
 
@@ -328,7 +332,8 @@ body.logo-off #spotui-logo {
     display: none !important;
 }
 
-body.logo-on.spotui-lyrics-panel #spotui-lyrics {
+body.logo-on.spotui-lyrics-panel #spotui-lyrics,
+body.logo-on.spotui-dj-panel #spotui-dj {
     height: 80vh !important;
     margin-top: 15vh !important;
 }
@@ -354,6 +359,62 @@ body.spotui-lyrics-panel #spotui-lyrics.spotui-lyrics-active {
     opacity: 1;
     transform: translateY(0);
     transition-delay: 0.6s;
+}
+
+#spotui-dj {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+    margin: 0 0 8px;
+    overflow: visible;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.spotui-dj-panel #spotui-dj.spotui-dj-active {
+    display: flex;
+    opacity: 1;
+    transform: translateY(0);
+    transition-delay: 0.6s;
+}
+
+.spotui-dj-logo {
+    width: min(42vw, 42vh);
+    height: auto;
+    overflow: visible;
+    fill: none;
+    stroke: var(--player-bar-border-color, var(--spotui-accent, #ff8c42));
+    stroke-width: 0.45;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    transform-origin: center;
+    animation: spotui-dj-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes spotui-dj-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(0.78); }
+}
+
+body.spotui-dj-mode .XTtlZOmdtscvhPLr,
+body.spotui-dj-mode .dj-button,
+body.spotui-dj-mode .DHOpYzKPUqobiHLW {
+    background: var(--player-bar-background, #000) !important;
+    outline: none !important;
+    box-shadow: none !important;
+    border: none !important;
+}
+
+body.spotui-dj-mode .XTtlZOmdtscvhPLr svg,
+body.spotui-dj-mode .dj-button svg {
+    color: var(--player-bar-text-color, var(--spotui-accent, #ff8c42)) !important;
+    fill: var(--player-bar-text-color, var(--spotui-accent, #ff8c42)) !important;
 }
 
 .spotui-lyrics-header {
@@ -888,7 +949,8 @@ body.spotui-tui-hidden #spotui-tui {
     text-decoration: underline;
 }
 
-#spotui-jam-tags {
+#spotui-jam-tags,
+#spotui-dj-tags {
     position: fixed;
     top: 70px;
     left: 20px;

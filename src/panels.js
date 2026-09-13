@@ -35,6 +35,16 @@ export function closeActivePanel() {
     if (app.playlistPanelOpen) closePlaylistPanel();
     if (app.themePanelOpen) closeThemePanel();
     if (app.onboardingPanelOpen) closeOnboardingPanel();
+    if (app.djPanelOpen) {
+        const root = document.getElementById("spotui-dj");
+        app.djPanelOpen = false;
+        app.djPrevPane = null;
+        if (root) {
+            root.classList.remove("spotui-dj-active");
+            root.hidden = true;
+        }
+        document.body.classList.remove("spotui-dj-panel");
+    }
 }
 
 // Generic panel state manager

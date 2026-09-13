@@ -3,6 +3,7 @@ import { initUpdateBanner, showRestartPopup } from "./banner.js";
 import { LYRICS_ANIMATION_KEY, LYRICS_STORAGE_KEY, WP_OPACITY_KEY, WP_URL_KEY } from "./constants.js";
 import { resumeJamFromStorage } from "./jam.js";
 import { handleKeybindKeydown } from "./keybinds.js";
+import { initDjBridge } from "./dj.js";
 import { initLyricsBridge, openLyricsPanel, waitForPlayerReadyThen } from "./lyrics.js";
 import { isFirstBoot, launchFirstBootIfNeeded } from "./onboarding.js";
 import { storageGet } from "./storage.js";
@@ -15,6 +16,7 @@ injectStyle();
 document.addEventListener("keydown", handleKeybindKeydown, true);
 setTimeout(createControlButtons, 500);
 setTimeout(initLyricsBridge, 1000);
+setTimeout(initDjBridge, 1000);
 
 // Apply stored logo visibility preference
 if (storageGet("spotui:logo-visible") === "off") {
