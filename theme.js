@@ -143,6 +143,7 @@
         { cmd: "loop / superloop", desc: "Toggle repeat mode" },
         { cmd: "like", desc: "Like/unlike current song" },
         { cmd: "lyrics", desc: "Toggle lyrics panel" },
+        { cmd: "dj", desc: "Play the DJ playlist" },
         { cmd: "search", desc: "Open Spotify search" },
         { cmd: "about", desc: "Show about panel" },
         { cmd: "theme", desc: "Browse and apply themes" },
@@ -161,6 +162,10 @@
         results: [],
         selected: 0,
         lyricsObserver: null,
+        djObserver: null,
+        djMode: false,
+        djPanelOpen: false,
+        djPrevPane: null,
         commandHistory: [],
         commandHistoryIndex: -1,
         playlistPanelOpen: false,
@@ -1054,6 +1059,9 @@
 <div class="spotui-lyrics-fade spotui-lyrics-fade-bottom"></div>
 </div>
 </div>
+<div id="spotui-dj" hidden>
+<svg class="spotui-dj-logo" viewBox="-2 -2 20 20" overflow="visible" aria-hidden="true"><path d="M7.813 14.497A6.5 6.5 0 0 1 1.5 8.016c.008-3.553 2.71-5.744 5.043-6.078.85-.121 1.288.037 1.564.246.312.238.553.639.822 1.276q.115.277.239.602c.451 1.167 1.05 2.717 2.505 3.81 1.01.76 1.46 1.529 1.592 2.209.13.679-.037 1.375-.468 2.03-.88 1.34-2.793 2.388-4.844 2.388zm-.037 1.5A8 8 0 1 0 0 8.032c0 4.34 3.464 7.87 7.776 7.965m6.666-7.124c-.358-.788-.979-1.532-1.868-2.2-1.082-.813-1.51-1.9-1.967-3.06a31 31 0 0 0-.296-.736 6.3 6.3 0 0 0-.605-1.151 6.53 6.53 0 0 1 4.39 4.01 6.5 6.5 0 0 1 .346 3.137"/></svg>
+</div>
 <div id="spotui-playlist-panel" hidden>
     <fieldset id="spotui-playlist-list">
         <legend>Playlists</legend>
@@ -1615,6 +1623,16 @@
         if (app.playlistPanelOpen) closePlaylistPanel();
         if (app.themePanelOpen) closeThemePanel();
         if (app.onboardingPanelOpen) closeOnboardingPanel();
+        if (app.djPanelOpen) {
+            const root = document.getElementById("spotui-dj");
+            app.djPanelOpen = false;
+            app.djPrevPane = null;
+            if (root) {
+                root.classList.remove("spotui-dj-active");
+                root.hidden = true;
+            }
+            document.body.classList.remove("spotui-dj-panel");
+        }
     }
 
     // Generic panel state manager
@@ -1692,7 +1710,7 @@
         closeActivePanel();
 
         try {
-            app.playlists = await getPlaylists();
+            app.playlists = (await getPlaylists()).filter((p) => p.name !== "DJ");
         } catch (err) {
             print("Playlist error: " + err.message);
             return;
@@ -2408,6 +2426,20 @@
         if (command === "loop") { handleRepeatCommand("loop", argText); return; }
         if (command === "superloop") { handleRepeatCommand("superloop", argText); return; }
         if (command === "lyrics") { handleLyricsCommand(argText); return; }
+        if (command === "dj") {
+            try {
+                app.playlists = await getPlaylists();
+                const match = app.playlists.find((p) => p.name === "DJ");
+                if (!match) {
+                    jamSay("Spotify DJ isn’t available for your account yet.");
+                    return;
+                }
+                Spicetify.Player.playUri(match.uri);
+            } catch (err) {
+                jamSay("Spotify DJ isn’t available for your account yet.");
+            }
+            return;
+        }
 
         if (command === "jam") {
             const sub = (args[0] || "").toLowerCase();
@@ -3632,6 +3664,117 @@
         applyPanelColors();
     }
 
+    const PREV_OPENERS = {
+        lyrics: openLyricsPanel,
+        help: openHelpPanel,
+        about: openAboutPanel,
+        playlist: openPlaylistPanel,
+        theme: openThemePanel,
+    };
+
+    function detectDjMode() {
+        return Boolean(document.querySelector(".XTtlZOmdtscvhPLr, .dj-button"));
+    }
+
+    function detectDjCover() {
+        return Boolean(document.querySelector(`[src*="Your-DJ-Cover-Art-300.png"], [href*="Your-DJ-Cover-Art-300.png"], [srcset*="Your-DJ-Cover-Art-300.png"], [style*="Your-DJ-Cover-Art-300.png"]`));
+    }
+
+    function currentPane() {
+        if (app.lyricsPanelOpen) return "lyrics";
+        if (app.helpPanelOpen) return "help";
+        if (app.aboutPanelOpen) return "about";
+        if (app.playlistPanelOpen) return "playlist";
+        if (app.themePanelOpen) return "theme";
+        return null;
+    }
+
+    function showDjTag() {
+        if (document.getElementById("spotui-dj-tags")) return;
+        const wrap = document.createElement("div");
+        wrap.id = "spotui-dj-tags";
+        const tag = document.createElement("div");
+        tag.className = "spotui-jam-tag";
+        tag.textContent = "This client is being controlled by Spotify DJ";
+        wrap.appendChild(tag);
+        document.body.appendChild(wrap);
+    }
+
+    function hideDjTag() {
+        const el = document.getElementById("spotui-dj-tags");
+        if (el) el.remove();
+    }
+
+    function openDjPanel() {
+        if (!app.djPanelOpen) {
+            app.djPrevPane = currentPane();
+            closeActivePanel();
+            app.djPanelOpen = true;
+            document.body.classList.add("spotui-dj-panel");
+        }
+        const root = document.getElementById("spotui-dj");
+        if (root && root.hidden) {
+            root.hidden = false;
+            setTimeout(() => root.classList.add("spotui-dj-active"), 10);
+        }
+    }
+
+    function closeDjPanel() {
+        if (!app.djPanelOpen) return;
+        app.djPanelOpen = false;
+        const root = document.getElementById("spotui-dj");
+        if (root) {
+            root.classList.remove("spotui-dj-active");
+            setTimeout(() => {
+                if (!app.djPanelOpen) {
+                    root.hidden = true;
+                    document.body.classList.remove("spotui-dj-panel");
+                }
+            }, 500);
+        } else {
+            document.body.classList.remove("spotui-dj-panel");
+        }
+        const prev = app.djPrevPane;
+        app.djPrevPane = null;
+        const open = PREV_OPENERS[prev];
+        if (open) open();
+    }
+
+    function syncDjState() {
+        const mode = detectDjMode();
+        if (mode !== app.djMode) {
+            app.djMode = mode;
+            document.body.classList.toggle("spotui-dj-mode", mode);
+            if (mode) showDjTag();
+            else hideDjTag();
+        }
+        const cover = detectDjCover();
+        if (cover && !app.djPanelOpen) openDjPanel();
+        else if (!cover && app.djPanelOpen) closeDjPanel();
+    }
+
+    function initDjBridge() {
+        if (!document.body) {
+            setTimeout(initDjBridge, 250);
+            return;
+        }
+        syncDjState();
+        if (!app.djObserver) {
+            app.djObserver = new MutationObserver(syncDjState);
+            app.djObserver.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["class", "src", "href", "srcset", "style"],
+            });
+            window.addEventListener(
+                "beforeunload",
+                () => { app.djObserver?.disconnect(); },
+                { once: true }
+            );
+        }
+    }
+
     const style = `#spotui-tui {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 4.75rem;
@@ -3672,6 +3815,7 @@
 }
 
 body.spotui-lyrics-panel #spotui-logo,
+body.spotui-dj-panel #spotui-logo,
 body.spotui-playlist-panel #spotui-logo,
 body.spotui-help-panel #spotui-logo,
 body.spotui-theme-panel #spotui-logo,
@@ -3822,6 +3966,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 }
 
 body:has(#spotui-wallpaper) body.spotui-lyrics-panel #spotui-logo,
+body:has(#spotui-wallpaper) body.spotui-dj-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-playlist-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-help-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-theme-panel #spotui-logo,
@@ -3907,6 +4052,7 @@ body.spotui-playlist-panel #spotui-output,
 body.spotui-help-panel #spotui-output,
 body.spotui-about-panel #spotui-output,
 body.spotui-theme-panel #spotui-output,
+body.spotui-dj-panel #spotui-output,
 body.spotui-lyrics-panel #spotui-output {
     display: none !important;
 }
@@ -3954,7 +4100,8 @@ body.spotui-cli-mode #spotui-output {
 .result { padding: 5px; }
 .selected { background: #ff8c42; color: #000; }
 
-body.spotui-lyrics-panel #spotui-logo {
+body.spotui-lyrics-panel #spotui-logo,
+body.spotui-dj-panel #spotui-logo {
     display: flex !important;
 }
 
@@ -3962,7 +4109,8 @@ body.logo-off #spotui-logo {
     display: none !important;
 }
 
-body.logo-on.spotui-lyrics-panel #spotui-lyrics {
+body.logo-on.spotui-lyrics-panel #spotui-lyrics,
+body.logo-on.spotui-dj-panel #spotui-dj {
     height: 80vh !important;
     margin-top: 15vh !important;
 }
@@ -3988,6 +4136,62 @@ body.spotui-lyrics-panel #spotui-lyrics.spotui-lyrics-active {
     opacity: 1;
     transform: translateY(0);
     transition-delay: 0.6s;
+}
+
+#spotui-dj {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+    margin: 0 0 8px;
+    overflow: visible;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.spotui-dj-panel #spotui-dj.spotui-dj-active {
+    display: flex;
+    opacity: 1;
+    transform: translateY(0);
+    transition-delay: 0.6s;
+}
+
+.spotui-dj-logo {
+    width: min(42vw, 42vh);
+    height: auto;
+    overflow: visible;
+    fill: none;
+    stroke: var(--player-bar-border-color, var(--spotui-accent, #ff8c42));
+    stroke-width: 0.45;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    transform-origin: center;
+    animation: spotui-dj-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes spotui-dj-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(0.78); }
+}
+
+body.spotui-dj-mode .XTtlZOmdtscvhPLr,
+body.spotui-dj-mode .dj-button,
+body.spotui-dj-mode .DHOpYzKPUqobiHLW {
+    background: var(--player-bar-background, #000) !important;
+    outline: none !important;
+    box-shadow: none !important;
+    border: none !important;
+}
+
+body.spotui-dj-mode .XTtlZOmdtscvhPLr svg,
+body.spotui-dj-mode .dj-button svg {
+    color: var(--player-bar-text-color, var(--spotui-accent, #ff8c42)) !important;
+    fill: var(--player-bar-text-color, var(--spotui-accent, #ff8c42)) !important;
 }
 
 .spotui-lyrics-header {
@@ -4522,7 +4726,8 @@ body.spotui-tui-hidden #spotui-tui {
     text-decoration: underline;
 }
 
-#spotui-jam-tags {
+#spotui-jam-tags,
+#spotui-dj-tags {
     position: fixed;
     top: 70px;
     left: 20px;
@@ -4557,6 +4762,7 @@ body.spotui-tui-hidden #spotui-tui {
     document.addEventListener("keydown", handleKeybindKeydown, true);
     setTimeout(createControlButtons, 500);
     setTimeout(initLyricsBridge, 1000);
+    setTimeout(initDjBridge, 1000);
 
     // Apply stored logo visibility preference
     if (storageGet("spotui:logo-visible") === "off") {
