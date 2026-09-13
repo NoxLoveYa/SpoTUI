@@ -310,7 +310,8 @@ body.spotui-lyrics-open .lyrics-lyricsContainer-LyricsContainer::-webkit-scrollb
 }
 
 .main-nowPlayingBar-lyricsButton,
-button[data-testid="lyrics-button"] {
+button[data-testid="lyrics-button"],
+button[data-testid="control-button-queue"] {
     display: none !important;
 }
 
