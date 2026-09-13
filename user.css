@@ -309,6 +309,11 @@ body.spotui-lyrics-open .lyrics-lyricsContainer-LyricsContainer::-webkit-scrollb
     height: 0 !important;
 }
 
+.main-nowPlayingBar-lyricsButton,
+button[data-testid="lyrics-button"] {
+    display: none !important;
+}
+
 body.spotui-lyrics-open .main-nowPlayingBar-lyricsButton {
     color: var(--spotui-accent, #ff8c42) !important;
     border-radius: 0 !important;
