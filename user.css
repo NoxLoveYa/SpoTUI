@@ -311,7 +311,8 @@ body.spotui-lyrics-open .lyrics-lyricsContainer-LyricsContainer::-webkit-scrollb
 
 .main-nowPlayingBar-lyricsButton,
 button[data-testid="lyrics-button"],
-button[data-testid="control-button-queue"] {
+button[data-testid="control-button-queue"],
+button[aria-label="Connect to a device"] {
     display: none !important;
 }
 
