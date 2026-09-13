@@ -122,7 +122,7 @@ export async function openPlaylistPanel() {
     closeActivePanel();
 
     try {
-        app.playlists = await getPlaylists();
+        app.playlists = (await getPlaylists()).filter((p) => p.name !== "DJ");
     } catch (err) {
         print("Playlist error: " + err.message);
         return;
