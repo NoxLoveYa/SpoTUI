@@ -133,7 +133,7 @@
         { cmd: "tui -inputs off", desc: "Reset input colors" },
         { cmd: "tui -panel -bg &lt;#hex&gt; -border &lt;#hex&gt; -text &lt;#hex&gt;", desc: "Set help/playlist/theme/about panel colors" },
         { cmd: "tui -panel off", desc: "Reset panel colors" },
-        { cmd: "playlist / list", desc: "Open playlist viewer" },
+        { cmd: "playlist / list &lt;playlist-name&gt;", desc: "Open playlist viewer or play a specific playlist" },
         { cmd: "play / pause / p", desc: "Toggle playback" },
         { cmd: "skip", desc: "Next track" },
         { cmd: "back", desc: "Previous track" },
@@ -2333,7 +2333,27 @@
 
         if (command === "help") { openHelpPanel(); return; }
         if (command === "about") { openAboutPanel(); return; }
-        if (command === "playlist" || command === "list") { openPlaylistPanel(); return; }
+        if (command === "playlist" || command === "list") { 
+            if (argText) {
+                try {
+                    app.playlists = await getPlaylists();
+                } catch (err) {
+                    jamSay("Playlist error: " + err.message);
+                    return;
+                }
+
+                const match = app.playlists.filter(p => p.name.toLowerCase().includes(argText.toLowerCase()));
+                if (match.length === 1) {
+                    Spicetify.Player.playUri(match[0].uri);
+                    return;
+                } else if (match.length > 1) {
+                    jamSay("Multiple matches: " + match.map(p => p.name).join(", "));
+                    return;
+                }
+            }
+
+            openPlaylistPanel(); return; 
+        }
         if (command === "theme") { openThemePanel(); return; }
         if (command === "discord") {
             storageRemove(UPDATE_BANNER_KEY);
