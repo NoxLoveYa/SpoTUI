@@ -319,6 +319,20 @@ export async function execute(cmd, opts = {}) {
     if (command === "loop") { handleRepeatCommand("loop", argText); return; }
     if (command === "superloop") { handleRepeatCommand("superloop", argText); return; }
     if (command === "lyrics") { handleLyricsCommand(argText); return; }
+    if (command === "dj") {
+        try {
+            app.playlists = await getPlaylists();
+            const match = app.playlists.find((p) => p.name === "DJ");
+            if (!match) {
+                jamSay("Spotify DJ isn’t available for your account yet.");
+                return;
+            }
+            Spicetify.Player.playUri(match.uri);
+        } catch (err) {
+            jamSay("Spotify DJ isn’t available for your account yet.");
+        }
+        return;
+    }
 
     if (command === "jam") {
         const sub = (args[0] || "").toLowerCase();

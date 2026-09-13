@@ -142,6 +142,7 @@ export const COMMAND_LIST = [
     { cmd: "loop / superloop", desc: "Toggle repeat mode" },
     { cmd: "like", desc: "Like/unlike current song" },
     { cmd: "lyrics", desc: "Toggle lyrics panel" },
+    { cmd: "dj", desc: "Play the DJ playlist" },
     { cmd: "search", desc: "Open Spotify search" },
     { cmd: "about", desc: "Show about panel" },
     { cmd: "theme", desc: "Browse and apply themes" },

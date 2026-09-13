@@ -75,6 +75,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `shuffle` | Toggle shuffle |
 | `loop` / `superloop` | Toggle repeat mode |
 | `lyrics` | Toggle lyrics panel |
+| `dj` | Play the DJ playlist |
 | `search` | Open Spotify's native search |
 | `theme` | Browse and apply themes |
 | `discord` | Show the Discord update banner and re-enable it on boot |
