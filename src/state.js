@@ -15,6 +15,7 @@ export const app = {
     playlistPanelOpen: false,
     playlists: [],
     playlistSongs: [],
+    playlistSongsTotal: 0,
     playlistSongsFetchToken: 0,
     playlistSongsFetchTimer: null,
     selectedPlaylist: 0,
@@ -44,5 +45,6 @@ export const app = {
     themesFeedPromise: null,
     playlistListScrollRaf: null,
     songListScrollRaf: null,
+    songScrollAnimRaf: null,
     navRafPending: false
 };

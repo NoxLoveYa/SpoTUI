@@ -12,41 +12,28 @@ export function scheduleSongsFetchForSelectedPlaylist() {
     }, PLAYLIST_SONGS_FETCH_DELAY);
 }
 
-// Fetch all liked songs with pagination
-// Spotify's API returns max 250 per request
-export async function fetchAllLikedSongs() {
-    const pageSize = 250;
-    let offset = 0;
-    let all = [];
-    while (true) {
-        const res = await Spicetify.Platform.LibraryAPI.getTracks({ offset, limit: pageSize });
-        const items = (res && (res.items || res)) || [];
-        if (!items.length) break;
-        all = all.concat(items);
-        const total = res?.totalLength ?? res?.unfilteredTotalLength ?? res?.total ?? all.length;
-        offset += items.length;
-        if (offset >= total) break;
+export function getLikedSongsUri() {
+    try {
+        const internalUri = Spicetify.Platform?.LibraryAPI?._likedSongsUri;
+        if (internalUri) return internalUri;
+        const username = Spicetify.Platform?.LocalStorageAPI?.namespace;
+        if (!username) return "";
+        return `spotify:user:${username}:collection`;
+    } catch (e) {
+        return "";
     }
-    return all;
 }
 
-// Fetch tracks for currently selected playlist, fetchAllLikedSongs is a special case for the "Liked Songs" playlist
 export async function fetchSongsForSelectedPlaylist() {
     const token = ++app.playlistSongsFetchToken;
+    cancelSongScrollAnim();
     const selectedPlaylistEntry = app.playlists[app.selectedPlaylist];
-    const selectedPlaylistUri = selectedPlaylistEntry?.uri;
-    let songs;
+    const selectedPlaylistUri = selectedPlaylistEntry?.isLikedSongs
+        ? getLikedSongsUri()
+        : selectedPlaylistEntry?.uri;
+    let songs = [];
 
-    if (selectedPlaylistEntry?.isLikedSongs) {
-        try {
-            const items = await fetchAllLikedSongs();
-            songs = items
-                .filter(item => item && item.uri)
-                .map((item, index) => normalizeTrackItem(item, index));
-        } catch (err) {
-            songs = [{ name: "Error loading songs", artist: "" }];
-        }
-    } else if (selectedPlaylistUri) {
+    if (selectedPlaylistUri) {
         try {
             const res = await Spicetify.Platform.PlaylistAPI.getContents(selectedPlaylistUri);
             songs = (res.items || [])
@@ -55,13 +42,12 @@ export async function fetchSongsForSelectedPlaylist() {
         } catch (err) {
             songs = [{ name: "Error loading songs", artist: "" }];
         }
-    } else {
-        songs = [];
     }
 
     if (token !== app.playlistSongsFetchToken) return;
 
     app.playlistSongs = songs;
+    app.playlistSongsTotal = songs.length;
     renderSongListVirtual();
     if (app.activePane === "song") scrollSongIntoView(app.selectedSong, false);
 }
@@ -196,6 +182,42 @@ export function scrollSongIntoView(idx, smooth = true) {
     });
 }
 
+export function cancelSongScrollAnim() {
+    if (app.songScrollAnimRaf) {
+        cancelAnimationFrame(app.songScrollAnimRaf);
+        app.songScrollAnimRaf = null;
+    }
+}
+
+export function animateSongScrollToIndex(targetIdx) {
+    cancelSongScrollAnim();
+    const container = document.getElementById("spotui-song-list");
+    if (!container) return;
+
+    const token = app.playlistSongsFetchToken;
+    const total = app.playlistSongs.length;
+    if (!total) return;
+    const destination = Math.max(0, Math.min(targetIdx, total - 1));
+
+    const step = () => {
+        app.songScrollAnimRaf = null;
+        if (!app.playlistPanelOpen || app.activePane !== "song" || token !== app.playlistSongsFetchToken) return;
+
+        const viewHeight = container.clientHeight || 400;
+        const targetTop = Math.max(0, destination * SONG_ROW_HEIGHT - viewHeight / 2);
+        const current = container.scrollTop;
+        const distance = targetTop - current;
+        if (Math.abs(distance) < 1) return;
+
+        const speed = Math.max(36, Math.min(Math.abs(distance) * 0.25, 1800));
+        container.scrollTop = current + Math.sign(distance) * Math.min(speed, Math.abs(distance));
+        renderSongListVirtual();
+        app.songScrollAnimRaf = requestAnimationFrame(step);
+    };
+
+    app.songScrollAnimRaf = requestAnimationFrame(step);
+}
+
 export function scrollSelectedIntoView() {
     if (app.activePane === 'playlist') {
         scrollPlaylistIntoView(app.selectedPlaylist);
@@ -227,6 +249,7 @@ export async function handlePlaylistPanelKeydown(e) {
 
         if (isPlaylist) {
             if (!app.playlists.length) return;
+            cancelSongScrollAnim();
             app.selectedPlaylist = (app.selectedPlaylist + dir + app.playlists.length) % app.playlists.length;
 
             if (app.navRafPending) return;
@@ -242,13 +265,24 @@ export async function handlePlaylistPanelKeydown(e) {
         }
 
         if (!app.playlistSongs.length) return;
-        app.selectedSong = (app.selectedSong + dir + app.playlistSongs.length) % app.playlistSongs.length;
+        if (e.repeat && app.songScrollAnimRaf) return;
+
+        const navTotal = app.playlistSongsTotal || app.playlistSongs.length;
+        const prevSelected = app.selectedSong;
+        app.selectedSong = (prevSelected + dir + navTotal) % navTotal;
+        const wrappedUpToBottom = dir === -1 && prevSelected === 0;
 
         if (app.navRafPending) return;
         app.navRafPending = true;
         requestAnimationFrame(() => {
             app.navRafPending = false;
-            commitSongNav(!e.repeat);
+            cancelSongScrollAnim();
+            if (wrappedUpToBottom) {
+                renderSongListVirtual();
+                animateSongScrollToIndex(app.selectedSong);
+            } else {
+                commitSongNav(!e.repeat);
+            }
         });
         return;
     }
@@ -306,15 +340,6 @@ export function normalizeTrackItem(track, index = 0) {
         name: getTrackTitle(track, index),
         artist: getTrackArtist(track),
     };
-}
-export function getLikedSongsUri() {
-    try {
-        const username = Spicetify.Platform.LocalStorageAPI?.namespace;
-        if (!username) return "";
-        return `spotify:user:${username}:collection`;
-    } catch (e) {
-        return "";
-    }
 }
 
 export async function getPlaylists() {
