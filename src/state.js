@@ -3,6 +3,7 @@ export const app = {
     asciiCharData: [],
     asciiEnabled: true,
     tuiMode: "command",
+    standbyOpen: false,
     results: [],
     selected: 0,
     lyricsObserver: null,
@@ -55,5 +56,7 @@ export const app = {
     playlistListScrollRaf: null,
     songListScrollRaf: null,
     songScrollAnimRaf: null,
-    navRafPending: false
+    navRafPending: false,
+    playlistNavLastAt: 0,
+    playlistNavFast: false
 };

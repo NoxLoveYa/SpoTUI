@@ -209,51 +209,13 @@ body:has(#spotui-wallpaper) body.spotui-about-panel #spotui-logo {
 }
 
 
-.spotui-ascii-grid {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-    font-size: clamp(9px, 1.4vw, 22px);
-    letter-spacing: 0;
-    font-weight: 400;
-    font-variant-ligatures: none;
-    font-kerning: none;
-    -webkit-font-smoothing: antialiased;
+.spotui-ascii-canvas {
+    display: block;
+    padding: 0;
+    margin: 0;
     user-select: none;
-    white-space: pre;
-    padding: 20px;
+    pointer-events: none;
     contain: layout style paint;
-}
-
-.spotui-ascii-row {
-    display: flex;
-    flex-wrap: nowrap;
-    white-space: nowrap;
-    contain: layout style paint;
-}
-
-.spotui-ascii-char {
-    display: inline-block;
-    font-size: clamp(9px, 1.4vw, 22px);
-    line-height: 1;
-    width: 1ch;
-    text-align: left;
-    position: relative;
-    text-shadow: 0 0 6px currentColor;
-}
-
-@media (max-width: 700px) {
-    .spotui-ascii-grid, .spotui-ascii-char {
-        font-size: clamp(5px, 1.1vw, 11px);
-    }
-}
-
-@media (max-width: 450px) {
-    .spotui-ascii-grid, .spotui-ascii-char {
-        font-size: clamp(3.5px, 1.4vw, 7px);
-    }
 }
 
 #spotui-output {
@@ -704,7 +666,7 @@ body.spotui-theme-panel #spotui-theme-panel {
 #spotui-playlist-list, #spotui-song-list {
     width: 50%;
     overflow-y: auto;
-    scroll-behavior: smooth;
+    scroll-behavior: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
     padding: 10px;
@@ -854,6 +816,17 @@ body.spotui-theme-panel #spotui-theme-panel {
 
 .spotui-control-btn:hover {
     background: var(--input-bg-hover-color, #e07b39);
+}
+
+.spotui-standby-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 8px;
+}
+
+.spotui-standby-btn svg {
+    display: block;
 }
 
 body.spotui-tui-hidden #spotui-tui {
@@ -1092,6 +1065,53 @@ body.spotui-search-panel #spotui-search-panel {
 .spotui-search-empty {
     padding: 10px;
     color: #777;
+}
+
+#spotui-standby-overlay {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 2147483647 !important;
+    background: #000;
+    overflow: hidden;
+}
+
+#spotui-standby-overlay iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    pointer-events: none;
+}
+
+#spotui-standby-catcher {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    outline: none;
+    color: transparent;
+    caret-color: transparent;
+    opacity: 0;
+}
+
+body.spotui-standby #spotui-tui,
+body.spotui-standby #spotui-controls,
+body.spotui-standby #spotui-custom-bar,
+body.spotui-standby #spotui-back-btn,
+body.spotui-standby #spotui-update-banner,
+body.spotui-standby #spotui-jam-tags,
+body.spotui-standby #spotui-dj-tags,
+body.spotui-standby #spotui-popup,
+body.spotui-standby .Root__now-playing-bar {
+    display: none !important;
 }
 `;
 // Inject theme CSS into document head
