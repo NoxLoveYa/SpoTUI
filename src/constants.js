@@ -16,6 +16,11 @@ export const DEBUG_KEY = "spotui:debug";
 export const PINTEREST_WIDGET_BASE = "https://widgets.pinterest.com/v3/pidgets";
 export const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
 export const PINTEREST_WWW_BASE = "https://www.pinterest.com";
+
+// CI-converted poster videos: `spotui-<pinid>.webm`, published on the
+// Posters-Assets branch and served by jsDelivr with correct MIME + CORS.
+// Solved at render time from the pin id — no per-machine setup, no keys.
+export const POSTER_ASSET_BASE = "https://cdn.jsdelivr.net/gh/NoxLoveYa/SpoTUI@posters-assets/assets/posters";
 export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";

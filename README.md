@@ -115,9 +115,10 @@ tui -pin-refresh         # re-pull synced boards, recreate the wall with current
 tui -pin-refresh posters # re-pull only boards matching "posters" (picks up pins added later)
 ```
 
-Sync straight from Pinterest (video pins sync as animated posters — the
-theme prefers a direct mp4, deriving the file from the HLS URL when that is
-all Pinterest exposes; anything unplayable stays a still):
+Sync straight from Pinterest (video pins become animated posters: the
+`posters-convert` workflow turns new pins into VP9 clips on the
+`posters-assets` branch, served over CDN — trigger it from the Actions tab
+after syncing a board with fresh videos, then shuffle):
 
 ```bash
 tui -pin-board pinterest.com/<you>/<board>/   # public boards need no login

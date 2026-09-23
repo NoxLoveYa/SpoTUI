@@ -1,4 +1,4 @@
-import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
+import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE, POSTER_ASSET_BASE } from "./constants.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
@@ -193,42 +193,38 @@ export function renderPosters() {
         if (entry.k === "video") {
             fig.appendChild(buildVideoPoster(entry, fig));
         } else {
-            const img = document.createElement("img");
-            img.src = entry.u;
-            img.alt = "";
-            img.draggable = false;
-            img.style.width = "100%";
-            img.style.display = "block";
-            img.style.pointerEvents = "none";
-            img.onerror = () => {
-                console.warn("[SpoTUI-pin] poster failed to load (deleted/private/blocked hotlink), hiding:", img.src);
-                fig.remove();
-            };
-            fig.appendChild(img);
+            fig.appendChild(posterImg(entry.u, fig));
         }
         box.appendChild(fig);
     }
     dbg(`[SpoTUI-pin] rendered ${count} poster(s) from ${imgs.length} saved.`);
 }
 
-// Animated poster: muted looping <video> for direct files (mp4/webm).
-// Progressive playback needs no CORS, so Pinterest mp4s play as-is.
-// Anything unplayable falls back to the pin's static thumbnail.
-function buildVideoPoster(entry, fig) {
-    const url = entry.u;
-    const fallbackToImage = () => {
-        if (!fig.isConnected) return;
-        fig.innerHTML = "";
-        const img = document.createElement("img");
-        img.src = entry.p || "";
-        img.alt = "";
-        img.draggable = false;
-        img.style.width = "100%";
-        img.style.display = "block";
-        img.style.pointerEvents = "none";
-        img.onerror = () => fig.remove();
-        fig.appendChild(img);
+function posterImg(src, fig) {
+    const img = document.createElement("img");
+    img.src = src || "";
+    img.alt = "";
+    img.draggable = false;
+    img.style.width = "100%";
+    img.style.display = "block";
+    img.style.pointerEvents = "none";
+    img.onerror = () => {
+        console.warn("[SpoTUI-pin] poster image failed to load, hiding:", src);
+        fig.remove();
     };
+    return img;
+}
+
+function posterAssetUrl(id) {
+    const clean = String(id || "").trim();
+    if (!/^\d+$/.test(clean)) return null;
+    return `${POSTER_ASSET_BASE}/spotui-${clean}.webm`;
+}
+
+// Animated poster: muted looping <video>. Sources tried in order —
+// CI-converted asset first (stable, guaranteed VP9), direct file second,
+// thumbnail last. <video> needs no CORS, so all of these play as-is.
+function buildVideoPoster(entry, fig) {
     const vd = document.createElement("video");
     vd.muted = true;
     vd.loop = true;
@@ -242,18 +238,31 @@ function buildVideoPoster(entry, fig) {
     vd.style.display = "block";
     vd.style.pointerEvents = "none";
     if (entry.p) vd.poster = entry.p;
-    vd.src = url;
-    vd.onerror = () => {
-        console.warn("[SpoTUI-pin] video poster failed to load, showing thumbnail:", url);
-        fallbackToImage();
+    const asset = posterAssetUrl(entry.id);
+    const sources = [asset, entry.u].filter(Boolean);
+    if (!sources.length) return posterImg(entry.p, fig);
+    let i = 0;
+    const playNext = () => {
+        if (i >= sources.length) {
+            const thumb = posterImg(entry.p || entry.u, fig);
+            fig.innerHTML = "";
+            fig.appendChild(thumb);
+            return;
+        }
+        vd.src = sources[i++];
+        vd.onerror = () => {
+            console.warn("[SpoTUI-pin] video source failed, trying next:", vd.src);
+            playNext();
+        };
+        const pr = vd.play();
+        if (pr && pr.catch) pr.catch(() => {});
     };
     // Some Chromium builds need a nudge once data arrives.
     vd.addEventListener("canplay", () => {
         const pr = vd.play();
         if (pr && pr.catch) pr.catch(() => {});
     });
-    const pr = vd.play();
-    if (pr && pr.catch) pr.catch(() => {});
+    playNext();
     return vd;
 }
 
@@ -558,7 +567,7 @@ async function syncViaPidgets(user, slug) {
         .map((p) => ({ id: p && p.id != null ? String(p.id) : "", m: pickPidgetMedia(p) }))
         .filter((e) => e.m.image || (e.m.video && e.m.video.url));
     await enrichStoryVideos(pins, items);
-    return items.map((e) => e.m);
+    return items;
 }
 
 async function pinterestV5(path, token) {
@@ -641,7 +650,7 @@ export async function syncPinterestBoard(input, tokenArg) {
     if (ref.user) {
         try {
             media = await syncViaPidgets(ref.user, ref.slug);
-            const vids = media.filter((m) => m.video && m.video.url).length;
+            const vids = media.filter((e) => e.m.video && e.m.video.url).length;
             dbg(`[SpoTUI-pin] public endpoint gave ${media.length} item(s), ${vids} video(s).`);
         } catch (e) {
             console.warn("[SpoTUI-pin] public endpoint failed:", e.message);
@@ -651,7 +660,7 @@ export async function syncPinterestBoard(input, tokenArg) {
     if (!media.length && token) {
         try {
             const urls = await syncViaV5(ref, token);
-            media = urls.map((u) => ({ image: u, video: null }));
+            media = urls.map((u) => ({ id: "", m: { image: u, video: null } }));
             dbg(`[SpoTUI-pin] Pinterest API gave ${media.length} image(s).`);
         } catch (e) {
             console.error("[SpoTUI-pin] Pinterest API failed:", e.message);
@@ -670,14 +679,21 @@ export async function syncPinterestBoard(input, tokenArg) {
     const label = ref.slug ? `${ref.user}/${ref.slug}` : `board:${ref.id}`;
     const imgs = getPosterImages();
     let added = 0, addedVids = 0;
-    for (const m of media) {
+    for (const e of media) {
+        const m = e.m;
         if (m.video && m.video.url) {
-            if (!imgs.some((e) => e.u === m.video.url) && imgs.length < MAX_STORED) {
-                imgs.unshift({ u: m.video.url, b: label, k: "video", p: m.image || undefined });
-                added++; addedVids++;
+            const id = e.id || "";
+            if (imgs.some((x) => (id && x.id === id) || x.u === m.video.url)) continue;
+            if (imgs.length >= MAX_STORED) continue;
+            // Drop stale entries for the same pin (re-syncs, scheme upgrades).
+            if (id) {
+                const ix = imgs.findIndex((x) => x.id === id);
+                if (ix !== -1) imgs.splice(ix, 1);
             }
+            imgs.unshift({ u: m.video.url, id: id || undefined, b: label, k: "video", p: m.image || undefined });
+            added++; addedVids++;
         } else if (m.image) {
-            if (!imgs.some((e) => e.u === m.image) && imgs.length < MAX_STORED) { imgs.unshift({ u: m.image, b: label }); added++; }
+            if (!imgs.some((x) => x.u === m.image) && imgs.length < MAX_STORED) { imgs.unshift({ u: m.image, b: label }); added++; }
         }
     }
     savePosterImages(imgs);
