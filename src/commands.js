@@ -150,14 +150,18 @@ export async function execute(cmd, opts = {}) {
             else if (sub === "shuffle") { shufflePosters(); acted = true; }
             else if (sub === "clear") { clearPosters(); acted = true; }
             else if (sub === "settings" || sub === "status") { showPosterSettings(); acted = true; }
-            else if (sub === "add" && args[2]) { addPoster(args[2]); acted = true; }
+            else if (sub === "add" && args[2]) {
+                const addBoard = args.slice(3).find((a) => !a.startsWith("-"));
+                addPoster(args[2], addBoard);
+                acted = true;
+            }
             else if (sub === "count") { setPosterCount(args[2]); acted = true; }
             else if (sub === "density") { setPosterDensity(args[2]); acted = true; }
             else if (sub === "theme") { setPosterTheme(args[2]); acted = true; }
             else if (sub === "opacity") { setPosterOpacity(args[2]); acted = true; }
             else if (sub === "autoshuffle") { setPosterAutoshuffle(args[2]); acted = true; }
             else if (sub === "rotate") { setPosterRotate(args[2]); acted = true; }
-            else if (sub !== "-o" && sub !== "-c" && sub !== "-d" && sub !== "-t" && sub !== "-r") console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|settings|add <url>|count <1-8|lo-hi>|density <1-10|lo-hi>|theme <#hex>|opacity <0-1>|autoshuffle <on|off>|rotate <min|off>> [-o <0-1>] [-c <1-8|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
+            else if (sub !== "-o" && sub !== "-c" && sub !== "-d" && sub !== "-t" && sub !== "-r") console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|settings|add <url> [board]|count <1-8|lo-hi>|density <1-10|lo-hi>|theme <#hex>|opacity <0-1>|autoshuffle <on|off>|rotate <min|off>> [-o <0-1>] [-c <1-8|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
             if (applyPosterFlags(argsLower, args) > 0) acted = true;
             if (!acted) console.warn("[SpoTUI-pin] nothing to do — see usage above.");
             return;
