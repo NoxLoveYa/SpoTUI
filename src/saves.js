@@ -2,7 +2,7 @@ import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, app
 import { resetGrid } from "./ascii.js";
 import { ANIMATION_KEY, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { POSTERS_IMGS, renderPosters, startRotateTimer } from "./posters.js";
-import { applyShade } from "./shade.js";
+import { applyShade, isValidShade } from "./shade.js";
 import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
@@ -54,7 +54,9 @@ function describeSnapshot(settings) {
     } catch (e) {}
     const names = Object.keys(boards);
     parts.push(`${posters} posters${names.length ? ` (${names.map((b) => `${b}:${boards[b]}`).join(", ")})` : ""}`);
-    parts.push(settings[SHADE_KEY] ? `shade ${settings[SHADE_KEY]}` : "orange");
+    parts.push(settings[SHADE_KEY] && isValidShade(settings[SHADE_KEY])
+        ? `shade ${settings[SHADE_KEY]}`
+        : (settings[SHADE_KEY] ? `shade ${settings[SHADE_KEY]} invalid, ignored` : "orange"));
     return parts.join(" · ");
 }
 

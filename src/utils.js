@@ -40,7 +40,10 @@ export function pinToast(text, ms = 7000) {
         const t = document.createElement("div");
         t.id = "spotui-pin-toast";
         t.textContent = text;
-        t.style.cssText = "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:var(--panel-bg-color,var(--background-base,rgba(10,14,18,.92)));color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--panel-border-color,var(--essential-base,#7fd4d4));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;";
+        // Border follows --spotui-accent (what -shade retints) with the panel
+        // border as fallback. The toast lives on document.body, outside the
+        // hue-rotate filter, so the var reads as the exact target color.
+        t.style.cssText = "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:var(--panel-bg-color,var(--background-base,rgba(10,14,18,.92)));color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--spotui-accent,var(--panel-border-color,var(--essential-base,#7fd4d4)));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;";
         document.body.appendChild(t);
         setTimeout(() => t.remove(), ms);
     } catch (e) {}

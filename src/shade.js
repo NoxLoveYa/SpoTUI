@@ -33,7 +33,7 @@ function hexToHsl(hex) {
 
 function shadeDelta() {
     const target = storageGet(SHADE_KEY);
-    if (!target || !HEX_COLOR_REGEX.test(target)) return 0;
+    if (!isValidShade(target)) return 0;
     return (((hexToHsl(target).h - hexToHsl(BASE_HEX).h) % 360) + 360) % 360;
 }
 
@@ -58,16 +58,22 @@ function shadeStyleEl() {
     return s;
 }
 
+// Strict hex check shared by set/report/apply paths so an invalid stored
+// value is never presented as active nor painted as NaN.
+export function isValidShade(v) {
+    return typeof v === "string" && HEX_COLOR_REGEX.test(v.trim());
+}
+
 export function applyShade() {
     const tui = document.getElementById("spotui-tui");
     if (!tui) return false;
     const rawTarget = storageGet(SHADE_KEY);
     // Self-heal a corrupt stored value instead of painting invalid CSS.
-    if (rawTarget && !HEX_COLOR_REGEX.test(rawTarget)) {
+    if (rawTarget && !isValidShade(rawTarget)) {
         storageRemove(SHADE_KEY);
         console.warn("[SpoTUI-shade] ignoring invalid stored shade, reset to orange:", rawTarget);
     }
-    const target = rawTarget && HEX_COLOR_REGEX.test(rawTarget) ? rawTarget : null;
+    const target = isValidShade(rawTarget) ? rawTarget : null;
     const st = shadeStyleEl();
     if (!target) {
         tui.style.filter = "";
@@ -110,11 +116,13 @@ export function setShade(arg) {
         dbg("[SpoTUI-shade] off, orange restored.");
         return;
     }
-    if (!HEX_COLOR_REGEX.test(v)) {
+    if (!isValidShade(v)) {
+        pinToast(`not a hex color: ${v} (e.g. tui -shade #7fd4d4)`);
         console.warn("[SpoTUI-shade] usage: tui -shade <#hex|off>  (e.g. tui -shade #7fd4d4)");
         return;
     }
     if (hexToHsl(v).s < 0.15) {
+        pinToast("near-gray colors have no hue to rotate to — pick something colorful");
         console.warn("[SpoTUI-shade] that hex is near-gray (no hue to rotate to) — pick something colorful.");
         return;
     }
@@ -126,6 +134,11 @@ export function setShade(arg) {
 
 export function reportShade() {
     const cur = storageGet(SHADE_KEY);
+    if (cur && !isValidShade(cur)) {
+        pinToast(`shade ${cur} is not a valid hex — ignored (back to orange)`);
+        dbg("[SpoTUI-shade] stored value invalid:", cur);
+        return;
+    }
     pinToast(cur ? `UI shade ${cur}` : "UI shade: orange (default)");
     dbg("[SpoTUI-shade] current:", cur || "orange (default)");
 }
