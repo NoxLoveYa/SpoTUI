@@ -100,55 +100,55 @@ export async function execute(cmd, opts = {}) {
                 storageRemove(WP_RICH_KEY);
                 return;
             }
-            if (url) {
+            const flag = (name) => {
+                const i = argsLower.indexOf(name);
+                return i !== -1 && args[i + 1] ? args[i + 1] : undefined;
+            };
+            const hasFlags = ["-o", "-fit", "-pos", "-rich"].some((f) => argsLower.includes(f));
+            const looksLikeUrl = url && !url.startsWith("-");
+            if (!looksLikeUrl && !hasFlags) {
+                // Bare `tui -wp`: report current wallpaper (toast + console).
+                const cur = {
+                    url: storageGet(WP_URL_KEY) || "(none)",
+                    opacity: storageGet(WP_OPACITY_KEY) || "1",
+                    fit: storageGet(WP_FIT_KEY) || "cover",
+                    pos: storageGet(WP_POS_KEY) || "center",
+                    rich: storageGet(WP_RICH_KEY) || "100",
+                    live: document.getElementById("spotui-wallpaper") ? "yes" : "no",
+                };
+                pinToast(`wallpaper\n${cur.url}\nopacity ${cur.opacity} · ${cur.fit} · ${cur.pos} · rich ${cur.rich}`);
+                console.log("[SpoTUI-dbg] current wallpaper:", cur);
+                return;
+            }
+            if (!looksLikeUrl && hasFlags) {
+                // Flags alone: tweak the current wallpaper, keep its URL.
+                const live = document.getElementById("spotui-wallpaper");
+                let curUrl = storageGet(WP_URL_KEY);
+                let curOp = storageGet(WP_OPACITY_KEY) || "1";
+                if (live) {
+                    curUrl = live.tagName === "VIDEO"
+                        ? (live.currentSrc || live.src || live.getAttribute("src"))
+                        : ((live.style.backgroundImage.match(/url\(["']?(.*?)["']?\)/) || [])[1] || curUrl);
+                    curOp = live.style.opacity || curOp;
+                }
+                if (!curUrl) {
+                    console.warn("[SpoTUI-dbg] no wallpaper set yet — give a URL first: tui -wp <url>");
+                    return;
+                }
+                console.log("[SpoTUI-dbg] -wp tweaking current wallpaper.");
+                setWallpaper(curUrl, flag("-o") ?? curOp, true, {
+                    fit: flag("-fit") ?? storageGet(WP_FIT_KEY),
+                    pos: flag("-pos") ?? storageGet(WP_POS_KEY),
+                    rich: flag("-rich") ?? storageGet(WP_RICH_KEY),
+                });
+                return;
+            }
+            if (looksLikeUrl) {
                 let opacity = "1";
                 const oIdx = argsLower.indexOf("-o");
                 if (oIdx !== -1 && args[oIdx + 1]) opacity = args[oIdx + 1];
                 if (args.length > urlIdx + 1 && oIdx === -1) console.warn("[SpoTUI-dbg] URL looks space-split (contains spaces?). Got url=" + JSON.stringify(url) + " extra=" + JSON.stringify(args.slice(urlIdx + 1)) + ". Quote handling: commands split on whitespace, so use %20 or dashes.");
                 console.log("[SpoTUI-dbg] -wp parsed:", { url, opacity });
-                const flag = (name) => {
-                    const i = argsLower.indexOf(name);
-                    return i !== -1 && args[i + 1] ? args[i + 1] : undefined;
-                };
-                const hasFlags = ["-o", "-fit", "-pos", "-rich"].some((f) => argsLower.includes(f));
-                const looksLikeUrl = url && !url.startsWith("-");
-                if (!looksLikeUrl && !hasFlags) {
-                    // Bare `tui -wp`: report current wallpaper (toast + console).
-                    const cur = {
-                        url: storageGet(WP_URL_KEY) || "(none)",
-                        opacity: storageGet(WP_OPACITY_KEY) || "1",
-                        fit: storageGet(WP_FIT_KEY) || "cover",
-                        pos: storageGet(WP_POS_KEY) || "center",
-                        rich: storageGet(WP_RICH_KEY) || "100",
-                        live: document.getElementById("spotui-wallpaper") ? "yes" : "no",
-                    };
-                    pinToast(`wallpaper\n${cur.url}\nopacity ${cur.opacity} · ${cur.fit} · ${cur.pos} · rich ${cur.rich}`);
-                    console.log("[SpoTUI-dbg] current wallpaper:", cur);
-                    return;
-                }
-                if (!looksLikeUrl && hasFlags) {
-                    // Flags alone: tweak the current wallpaper, keep its URL.
-                    const live = document.getElementById("spotui-wallpaper");
-                    let curUrl = storageGet(WP_URL_KEY);
-                    let curOp = storageGet(WP_OPACITY_KEY) || "1";
-                    if (live) {
-                        curUrl = live.tagName === "VIDEO"
-                            ? (live.currentSrc || live.src || live.getAttribute("src"))
-                            : ((live.style.backgroundImage.match(/url\(["']?(.*?)["']?\)/) || [])[1] || curUrl);
-                        curOp = live.style.opacity || curOp;
-                    }
-                    if (!curUrl) {
-                        console.warn("[SpoTUI-dbg] no wallpaper set yet — give a URL first: tui -wp <url>");
-                        return;
-                    }
-                    console.log("[SpoTUI-dbg] -wp tweaking current wallpaper.");
-                    setWallpaper(curUrl, flag("-o") ?? curOp, true, {
-                        fit: flag("-fit") ?? storageGet(WP_FIT_KEY),
-                        pos: flag("-pos") ?? storageGet(WP_POS_KEY),
-                        rich: flag("-rich") ?? storageGet(WP_RICH_KEY),
-                    });
-                    return;
-                }
                 setWallpaper(url, opacity, true, { fit: flag("-fit"), pos: flag("-pos"), rich: flag("-rich") });
             } else {
                 console.warn('[SpoTUI-dbg] -wp got no URL. Usage: tui -wp <url> [-o 0-1] [-fit cover|contain|fill|none] [-pos center|top|"top left"] [-rich 0-200] | tui -wp off. Same-origin video that always works: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5');
@@ -168,7 +168,7 @@ export async function execute(cmd, opts = {}) {
             else if (sub === "theme") { setPosterTheme(args[2]); acted = true; }
             else if (sub === "opacity") { setPosterOpacity(args[2]); acted = true; }
             else if (sub === "autoshuffle") { setPosterAutoshuffle(args[2]); acted = true; }
-            else if (sub === "rotate") setPosterRotate(args[2]);
+            else if (sub === "rotate") { setPosterRotate(args[2]); acted = true; }
             else if (sub !== "-o" && sub !== "-c" && sub !== "-d" && sub !== "-t" && sub !== "-r") console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|settings|add <url>|count <1-8|lo-hi>|density <1-10|lo-hi>|theme <#hex>|opacity <0-1>|autoshuffle <on|off>|rotate <min|off>> [-o <0-1>] [-c <1-8|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
             if (applyPosterFlags(argsLower, args) > 0) acted = true;
             if (!acted) console.warn("[SpoTUI-pin] nothing to do — see usage above.");

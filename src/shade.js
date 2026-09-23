@@ -30,7 +30,7 @@ function hexToHsl(hex) {
 
 function shadeDelta() {
     const target = storageGet(SHADE_KEY);
-    if (!target) return 0;
+    if (!target || !HEX_COLOR_REGEX.test(target)) return 0;
     return (((hexToHsl(target).h - hexToHsl(BASE_HEX).h) % 360) + 360) % 360;
 }
 
