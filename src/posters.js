@@ -1,4 +1,4 @@
-import { CACHE_SCRIPT_DEFAULT, CACHE_SCRIPT_KEY, HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
+import { CACHE_SCRIPT_DEFAULT, CACHE_SCRIPT_KEY, HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE, PIN_PROXY_DEFAULT, PIN_PROXY_KEY } from "./constants.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
@@ -271,20 +271,29 @@ function buildVideoPoster(entry, fig) {
     vd.style.pointerEvents = "none";
     if (entry.p) vd.poster = entry.p;
     if (/\.m3u8($|[?#])/i.test(url)) {
-        const HlsCls = getHls();
-        if (!HlsCls) {
-            console.warn("[SpoTUI-pin] HLS video unsupported in this client, showing thumbnail:", url);
-            toastOnce("video pin needs HLS (unsupported here) — thumbnail shown");
-            fallbackToImage();
-        } else {
+        proxyUp().then((up) => {
+            if (!vd.isConnected) return;
+            if (!up) {
+                console.warn("[SpoTUI-pin] stream proxy offline, showing thumbnail. Start spotui-server.py:", url);
+                toastOnce("video server offline — start spotui-server (thumbnail shown)");
+                fallbackToImage();
+                return;
+            }
+            const HlsCls = getHls();
+            if (!HlsCls) {
+                console.warn("[SpoTUI-pin] HLS video unsupported in this client, showing thumbnail:", url);
+                toastOnce("video pin needs HLS (unsupported here) — thumbnail shown");
+                fallbackToImage();
+                return;
+            }
             let hls;
             try {
                 hls = new HlsCls({ maxBufferLength: 10, enableWorker: false });
             } catch (e) {
                 console.warn("[SpoTUI-pin] HLS setup failed, showing thumbnail:", e.message);
                 fallbackToImage();
+                return;
             }
-            if (!hls) return vd;
             hls.on(HlsCls.Events.ERROR, (_, data) => {
                 if (data && data.fatal) {
                     try { hls.destroy(); } catch (e) {}
@@ -293,11 +302,11 @@ function buildVideoPoster(entry, fig) {
                     fallbackToImage();
                 }
             });
-            hls.loadSource(url);
+            hls.loadSource(`${pinProxyBase()}/hls?url=${encodeURIComponent(url)}`);
             hls.attachMedia(vd);
             const pr = vd.play();
             if (pr && pr.catch) pr.catch(() => {});
-        }
+        });
     } else {
         vd.src = url;
         vd.onerror = () => {
@@ -549,6 +558,64 @@ export function reportCacheScript() {
     dbg("[SpoTUI-pin] cache script:", cur);
 }
 
+// Stream playback goes through the local proxy (Pinterest serves no CORS
+// headers, so browsers can't read the stream directly). Health is cached
+// briefly so every shuffle doesn't re-probe.
+export function pinProxyBase() {
+    const v = (storageGet(PIN_PROXY_KEY) || PIN_PROXY_DEFAULT).trim();
+    if (!v || v.toLowerCase() === "off") return null;
+    return v.replace(/\/+$/, "");
+}
+
+let proxyState = { ok: false, at: 0 };
+
+export function proxyUp() {
+    const base = pinProxyBase();
+    if (!base) return Promise.resolve(false);
+    if (Date.now() - proxyState.at < 60000) return Promise.resolve(proxyState.ok);
+    let timer = null;
+    try {
+        const ctrl = new AbortController();
+        timer = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 2500);
+        return fetch(`${base}/health`, { signal: ctrl.signal }).then((r) => {
+            clearTimeout(timer);
+            proxyState = { ok: !!r.ok, at: Date.now() };
+            return proxyState.ok;
+        }).catch(() => {
+            clearTimeout(timer);
+            proxyState = { ok: false, at: Date.now() };
+            return false;
+        });
+    } catch (e) {
+        if (timer) clearTimeout(timer);
+        proxyState = { ok: false, at: Date.now() };
+        return Promise.resolve(false);
+    }
+}
+
+export function setPinProxy(arg) {
+    const v = String(arg || "").trim();
+    if (!v) {
+        reportPinProxy();
+        return;
+    }
+    if (v.toLowerCase() === "off") {
+        storageSet(PIN_PROXY_KEY, "off");
+        pinToast("stream proxy off — video pins show thumbnails");
+    } else {
+        storageSet(PIN_PROXY_KEY, v.replace(/\/+$/, ""));
+        proxyState = { ok: false, at: 0 };
+        pinToast(`stream proxy: ${v}`);
+    }
+    dbg("[SpoTUI-pin] proxy set:", v);
+}
+
+export function reportPinProxy() {
+    const base = pinProxyBase();
+    pinToast(base ? `stream proxy: ${base}` : "stream proxy off");
+    dbg("[SpoTUI-pin] proxy:", base || "off");
+}
+
 // Extract both the still image and, for story/video pins, the playable file.
 // Prefers a direct mp4, falls back to the HLS stream URL (needs hls.js).
 function pickPidgetMedia(p) {
@@ -768,21 +835,8 @@ export async function syncPinterestBoard(input, tokenArg) {
     startRotateTimer();
     renderPosters();
     const streams = media.filter((m) => m.video && m.video.stream).length;
-    if (streams > 0) {
-        // HLS streams can't play or be converted inside Spotify — hand over
-        // the local convert command instead of leaving dead entries silent.
-        const boardUrl = /pinterest\.[a-z.]+/i.test(input)
-            ? input
-            : (label.includes("/") ? `${PINTEREST_WWW_BASE}/${label}/` : input);
-        copyText(`powershell -NoProfile -File "${cacheScriptPath()}" -BoardUrl ${boardUrl}`).then((ok) => {
-            pinToast(ok
-                ? `synced ${added} new (${addedVids} video) — convert command copied, paste in terminal`
-                : `synced ${added} new (${addedVids} video) — streams need local convert (see tui -pin-cache)`);
-        });
-    } else {
-        pinToast(`synced ${added} new item(s), ${addedVids} video — wall updated`);
-    }
-    dbg(`[SpoTUI-pin] synced ${added} new item(s) (${addedVids} video), ${imgs.length} total. Shuffle: tui -posters shuffle`);
+    pinToast(`synced ${added} new item(s), ${addedVids} video — wall updated`);
+    dbg(`[SpoTUI-pin] synced ${added} new item(s) (${addedVids} video, ${streams} stream), ${imgs.length} total. Shuffle: tui -posters shuffle`);
 }
 
 // Random mix across ALL your boards = closest thing to a "feed" the API allows.
