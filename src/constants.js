@@ -152,5 +152,9 @@ export const COMMAND_LIST = [
     { cmd: "jam create", desc: "Start a listening jam and get a PIN" },
     { cmd: "jam join <pin>", desc: "Join a jam by PIN (volume/lyrics only)" },
     { cmd: "jam leave", desc: "Leave the current jam" },
+    { cmd: "tui -posters &lt;on/off/shuffle/clear&gt;", desc: "Toggle/shuffle/clear the poster wall" },
+    { cmd: "tui -posters add &lt;url&gt; | count &lt;1-8&gt; | rotate &lt;min/off&gt;", desc: "Pin image, set count, auto-rotate" },
+    { cmd: "tui -pin-board &lt;board-url&gt; [token]", desc: "Sync posters from a Pinterest board" },
+    { cmd: "tui -pin-feed | tui -pin-token &lt;token&gt;", desc: "Random mix from your boards / save API token" },
     { cmd: "help", desc: "Show this panel" },
 ];

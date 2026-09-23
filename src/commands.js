@@ -15,6 +15,7 @@ import { storageClear, storageGet, storageRemove, storageSet } from "./storage.j
 import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { setWallpaper } from "./wallpaper.js";
+import { addPoster, clearPosters, setPinToken, setPosterCount, setPosterRotate, setPostersEnabled, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 
 export async function execute(cmd, opts = {}) {
     const cleanedCmd = stripCommandPrefix(cmd);
@@ -54,9 +55,11 @@ export async function execute(cmd, opts = {}) {
             return;
         }
         if (argsLower.includes("-wp")) {
+            console.log("[SpoTUI-dbg] -wp raw:", JSON.stringify(cleanedCmd), "args:", JSON.stringify(args));
             const urlIdx = argsLower.indexOf("-wp") + 1;
             const url = args[urlIdx];
             if ((url || "").toLowerCase() === "off") {
+                console.log("[SpoTUI-dbg] -wp off: removing wallpaper + clearing storage");
                 const wp = document.getElementById("spotui-wallpaper");
                 if (wp) wp.remove();
                 storageRemove(WP_URL_KEY);
@@ -67,8 +70,36 @@ export async function execute(cmd, opts = {}) {
                 let opacity = "1";
                 const oIdx = argsLower.indexOf("-o");
                 if (oIdx !== -1 && args[oIdx + 1]) opacity = args[oIdx + 1];
+                if (args.length > urlIdx + 1 && oIdx === -1) console.warn("[SpoTUI-dbg] URL looks space-split (contains spaces?). Got url=" + JSON.stringify(url) + " extra=" + JSON.stringify(args.slice(urlIdx + 1)) + ". Quote handling: commands split on whitespace, so use %20 or dashes.");
+                console.log("[SpoTUI-dbg] -wp parsed:", { url, opacity });
                 setWallpaper(url, opacity);
+            } else {
+                console.warn('[SpoTUI-dbg] -wp got no URL. Usage: tui -wp <url> [-o 0-1] | tui -wp off. Same-origin video that always works: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5');
             }
+            return;
+        }
+        if (argsLower[0] === "-posters" || argsLower[0] === "-poster") {
+            const sub = (args[1] || "on").toLowerCase();
+            if (sub === "on" || sub === "off") setPostersEnabled(sub === "on");
+            else if (sub === "shuffle") shufflePosters();
+            else if (sub === "clear") clearPosters();
+            else if (sub === "add" && args[2]) addPoster(args[2]);
+            else if (sub === "count") setPosterCount(args[2]);
+            else if (sub === "rotate") setPosterRotate(args[2]);
+            else console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|add <url>|count <1-8>|rotate <min|off>>");
+            return;
+        }
+        if (argsLower[0] === "-pin-board") {
+            if (!args[1]) console.warn("[SpoTUI-pin] usage: tui -pin-board <board-url-or-id> [token]");
+            else syncPinterestBoard(args[1], args[2]).catch((e) => console.error("[SpoTUI-pin] sync failed:", e.message));
+            return;
+        }
+        if (argsLower[0] === "-pin-feed") {
+            syncPinterestFeed(args[1]).catch((e) => console.error("[SpoTUI-pin] feed failed:", e.message));
+            return;
+        }
+        if (argsLower[0] === "-pin-token") {
+            setPinToken(args[1]);
             return;
         }
         if (argsLower.includes("-t")) {

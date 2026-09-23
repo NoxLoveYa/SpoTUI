@@ -7,6 +7,7 @@ import { initDjBridge } from "./dj.js";
 import { initLyricsBridge, openLyricsPanel, waitForPlayerReadyThen } from "./lyrics.js";
 import { isFirstBoot, launchFirstBootIfNeeded } from "./onboarding.js";
 import { storageGet } from "./storage.js";
+import { isPostersEnabled, renderPosters, startRotateTimer } from "./posters.js";
 import { injectStyle } from "./styles.js";
 import { initSync } from "./sync.js";
 import { createTerminal } from "./terminal.js";
@@ -62,7 +63,13 @@ try {
         });
     }
     if (storageGet(WP_URL_KEY)) {
+        console.log("[SpoTUI-dbg] boot: restoring saved wallpaper:", storageGet(WP_URL_KEY), "opacity:", storageGet(WP_OPACITY_KEY) || "1", "(clear with tui -wp off)");
         setTimeout(() => setWallpaper(storageGet(WP_URL_KEY), storageGet(WP_OPACITY_KEY) || "1", false), 1500);
+    } else {
+        console.log("[SpoTUI-dbg] boot: no saved wallpaper. Set one with: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5");
+    }
+    if (isPostersEnabled()) {
+        setTimeout(() => { renderPosters(); startRotateTimer(); }, 2200);
     }
     applyLyricColors();
     applyPlayerBarColors();

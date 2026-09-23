@@ -54,6 +54,13 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui actions disable <name>` | Disable an action |
 | `tui actions delete <name>` | Delete an action |
 | `tui -wp off` | Remove wallpaper |
+| `tui -posters <on/off/shuffle/clear>` | Toggle/shuffle/clear the poster wall |
+| `tui -posters add <url>` | Pin an image URL to the wall |
+| `tui -posters count <1-8>` | How many posters to show |
+| `tui -posters rotate <min/off>` | Auto-pick new random posters on a timer |
+| `tui -pin-board <board-url> [token]` | Sync posters from a Pinterest board |
+| `tui -pin-feed` | Random mix from all your boards (needs token) |
+| `tui -pin-token <token>` | Save your Pinterest API token (local only) |
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |
 | `tui -ly -cp off` | Reset lyrics colors |
 | `tui -ly -animation <on/off>` | Toggle lyrics loader animation |
@@ -82,6 +89,35 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `discord` | Show the Discord update banner and re-enable it on boot |
 | `standby` | Enter standby mode (any key to exit) |
 | `help` | Show the help panel |
+
+## Poster wall (Pinterest mode)
+
+Polaroid-style prints pinned on top of the video wallpaper, around the
+edges so the terminal stays readable. Layer order: wallpaper < posters < UI.
+
+```bash
+tui -posters add https://i.pinimg.com/736x/....jpg
+tui -posters on
+tui -posters shuffle
+tui -posters count 6
+tui -posters rotate 10   # new random picks every 10 min, off to disable
+tui -posters clear       # forget all pinned images
+```
+
+Sync straight from Pinterest:
+
+```bash
+tui -pin-board pinterest.com/<you>/<board>/   # public boards need no login
+tui -pin-token <token>   # developers.pinterest.com, scopes boards:read pins:read
+tui -pin-feed            # random mix across all your boards
+```
+
+Notes: video wallpaper wants `.webm` (VP9, e.g. Spotify's own `shimmer.webm`
+format) — `.mp4`/H.264 is blocked in some Spotify builds, `file://` URLs are
+often blocked, so same-origin `https://xpui.app.spotify.com/videos/...` or any
+`https://` link works best. Image URLs with spaces must be `%20`-encoded.
+The token never leaves your machine (localStorage only). Diagnostics are
+logged to the dev console under `[SpoTUI-pin]` / `[SpoTUI-dbg]`.
 
 ## Action Targets
 
