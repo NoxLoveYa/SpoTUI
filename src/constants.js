@@ -120,7 +120,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Re-tint orange UI to any color (shades preserved); video + posters stay true; bare tui -shade shows current" },
     { cmd: "tui -debug &lt;on/off&gt;", desc: "Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print)" },
     { cmd: "tui -t pull &lt;theme_id&gt;", desc: "Apply a theme by its ID (you can find the id on our website)" },
-    { cmd: "tui -t &lt;save &lt;name&gt;|list|apply &lt;name&gt;|delete &lt;name&gt;&gt;", desc: "Snapshot the current look locally; list/restore/delete snapshots" },
+    { cmd: "tui -t &lt;save &lt;name&gt;|list|apply &lt;name&gt;|delete &lt;name&gt;&gt;", desc: "Snapshot the current look locally; list opens the themes menu (Enter applies, Del deletes); restore/delete snapshots" },
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command" },
     { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
     { cmd: "tui bind clear", desc: "Remove all keybinds" },
@@ -170,7 +170,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -posters &lt;add &lt;url&gt; [board]|count &lt;1-12|lo-hi&gt;|density &lt;1-10|lo-hi&gt;|theme &lt;#hex&gt;|opacity &lt;0-1&gt;|autoshuffle &lt;on/off&gt;|symmetric &lt;on/off&gt;|rotate &lt;min/off&gt;&gt;", desc: "Pin an image URL (optional board tag so -pin-clear removes it); visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; mirrored pairs layout; auto re-roll timer" },
     { cmd: "tui -posters [-o &lt;0-1&gt;] [-c &lt;1-12|lo-hi&gt;] [-d &lt;1-10|lo-hi&gt;] [-t &lt;#hex&gt;] [-r &lt;min|off&gt;]", desc: "Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer" },
     { cmd: "tui -pin-board &lt;board-url&gt; [token] [-o/-c/-d/-t/-r]", desc: "Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync" },
-    { cmd: "tui -pin-boards | tui -pin-clear &lt;board&gt;", desc: "List synced boards with counts / forget one board (wall switches off if empty)" },
+    { cmd: "tui -pin-boards | tui -pin-clear &lt;board&gt;", desc: "Boards menu (Enter re-pulls, Del forgets, A adds) / forget one board (wall switches off if empty)" },
     { cmd: "tui -pin-feed | tui -pin-refresh [board] [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins, then recreate the wall (flags apply after) / save API token on this machine only" },
     { cmd: "help", desc: "Show this panel" },
 ];

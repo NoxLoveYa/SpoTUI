@@ -7,6 +7,8 @@ import { closeLyricsPanel } from "./lyrics.js";
 import { closeOnboardingPanel } from "./onboarding.js";
 import { getPlaylists, handlePlaylistPanelKeydown, renderPlaylistPanel } from "./playlists.js";
 import { closeSearchPanel } from "./search.js";
+import { applyTheme as applySavedTheme, deleteTheme, savedThemeNames } from "./saves.js";
+import { clearBoard, getBoardCounts, refreshBoards } from "./posters.js";
 import { app } from "./state.js";
 import { print } from "./terminal.js";
 import { createAddThemeCard, createThemeCard, loadThemeFeed } from "./themes.js";
@@ -15,6 +17,8 @@ const PANE_TARGETS = {
     helpPanelOpen: "help",
     aboutPanelOpen: "about",
     themePanelOpen: "theme",
+    boardsPanelOpen: "boards",
+    savesPanelOpen: "saves",
 };
 
 // Global Escape key handler - closes active panels
@@ -35,6 +39,8 @@ export function closeActivePanel() {
     if (app.lyricsPanelOpen) closeLyricsPanel();
     if (app.playlistPanelOpen) closePlaylistPanel();
     if (app.themePanelOpen) closeThemePanel();
+    if (app.boardsPanelOpen) closeBoardsPanel();
+    if (app.savesPanelOpen) closeSavesPanel();
     if (app.searchPanelOpen) closeSearchPanel();
     if (app.onboardingPanelOpen) closeOnboardingPanel();
     if (app.djPanelOpen) {
@@ -56,6 +62,8 @@ export function setPanelState(panelId, className, openVarName, targetState) {
         'helpPanelOpen': () => app.helpPanelOpen = targetState,
         'aboutPanelOpen': () => app.aboutPanelOpen = targetState,
         'themePanelOpen': () => app.themePanelOpen = targetState,
+        'boardsPanelOpen': () => app.boardsPanelOpen = targetState,
+        'savesPanelOpen': () => app.savesPanelOpen = targetState,
         'onboardingPanelOpen': () => app.onboardingPanelOpen = targetState,
     };
     if (panels[openVarName]) panels[openVarName]();
@@ -215,4 +223,134 @@ export async function openThemePanel() {
             panel.appendChild(grid);
         }
     );
+}
+
+// Escape user data rendered into menu rows.
+function escMenu(s) {
+    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderMenuRows(content, rows, selected) {
+    content.innerHTML = rows.map((r, i) =>
+        `<div class="help-item${i === selected ? " selected" : ""}"><span class="command">${r[0]}</span><span class="description">${r[1]}</span></div>`
+    ).join("");
+}
+
+// Close everything and hand the command bar back with text ready to edit.
+function prefillCommand(text) {
+    closeActivePanel();
+    const input = document.getElementById("spotui-input");
+    if (input) {
+        input.value = text;
+        input.focus();
+    }
+}
+
+// ---- Synced-boards menu (Enter re-pulls, Del forgets, A adds) ----
+
+function boardRows() {
+    return Object.entries(getBoardCounts());
+}
+
+function renderBoardsPanel() {
+    const panel = document.getElementById("spotui-boards-panel");
+    const content = panel && panel.querySelector(".spotui-boards-content");
+    if (!content) return;
+    const rows = boardRows();
+    if (app.selectedBoard >= rows.length) app.selectedBoard = 0;
+    renderMenuRows(content, rows.map(([b, n]) => [escMenu(b), `${n} poster${n === 1 ? "" : "s"}`]), app.selectedBoard);
+}
+
+export function openBoardsPanel() {
+    if (app.boardsPanelOpen) { closeBoardsPanel(); return; }
+    closeActivePanel();
+    setPanelState("spotui-boards-panel", "spotui-boards-panel", "boardsPanelOpen", true);
+    app.selectedBoard = 0;
+    renderBoardsPanel();
+    document.addEventListener("keydown", handleBoardsKeydown);
+}
+
+export function closeBoardsPanel() {
+    document.removeEventListener("keydown", handleBoardsKeydown);
+    setPanelState("spotui-boards-panel", "spotui-boards-panel", "boardsPanelOpen", false);
+}
+
+export async function handleBoardsKeydown(e) {
+    const rows = boardRows();
+    if (e.key === "Escape") {
+        e.preventDefault();
+        closeBoardsPanel();
+        return;
+    }
+    if (!rows.length) { closeBoardsPanel(); return; }
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        app.selectedBoard = (app.selectedBoard + (e.key === "ArrowUp" ? -1 : 1) + rows.length) % rows.length;
+        renderBoardsPanel();
+    } else if (e.key === "Enter") {
+        e.preventDefault();
+        const [b] = rows[app.selectedBoard];
+        closeBoardsPanel();
+        await refreshBoards(b);
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        const [b] = rows[app.selectedBoard];
+        clearBoard(b);
+        if (!boardRows().length) closeBoardsPanel();
+        else renderBoardsPanel();
+    } else if (e.key === "a" || e.key === "A") {
+        prefillCommand("tui -pin-board ");
+    }
+}
+
+// ---- Saved-themes menu (Enter applies, Del deletes, S saves) ----
+
+function renderSavesPanel() {
+    const panel = document.getElementById("spotui-saves-panel");
+    const content = panel && panel.querySelector(".spotui-saves-content");
+    if (!content) return;
+    const names = savedThemeNames();
+    if (app.selectedSave >= names.length) app.selectedSave = 0;
+    renderMenuRows(content, names.map((n) => [escMenu(n), "saved theme"]), app.selectedSave);
+}
+
+export function openSavesPanel() {
+    if (app.savesPanelOpen) { closeSavesPanel(); return; }
+    closeActivePanel();
+    setPanelState("spotui-saves-panel", "spotui-saves-panel", "savesPanelOpen", true);
+    app.selectedSave = 0;
+    renderSavesPanel();
+    document.addEventListener("keydown", handleSavesKeydown);
+}
+
+export function closeSavesPanel() {
+    document.removeEventListener("keydown", handleSavesKeydown);
+    setPanelState("spotui-saves-panel", "spotui-saves-panel", "savesPanelOpen", false);
+}
+
+export async function handleSavesKeydown(e) {
+    const names = savedThemeNames();
+    if (e.key === "Escape") {
+        e.preventDefault();
+        closeSavesPanel();
+        return;
+    }
+    if (!names.length) { closeSavesPanel(); return; }
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        app.selectedSave = (app.selectedSave + (e.key === "ArrowUp" ? -1 : 1) + names.length) % names.length;
+        renderSavesPanel();
+    } else if (e.key === "Enter") {
+        e.preventDefault();
+        const name = names[app.selectedSave];
+        closeSavesPanel();
+        applySavedTheme(name);
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteTheme(names[app.selectedSave]);
+        if (!savedThemeNames().length) closeSavesPanel();
+        else renderSavesPanel();
+    } else if (e.key === "s" || e.key === "S") {
+        prefillCommand("tui -t save ");
+    }
 }

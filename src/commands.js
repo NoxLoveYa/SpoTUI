@@ -7,17 +7,17 @@ import { getAllowedJamGuestCommands, jamCreate, jamJoin, jamLeave, jamSay } from
 import { getKeybinds, isRestrictedThemeCommand, saveKeybinds, stripCommandPrefix } from "./keybinds.js";
 import { handleLyricsCommand, syncLyricsHighlight } from "./lyrics.js";
 import { getAllowedOnboardingCommands } from "./onboarding.js";
-import { openAboutPanel, closeActivePanel, openHelpPanel, openPlaylistPanel, openThemePanel } from "./panels.js";
+import { openAboutPanel, closeActivePanel, openBoardsPanel, openHelpPanel, openPlaylistPanel, openSavesPanel, openThemePanel } from "./panels.js";
 import { getPlaylists } from "./playlists.js";
 import { openSearchPanel } from "./search.js";
 import { app } from "./state.js";
 import { storageClear, storageGet, storageRemove, storageSet } from "./storage.js";
 import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
-import { applyTheme as applySavedTheme, deleteTheme, listThemes, saveTheme } from "./saves.js";
+import { applyTheme as applySavedTheme, deleteTheme, listThemes, saveTheme, savedThemeNames } from "./saves.js";
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
-import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
+import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, getBoardCounts, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 import { dbg, pinToast } from "./utils.js";
 
 export async function execute(cmd, opts = {}) {
@@ -176,7 +176,8 @@ export async function execute(cmd, opts = {}) {
             return;
         }
         if (argsLower[0] === "-pin-boards") {
-            showBoardList();
+            if (!Object.keys(getBoardCounts()).length) showBoardList();
+            else openBoardsPanel();
             return;
         }
         if (argsLower[0] === "-pin-clear") {
@@ -210,7 +211,11 @@ export async function execute(cmd, opts = {}) {
             const tSub = (args[1] || "").toLowerCase();
             const tName = args[2];
             if (tSub === "save") { saveTheme(tName); return; }
-            if (tSub === "list") { listThemes(); return; }
+            if (tSub === "list") {
+                if (!savedThemeNames().length) listThemes();
+                else openSavesPanel();
+                return;
+            }
             if (tSub === "apply" || tSub === "load") { applySavedTheme(tName); return; }
             if (tSub === "delete" || tSub === "rm" || tSub === "remove") { deleteTheme(tName); return; }
             if (tSub === "pull" && args[2]) {

@@ -73,14 +73,10 @@ export function getBoardCounts() {
 }
 
 export function showBoardList() {
-    const boards = getBoardCounts();
-    const names = Object.keys(boards);
-    if (!names.length) {
-        pinToast("no synced boards — pull one with: tui -pin-board <board-url>");
-    } else {
-        pinToast("synced boards:\n" + names.map((b) => `${b} (${boards[b]})`).join("\n"));
-    }
-    dbg("[SpoTUI-pin] synced boards:", boards);
+    // Non-empty case opens the menu (see commands); this stays as the
+    // empty-library hint.
+    pinToast("no synced boards — pull one with: tui -pin-board <board-url>");
+    dbg("[SpoTUI-pin] synced boards: none");
 }
 
 export function clearBoard(ref) {

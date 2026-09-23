@@ -25,6 +25,10 @@ export const app = {
     helpPanelOpen: false,
     aboutPanelOpen: false,
     themePanelOpen: false,
+    boardsPanelOpen: false,
+    savesPanelOpen: false,
+    selectedBoard: 0,
+    selectedSave: 0,
     onboardingPanelOpen: false,
     onboardingStage: "commands",
     onboardingShowAllThemes: false,
@@ -70,5 +74,6 @@ export function isAnyPanelOpen() {
 // Read-only panels (help, about) leave the command input usable.
 export function isInputBlockingPanelOpen() {
     return app.standbyOpen || app.playlistPanelOpen || app.searchPanelOpen ||
-        app.themePanelOpen || app.onboardingPanelOpen || app.djPanelOpen;
+        app.themePanelOpen || app.boardsPanelOpen || app.savesPanelOpen ||
+        app.onboardingPanelOpen || app.djPanelOpen;
 }

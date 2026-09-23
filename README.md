@@ -44,7 +44,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -l -a <on/off>` | Toggle ASCII animation |
 | `tui -wp <url> [-o <0-1>] [-fit <cover/contain/fill/none>] [-pos <center/top/bottom/left/right>] [-rich <0-200>]` | Set wallpaper — bare `tui -wp` shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off) |
 | `tui -t pull <theme_id>` | Apply a theme by its ID (you can find the id on our website) |
-| `tui -t <save <name>\|list\|apply <name>\|delete <name>>` | Snapshot the current look locally; list/restore/delete snapshots |
+| `tui -t <save <name>\|list\|apply <name>\|delete <name>>` | Snapshot the current look locally; list opens the themes menu (Enter applies, Del deletes); restore/delete snapshots |
 | `tui bind "<Letter>" "<command>"` | Binds Alt+`<Letter>` to run a TUI command |
 | `tui unbind "<Letter>"` | Remove the Alt+<Letter> keybind |
 | `tui bind clear` | Remove all keybinds |
@@ -62,7 +62,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -posters <add <url> [board]\|count <1-12\|lo-hi>\|density <1-10\|lo-hi>\|theme <#hex>\|opacity <0-1>\|autoshuffle <on/off>\|symmetric <on/off>\|rotate <min/off>>` | Pin an image URL (optional board tag so -pin-clear removes it); visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer |
 | `tui -posters [-o <0-1>] [-c <1-12\|lo-hi>] [-d <1-10\|lo-hi>] [-t <#hex>] [-r <min/off>]` | Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer |
 | `tui -pin-board <board-url> [token] [-o/-c/-d/-t/-r]` | Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync |
-| `tui -pin-boards` / `tui -pin-clear <board>` | List synced boards with counts / forget one board (wall switches off if empty) |
+| `tui -pin-boards` / `tui -pin-clear <board>` | Boards menu (Enter re-pulls, Del forgets, A adds) / forget one board (wall switches off if empty) |
 | `tui -pin-feed` / `tui -pin-refresh [board] [-o/-c/-d/-t/-r]` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins, then recreate the wall (flags apply after) / save API token on this machine only |
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |
 | `tui -ly -cp off` | Reset lyrics colors |
@@ -149,7 +149,7 @@ appearance comes back live, no relaunch needed.
 
 ```bash
 tui -t save cozy      # snapshot current look as cozy
-tui -t list           # what did I save?
+tui -t list           # browse saved themes (Enter applies, Del deletes)
 tui -t apply cozy     # restore it, live
 tui -t delete cozy    # forget it
 ```

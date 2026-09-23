@@ -110,9 +110,14 @@ export function saveTheme(name) {
 }
 
 export function listThemes() {
-    const names = Object.keys(readSaves());
-    pinToast(names.length ? "saved themes:\n" + names.join("\n") : "no saved themes — save one with: tui -t save <name>");
-    dbg("[SpoTUI] saved themes:", names);
+    // Non-empty case opens the menu (see commands); this stays as the
+    // empty-library hint.
+    pinToast("no saved themes — save one with: tui -t save <name>");
+    dbg("[SpoTUI] saved themes: none");
+}
+
+export function savedThemeNames() {
+    return Object.keys(readSaves());
 }
 
 export function deleteTheme(name) {
