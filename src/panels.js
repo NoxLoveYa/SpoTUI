@@ -64,7 +64,10 @@ export function setPanelState(panelId, className, openVarName, targetState) {
     if (panel) panel.hidden = !targetState;
     const input = document.getElementById("spotui-input");
     if (input) {
-        if (targetState) input.blur();
+        // Read-only panels leave the command bar live so commands can be
+        // sent while reading; interactive panels take focus away.
+        if (targetState && (openVarName === "helpPanelOpen" || openVarName === "aboutPanelOpen")) input.focus();
+        else if (targetState) input.blur();
         else input.focus();
     }
     if (targetState) document.addEventListener("keydown", handleGlobalEsc);

@@ -65,3 +65,10 @@ export const app = {
 export function isAnyPanelOpen() {
     return app.standbyOpen || Object.keys(app).some(k => k.endsWith("PanelOpen") && k !== "lyricsPanelOpen" && app[k]);
 }
+
+// Panels with their own inputs or key handling: the command bar yields to them.
+// Read-only panels (help, about) leave the command input usable.
+export function isInputBlockingPanelOpen() {
+    return app.standbyOpen || app.playlistPanelOpen || app.searchPanelOpen ||
+        app.themePanelOpen || app.onboardingPanelOpen || app.djPanelOpen;
+}

@@ -1,7 +1,7 @@
 import { initAsciiAnimation } from "./ascii.js";
 import { execute } from "./commands.js";
 import { initSearchPanel } from "./search.js";
-import { app, isAnyPanelOpen } from "./state.js";
+import { app, isInputBlockingPanelOpen } from "./state.js";
 
 export function setTuiMode(mode) {
     app.tuiMode = mode === "cli" ? "cli" : "command";
@@ -55,17 +55,21 @@ export function createTerminal() {
 
     const input = document.getElementById("spotui-input");
 
-    // Focus the command input when user starts typing
+    // Focus the command input when user starts typing.
+    // Read-only panels (help/about) don't steal the bar; panels with their
+    // own inputs or key handling (playlist/search/theme/...) keep it.
     document.addEventListener("keydown", (e) => {
         if (document.activeElement === input) return;
-        if (isAnyPanelOpen()) return;
+        if (isInputBlockingPanelOpen()) return;
+        const ae = document.activeElement;
+        if (ae && ae !== input && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT" || ae.isContentEditable)) return;
         if (e.ctrlKey || e.altKey || e.metaKey) return;
         if (e.key.length !== 1) return;
         input.focus();
     });
 
     input.addEventListener("keydown", async (e) => {
-        if (isAnyPanelOpen()) {
+        if (isInputBlockingPanelOpen()) {
             e.stopImmediatePropagation();
             return;
         }
