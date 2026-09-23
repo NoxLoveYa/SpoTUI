@@ -41,7 +41,9 @@ jobs:
           fi
 
       - name: Convert missing board videos to VP9 webm
-        run: python3 scripts/convert-posters.py assets/posters /tmp/boards.txt
+        run: |
+          cd "$WORKDIR"
+          python3 scripts/convert-posters.py assets/posters /tmp/boards.txt
 
       - name: Commit and push new clips
         run: |
