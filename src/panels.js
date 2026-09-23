@@ -267,7 +267,10 @@ export function openBoardsPanel() {
     setPanelState("spotui-boards-panel", "spotui-boards-panel", "boardsPanelOpen", true);
     app.selectedBoard = 0;
     renderBoardsPanel();
-    document.addEventListener("keydown", handleBoardsKeydown);
+    // Deferred past the in-flight Enter: the keydown that submitted the
+    // command bubbles to document AFTER this runs, and a synchronously
+    // attached handler would receive its own opening Enter as activation.
+    setTimeout(() => { if (app.boardsPanelOpen) document.addEventListener("keydown", handleBoardsKeydown); }, 0);
 }
 
 export function closeBoardsPanel() {
@@ -320,7 +323,8 @@ export function openSavesPanel() {
     setPanelState("spotui-saves-panel", "spotui-saves-panel", "savesPanelOpen", true);
     app.selectedSave = 0;
     renderSavesPanel();
-    document.addEventListener("keydown", handleSavesKeydown);
+    // Same deferred attach as the boards menu (opening Enter must not self-activate).
+    setTimeout(() => { if (app.savesPanelOpen) document.addEventListener("keydown", handleSavesKeydown); }, 0);
 }
 
 export function closeSavesPanel() {
