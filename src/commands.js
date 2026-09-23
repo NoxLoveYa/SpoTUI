@@ -16,7 +16,7 @@ import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
-import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, getBoardCounts, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
+import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 import { dbg, pinToast } from "./utils.js";
 
 export async function execute(cmd, opts = {}) {
@@ -170,7 +170,7 @@ export async function execute(cmd, opts = {}) {
             return;
         }
         if (argsLower[0] === "-pin-boards") {
-            console.log("[SpoTUI-pin] synced boards:", getBoardCounts());
+            showBoardList();
             return;
         }
         if (argsLower[0] === "-pin-clear") {
