@@ -110,7 +110,7 @@ tui -posters density 3-8  # each poster rolls its own size in that range
 tui -posters rotate 10   # new random picks every 10 min, off to disable
 tui -posters clear       # forget all pinned images
 tui -pin-boards          # what came from which board
-tui -pin-clear lifr112/aesthetic   # forget one board only
+tui -pin-clear someuser/someboard   # forget one board only
 tui -pin-refresh         # re-pull synced boards, recreate the wall with current ranges
 tui -pin-refresh posters # re-pull only boards matching "posters" (picks up pins added later)
 ```
