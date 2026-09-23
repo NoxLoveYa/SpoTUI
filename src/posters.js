@@ -690,6 +690,11 @@ export async function syncPinterestBoard(input, tokenArg) {
                 const ix = imgs.findIndex((x) => x.id === id);
                 if (ix !== -1) imgs.splice(ix, 1);
             }
+            // Drop the still thumbnail when its video arrives (no dupes).
+            if (m.image) {
+                const jx = imgs.findIndex((x) => !x.k && !x.id && x.u === m.image);
+                if (jx !== -1) imgs.splice(jx, 1);
+            }
             imgs.unshift({ u: m.video.url, id: id || undefined, b: label, k: "video", p: m.image || undefined });
             added++; addedVids++;
         } else if (m.image) {
