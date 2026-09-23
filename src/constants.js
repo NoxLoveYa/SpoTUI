@@ -6,6 +6,9 @@ export const ANIMATION_KEY = "spotui:ascii-animation";
 export const LYRICS_STORAGE_KEY = "spotui:lyrics-open";
 export const LYRICS_ANIMATION_KEY = "spotui:lyrics-animation";
 export const WP_URL_KEY = "spotui:wp-url";
+export const WP_FIT_KEY = "spotui:wp-fit";
+export const WP_POS_KEY = "spotui:wp-pos";
+export const WP_RICH_KEY = "spotui:wp-rich";
 export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";
@@ -105,7 +108,7 @@ export const ADD_THEME_IMG_ERR = `https://imgs.search.brave.com/qsWzCiBrdeOE9PQm
 export const COMMAND_LIST = [
     { cmd: "tui -l &lt;on/off&gt;", desc: "Toggle ASCII logo visibility" },
     { cmd: "tui -l -a &lt;on/off&gt;", desc: "Toggle ASCII animation" },
-    { cmd: "tui -wp &lt;url&gt; [-o &lt;opacity&gt;]", desc: "Set wallpaper (opacity 0-1)" },
+    { cmd: "tui -wp &lt;url&gt; [-o &lt;0-1&gt;] [-fit &lt;cover/contain/fill/none&gt;] [-pos &lt;center/top/bottom/left/right&gt;] [-rich &lt;0-200&gt;]", desc: "Set wallpaper — bare tui -wp shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off)" },
     { cmd: "tui -wp off", desc: "Remove wallpaper" },
     { cmd: "tui -t pull &lt;theme_id&gt;", desc: "Apply a theme by its ID (you can find the id on our website)" },
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command" },
@@ -153,10 +156,11 @@ export const COMMAND_LIST = [
     { cmd: "jam join <pin>", desc: "Join a jam by PIN (volume/lyrics only)" },
     { cmd: "jam leave", desc: "Leave the current jam" },
     { cmd: "tui -posters &lt;on/off&gt;", desc: "Show the wall (pin images first) / hide it, images are kept" },
-    { cmd: "tui -posters &lt;shuffle/clear&gt;", desc: "Re-roll posters, spots and sizes / delete everything and switch the wall off" },
-    { cmd: "tui -posters &lt;add &lt;url&gt;|count &lt;1-8|lo-hi&gt;|density &lt;1-10|lo-hi&gt;|theme &lt;light/dark&gt;|opacity &lt;0-1&gt;|rotate &lt;min/off&gt;&gt;", desc: "Pin an image; visible count (range = random each shuffle); size (range = random per poster); dark/light frames; layer opacity; auto re-roll timer" },
-    { cmd: "tui -pin-board &lt;board-url&gt; [token]", desc: "Sync a board's pins; public boards need no token, private ones do" },
+    { cmd: "tui -posters &lt;shuffle/clear/settings&gt;", desc: "Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings" },
+    { cmd: "tui -posters &lt;add &lt;url&gt;|count &lt;1-8|lo-hi&gt;|density &lt;1-10|lo-hi&gt;|theme &lt;#hex&gt;|opacity &lt;0-1&gt;|autoshuffle &lt;on/off&gt;|rotate &lt;min/off&gt;&gt;", desc: "Pin an image; visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer" },
+    { cmd: "tui -posters [-o &lt;0-1&gt;] [-c &lt;1-8|lo-hi&gt;] [-d &lt;1-10|lo-hi&gt;] [-t &lt;#hex&gt;] [-r &lt;min|off&gt;]", desc: "Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer" },
+    { cmd: "tui -pin-board &lt;board-url&gt; [token] [-o/-c/-d/-t/-r]", desc: "Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync" },
     { cmd: "tui -pin-boards | tui -pin-clear &lt;board&gt;", desc: "List synced boards with counts / forget one board (wall switches off if empty)" },
-    { cmd: "tui -pin-feed | tui -pin-refresh | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards and recreate the wall / save API token on this machine only" },
+    { cmd: "tui -pin-feed | tui -pin-refresh [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards and recreate the wall (flags apply after) / save API token on this machine only" },
     { cmd: "help", desc: "Show this panel" },
 ];

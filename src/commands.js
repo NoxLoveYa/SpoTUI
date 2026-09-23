@@ -15,7 +15,30 @@ import { storageClear, storageGet, storageRemove, storageSet } from "./storage.j
 import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { setWallpaper } from "./wallpaper.js";
-import { addPoster, clearBoard, clearPosters, getBoardCounts, refreshBoards, setPinToken, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
+import { WP_FIT_KEY, WP_POS_KEY, WP_RICH_KEY } from "./constants.js";
+import { addPoster, clearBoard, clearPosters, getBoardCounts, pinToast, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
+
+// Shared -o/-c/-d/-t/-r flag handling for poster commands (combinable,
+// works alongside subcommands and after board syncs).
+function posterFlag(argsLower, args, name) {
+    const i = argsLower.indexOf(name);
+    return i !== -1 && args[i + 1] ? args[i + 1] : undefined;
+}
+
+function applyPosterFlags(argsLower, args) {
+    let n = 0;
+    const o = posterFlag(argsLower, args, "-o");
+    if (o !== undefined) { setPosterOpacity(o); n++; }
+    const c = posterFlag(argsLower, args, "-c");
+    if (c !== undefined) { setPosterCount(c); n++; }
+    const d = posterFlag(argsLower, args, "-d");
+    if (d !== undefined) { setPosterDensity(d); n++; }
+    const t = posterFlag(argsLower, args, "-t");
+    if (t !== undefined) { setPosterTheme(t); n++; }
+    const r = posterFlag(argsLower, args, "-r");
+    if (r !== undefined) { setPosterRotate(r); n++; }
+    return n;
+}
 
 export async function execute(cmd, opts = {}) {
     const cleanedCmd = stripCommandPrefix(cmd);
@@ -64,6 +87,9 @@ export async function execute(cmd, opts = {}) {
                 if (wp) wp.remove();
                 storageRemove(WP_URL_KEY);
                 storageRemove(WP_OPACITY_KEY);
+                storageRemove(WP_FIT_KEY);
+                storageRemove(WP_POS_KEY);
+                storageRemove(WP_RICH_KEY);
                 return;
             }
             if (url) {
@@ -72,28 +98,78 @@ export async function execute(cmd, opts = {}) {
                 if (oIdx !== -1 && args[oIdx + 1]) opacity = args[oIdx + 1];
                 if (args.length > urlIdx + 1 && oIdx === -1) console.warn("[SpoTUI-dbg] URL looks space-split (contains spaces?). Got url=" + JSON.stringify(url) + " extra=" + JSON.stringify(args.slice(urlIdx + 1)) + ". Quote handling: commands split on whitespace, so use %20 or dashes.");
                 console.log("[SpoTUI-dbg] -wp parsed:", { url, opacity });
-                setWallpaper(url, opacity);
+                const flag = (name) => {
+                    const i = argsLower.indexOf(name);
+                    return i !== -1 && args[i + 1] ? args[i + 1] : undefined;
+                };
+                const hasFlags = ["-o", "-fit", "-pos", "-rich"].some((f) => argsLower.includes(f));
+                const looksLikeUrl = url && !url.startsWith("-");
+                if (!looksLikeUrl && !hasFlags) {
+                    // Bare `tui -wp`: report current wallpaper (toast + console).
+                    const cur = {
+                        url: storageGet(WP_URL_KEY) || "(none)",
+                        opacity: storageGet(WP_OPACITY_KEY) || "1",
+                        fit: storageGet(WP_FIT_KEY) || "cover",
+                        pos: storageGet(WP_POS_KEY) || "center",
+                        rich: storageGet(WP_RICH_KEY) || "100",
+                        live: document.getElementById("spotui-wallpaper") ? "yes" : "no",
+                    };
+                    pinToast(`wallpaper\n${cur.url}\nopacity ${cur.opacity} · ${cur.fit} · ${cur.pos} · rich ${cur.rich}`);
+                    console.log("[SpoTUI-dbg] current wallpaper:", cur);
+                    return;
+                }
+                if (!looksLikeUrl && hasFlags) {
+                    // Flags alone: tweak the current wallpaper, keep its URL.
+                    const live = document.getElementById("spotui-wallpaper");
+                    let curUrl = storageGet(WP_URL_KEY);
+                    let curOp = storageGet(WP_OPACITY_KEY) || "1";
+                    if (live) {
+                        curUrl = live.tagName === "VIDEO"
+                            ? (live.currentSrc || live.src || live.getAttribute("src"))
+                            : ((live.style.backgroundImage.match(/url\(["']?(.*?)["']?\)/) || [])[1] || curUrl);
+                        curOp = live.style.opacity || curOp;
+                    }
+                    if (!curUrl) {
+                        console.warn("[SpoTUI-dbg] no wallpaper set yet — give a URL first: tui -wp <url>");
+                        return;
+                    }
+                    console.log("[SpoTUI-dbg] -wp tweaking current wallpaper.");
+                    setWallpaper(curUrl, flag("-o") ?? curOp, true, {
+                        fit: flag("-fit") ?? storageGet(WP_FIT_KEY),
+                        pos: flag("-pos") ?? storageGet(WP_POS_KEY),
+                        rich: flag("-rich") ?? storageGet(WP_RICH_KEY),
+                    });
+                    return;
+                }
+                setWallpaper(url, opacity, true, { fit: flag("-fit"), pos: flag("-pos"), rich: flag("-rich") });
             } else {
-                console.warn('[SpoTUI-dbg] -wp got no URL. Usage: tui -wp <url> [-o 0-1] | tui -wp off. Same-origin video that always works: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5');
+                console.warn('[SpoTUI-dbg] -wp got no URL. Usage: tui -wp <url> [-o 0-1] [-fit cover|contain|fill|none] [-pos center|top|"top left"] [-rich 0-200] | tui -wp off. Same-origin video that always works: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5');
             }
             return;
         }
         if (argsLower[0] === "-posters" || argsLower[0] === "-poster") {
             const sub = (args[1] || "on").toLowerCase();
-            if (sub === "on" || sub === "off") setPostersEnabled(sub === "on");
-            else if (sub === "shuffle") shufflePosters();
-            else if (sub === "clear") clearPosters();
-            else if (sub === "add" && args[2]) addPoster(args[2]);
-            else if (sub === "count") setPosterCount(args[2]);
-            else if (sub === "density") setPosterDensity(args[2]);
-            else if (sub === "theme") setPosterTheme(args[2]);
-            else if (sub === "opacity") setPosterOpacity(args[2]);
+            let acted = false;
+            if (sub === "on" || sub === "off") { setPostersEnabled(sub === "on"); acted = true; }
+            else if (sub === "shuffle") { shufflePosters(); acted = true; }
+            else if (sub === "clear") { clearPosters(); acted = true; }
+            else if (sub === "settings" || sub === "status") { showPosterSettings(); acted = true; }
+            else if (sub === "add" && args[2]) { addPoster(args[2]); acted = true; }
+            else if (sub === "count") { setPosterCount(args[2]); acted = true; }
+            else if (sub === "density") { setPosterDensity(args[2]); acted = true; }
+            else if (sub === "theme") { setPosterTheme(args[2]); acted = true; }
+            else if (sub === "opacity") { setPosterOpacity(args[2]); acted = true; }
+            else if (sub === "autoshuffle") { setPosterAutoshuffle(args[2]); acted = true; }
             else if (sub === "rotate") setPosterRotate(args[2]);
-            else console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|add <url>|count <1-8|lo-hi>|density <1-10|lo-hi>|theme <light|dark>|opacity <0-1>|rotate <min|off>>");
+            else if (sub !== "-o" && sub !== "-c" && sub !== "-d" && sub !== "-t" && sub !== "-r") console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|settings|add <url>|count <1-8|lo-hi>|density <1-10|lo-hi>|theme <#hex>|opacity <0-1>|autoshuffle <on|off>|rotate <min|off>> [-o <0-1>] [-c <1-8|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
+            if (applyPosterFlags(argsLower, args) > 0) acted = true;
+            if (!acted) console.warn("[SpoTUI-pin] nothing to do — see usage above.");
             return;
         }
         if (argsLower[0] === "-pin-refresh") {
-            refreshBoards().catch((e) => console.error("[SpoTUI-pin] refresh failed:", e.message));
+            refreshBoards()
+                .then(() => { applyPosterFlags(argsLower, args); })
+                .catch((e) => console.error("[SpoTUI-pin] refresh failed:", e.message));
             return;
         }
         if (argsLower[0] === "-pin-boards") {
@@ -106,8 +182,13 @@ export async function execute(cmd, opts = {}) {
             return;
         }
         if (argsLower[0] === "-pin-board") {
-            if (!args[1]) console.warn("[SpoTUI-pin] usage: tui -pin-board <board-url-or-id> [token]");
-            else syncPinterestBoard(args[1], args[2]).catch((e) => console.error("[SpoTUI-pin] sync failed:", e.message));
+            if (!args[1] || args[1].startsWith("-")) console.warn("[SpoTUI-pin] usage: tui -pin-board <board-url-or-id> [token] [-o <0-1>] [-c <1-8|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
+            else {
+                const token = args[2] && !args[2].startsWith("-") ? args[2] : undefined;
+                syncPinterestBoard(args[1], token)
+                    .then(() => { applyPosterFlags(argsLower, args); })
+                    .catch((e) => console.error("[SpoTUI-pin] sync failed:", e.message));
+            }
             return;
         }
         if (argsLower[0] === "-pin-feed") {

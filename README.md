@@ -42,7 +42,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 |---------|-------------|
 | `tui -l <on/off>` | Toggle ASCII logo visibility |
 | `tui -l -a <on/off>` | Toggle ASCII animation |
-| `tui -wp <url> [-o <opacity>]` | Set wallpaper (opacity 0-1) |
+| `tui -wp <url> [-o <0-1>] [-fit <cover/contain/fill/none>] [-pos <center/top/bottom/left/right>] [-rich <0-200>]` | Set wallpaper — bare `tui -wp` shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off) |
 | `tui -t pull <theme_id>` | Apply a theme by its ID (you can find the id on our website) |
 | `tui bind "<Letter>" "<command>"` | Binds Alt+`<Letter>` to run a TUI command |
 | `tui unbind "<Letter>"` | Remove the Alt+<Letter> keybind |
@@ -55,11 +55,12 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui actions delete <name>` | Delete an action |
 | `tui -wp off` | Remove wallpaper |
 | `tui -posters <on/off>` | Show the wall (pin images first) / hide it, images are kept |
-| `tui -posters <shuffle/clear>` | Re-roll posters, spots and sizes / delete everything and switch the wall off |
-| `tui -posters <add <url>\|count <1-8\|lo-hi>\|density <1-10\|lo-hi>\|theme <light/dark>\|opacity <0-1>\|rotate <min/off>>` | Pin an image; visible count (range = random each shuffle); size (range = random per poster); dark/light frames; layer opacity; auto re-roll timer |
-| `tui -pin-board <board-url> [token]` | Sync a board's pins; public boards need no token, private ones do |
+| `tui -posters <shuffle/clear/settings>` | Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings |
+| `tui -posters <add <url>\|count <1-8\|lo-hi>\|density <1-10\|lo-hi>\|theme <#hex>\|opacity <0-1>\|autoshuffle <on/off>\|rotate <min/off>>` | Pin an image; visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer |
+| `tui -posters [-o <0-1>] [-c <1-8\|lo-hi>] [-d <1-10\|lo-hi>] [-t <#hex>] [-r <min/off>]` | Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer |
+| `tui -pin-board <board-url> [token] [-o/-c/-d/-t/-r]` | Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync |
 | `tui -pin-boards` / `tui -pin-clear <board>` | List synced boards with counts / forget one board (wall switches off if empty) |
-| `tui -pin-feed` / `tui -pin-refresh` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards and recreate the wall / save API token on this machine only |
+| `tui -pin-feed` / `tui -pin-refresh [-o/-c/-d/-t/-r]` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards and recreate the wall (flags apply after) / save API token on this machine only |
 | `tui -pin-feed` | Random mix from all your boards (needs token) |
 | `tui -pin-token <token>` | Save your Pinterest API token (local only) |
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |

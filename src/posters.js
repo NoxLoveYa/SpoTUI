@@ -1,3 +1,4 @@
+import { HEX_COLOR_REGEX } from "./constants.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 
 // Poster wall: Pinterest-style prints pinned on top of the video wallpaper.
@@ -11,6 +12,7 @@ const POSTERS_SEED = "spotui:posters-seed";
 const POSTERS_DENSITY = "spotui:posters-density";
 const POSTERS_THEME = "spotui:posters-theme";
 const POSTERS_OPACITY = "spotui:posters-opacity";
+const POSTERS_AUTOSHUFFLE = "spotui:posters-autoshuffle";
 const PIN_TOKEN = "spotui:pin-token";
 
 const MAX_STORED = 40;
@@ -112,7 +114,7 @@ export function renderPosters() {
     box.innerHTML = "";
     const opRaw = parseFloat(storageGet(POSTERS_OPACITY) || "1");
     box.style.opacity = String(Math.max(0, Math.min(1, isNaN(opRaw) ? 1 : opRaw)));
-    const frame = storageGet(POSTERS_THEME) === "dark" ? "#1a1e24" : "#f5f1e6";
+    const frame = posterFrameColor();
     if (!isPostersEnabled()) return;
     const imgs = getPosterImages();
     if (!imgs.length) {
@@ -241,15 +243,22 @@ function parseCountRange() {
     return [lo, hi];
 }
 
-export function setPosterTheme(mode) {
-    const m = String(mode || "").toLowerCase();
-    if (m !== "dark" && m !== "light") {
-        console.warn("[SpoTUI-pin] usage: tui -posters theme <light|dark>");
+// Frame color: any hex. Legacy "dark"/"light" presets map to their hexes.
+function posterFrameColor() {
+    const v = String(storageGet(POSTERS_THEME) || "").trim();
+    if (v === "dark") return "#1a1e24";
+    if (HEX_COLOR_REGEX.test(v)) return v;
+    return "#f5f1e6";
+}
+export function setPosterTheme(color) {
+    const v = String(color || "").trim();
+    if (!HEX_COLOR_REGEX.test(v)) {
+        console.warn("[SpoTUI-pin] usage: tui -posters theme <#hex>  (e.g. tui -posters theme #1a1e24)");
         return;
     }
-    storageSet(POSTERS_THEME, m);
+    storageSet(POSTERS_THEME, v);
     renderPosters();
-    console.log("[SpoTUI-pin] poster frames:", m);
+    console.log("[SpoTUI-pin] poster frames:", v);
 }
 
 export function setPosterOpacity(v) {
@@ -300,6 +309,54 @@ export function setPosterRotate(min) {
     storageSet(POSTERS_ROTATE, String(v));
     startRotateTimer();
     console.log(`[SpoTUI-pin] auto-rotate every ${v} min (new random picks).`);
+}
+
+export function setPosterAutoshuffle(state) {
+    const on = String(state || "").toLowerCase() === "on";
+    if (on) storageSet(POSTERS_AUTOSHUFFLE, "1");
+    else storageRemove(POSTERS_AUTOSHUFFLE);
+    console.log(`[SpoTUI-pin] launch shuffle ${on ? "ON (fresh layout every Spotify start)" : "OFF"}.`);
+}
+
+// Called on boot before first render when the wall is enabled.
+export function maybeAutoshuffle() {
+    if (storageGet(POSTERS_AUTOSHUFFLE) !== "1") return false;
+    storageSet(POSTERS_SEED, String(Date.now() % 100000));
+    console.log("[SpoTUI-pin] boot: launch shuffle rolled a fresh layout.");
+    return true;
+}
+
+// Visible toast (console.log alone is invisible without DevTools open).
+export function pinToast(text, ms = 7000) {
+    try {
+        const old = document.getElementById("spotui-pin-toast");
+        if (old) old.remove();
+        const t = document.createElement("div");
+        t.id = "spotui-pin-toast";
+        t.textContent = text;
+        t.style.cssText = "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:var(--panel-bg-color,var(--background-base,rgba(10,14,18,.92)));color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--panel-border-color,var(--essential-base,#7fd4d4));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;";
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), ms);
+    } catch (e) {}
+}
+
+export function showPosterSettings() {
+    const [cLo, cHi] = parseCountRange();
+    const [dLo, dHi] = parseDensity();
+    const opRaw = parseFloat(storageGet(POSTERS_OPACITY) || "1");
+    const op = String(Math.max(0, Math.min(1, isNaN(opRaw) ? 1 : opRaw)));
+    const theme = posterFrameColor();
+    const boards = getBoardCounts();
+    const boardStr = Object.keys(boards).length
+        ? Object.entries(boards).map(([b, n]) => `${b} (${n})`).join(", ")
+        : "none";
+    const summary =
+        `wall ${isPostersEnabled() ? "ON" : "OFF"} · ${getPosterImages().length} images\n` +
+        `boards: ${boardStr}\n` +
+        `count ${cLo === cHi ? cLo : `${cLo}-${cHi}`} · density ${dLo === dHi ? dLo : `${dLo}-${dHi}`} · ${theme} · opacity ${op}\n` +
+        `rotate ${storageGet(POSTERS_ROTATE) ? `every ${storageGet(POSTERS_ROTATE)} min` : "off"} · autoshuffle ${storageGet(POSTERS_AUTOSHUFFLE) === "1" ? "on" : "off"}`;
+    pinToast(summary);
+    console.log("[SpoTUI-pin] current settings:\n" + summary, boards);
 }
 
 function stopRotateTimer() {

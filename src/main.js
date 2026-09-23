@@ -1,13 +1,14 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, createControlButtons } from "./appearance.js";
 import { initUpdateBanner, showRestartPopup } from "./banner.js";
 import { LYRICS_ANIMATION_KEY, LYRICS_STORAGE_KEY, WP_OPACITY_KEY, WP_URL_KEY } from "./constants.js";
+import { WP_FIT_KEY, WP_POS_KEY, WP_RICH_KEY } from "./constants.js";
 import { resumeJamFromStorage } from "./jam.js";
 import { handleKeybindKeydown } from "./keybinds.js";
 import { initDjBridge } from "./dj.js";
 import { initLyricsBridge, openLyricsPanel, waitForPlayerReadyThen } from "./lyrics.js";
 import { isFirstBoot, launchFirstBootIfNeeded } from "./onboarding.js";
 import { storageGet } from "./storage.js";
-import { getBoardCounts, getPosterImages, isPostersEnabled, renderPosters, startRotateTimer } from "./posters.js";
+import { getBoardCounts, getPosterImages, isPostersEnabled, maybeAutoshuffle, renderPosters, startRotateTimer } from "./posters.js";
 import { injectStyle } from "./styles.js";
 import { initSync } from "./sync.js";
 import { createTerminal } from "./terminal.js";
@@ -64,13 +65,17 @@ try {
     }
     if (storageGet(WP_URL_KEY)) {
         console.log("[SpoTUI-dbg] boot: restoring saved wallpaper:", storageGet(WP_URL_KEY), "opacity:", storageGet(WP_OPACITY_KEY) || "1", "(clear with tui -wp off)");
-        setTimeout(() => setWallpaper(storageGet(WP_URL_KEY), storageGet(WP_OPACITY_KEY) || "1", false), 1500);
+        setTimeout(() => setWallpaper(storageGet(WP_URL_KEY), storageGet(WP_OPACITY_KEY) || "1", false, {
+            fit: storageGet(WP_FIT_KEY) || undefined,
+            pos: storageGet(WP_POS_KEY) || undefined,
+            rich: storageGet(WP_RICH_KEY) || undefined,
+        }), 1500);
     } else {
         console.log("[SpoTUI-dbg] boot: no saved wallpaper. Set one with: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5");
     }
     if (isPostersEnabled()) {
         console.log("[SpoTUI-pin] boot: wall ON,", getPosterImages().length, "stored image(s), boards:", getBoardCounts());
-        setTimeout(() => { renderPosters(); startRotateTimer(); }, 2200);
+        setTimeout(() => { maybeAutoshuffle(); renderPosters(); startRotateTimer(); }, 2200);
     } else {
         console.log("[SpoTUI-pin] boot: wall OFF,", getPosterImages().length, "stored image(s) (enable with tui -posters on).");
     }

@@ -1,4 +1,4 @@
-import { WP_OPACITY_KEY, WP_URL_KEY } from "./constants.js";
+import { WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { reassertPosterLayer } from "./posters.js";
 import { storageSet } from "./storage.js";
 
@@ -44,9 +44,10 @@ function explainFailure(url, wp) {
     console.warn("[SpoTUI-dbg] likely cause(s):\n - " + (hints.length ? hints.join("\n - ") : "unknown, see state dump above."));
 }
 
-// Set background wallpaper (image or video) — debug instrumented
-export function setWallpaper(url, opacity, save = true) {
-    console.log("[SpoTUI-dbg] setWallpaper called:", { url, opacity, save });
+// Set background wallpaper (image or video) — debug instrumented.
+// opts: { fit: cover|contain|fill|none, pos: css position, rich: 0-200 }.
+export function setWallpaper(url, opacity, save = true, opts = {}) {
+    console.log("[SpoTUI-dbg] setWallpaper called:", { url, opacity, save, ...opts });
     let tui = document.getElementById("spotui-tui");
     if (!tui) {
         console.warn("[SpoTUI-dbg] abort: #spotui-tui not found yet (Spotify still loading). Retry the command in a few seconds.");
@@ -80,9 +81,6 @@ export function setWallpaper(url, opacity, save = true) {
         wp.style.width = "100%";
         wp.style.height = "100%";
         wp.style.zIndex = "-1";
-        wp.style.objectFit = "cover";
-        wp.style.backgroundSize = "cover";
-        wp.style.backgroundPosition = "center";
         if (isVideo) {
             wp.muted = true;
             wp.autoplay = true;
@@ -104,6 +102,26 @@ export function setWallpaper(url, opacity, save = true) {
     } else {
         console.log("[SpoTUI-dbg] reusing existing element:", wp.tagName);
     }
+
+    // Fit / position / richness — applied on create AND reuse so changes take
+    // effect without clearing first. rich 100 = default lift, 0 = filter off.
+    const fit = ["cover", "contain", "fill", "none"].includes(String(opts.fit || "").toLowerCase())
+        ? String(opts.fit).toLowerCase() : "cover";
+    const posWords = String(opts.pos || "center").toLowerCase().split(/\s+/).filter(Boolean);
+    const posOk = posWords.length >= 1 && posWords.length <= 2 &&
+        posWords.every((w) => ["center", "top", "bottom", "left", "right"].includes(w));
+    const pos = posOk ? posWords.join(" ") : "center";
+    if (!posOk && opts.pos) console.warn('[SpoTUI-dbg] bad -pos, use e.g. center, top, "top left". Got:', opts.pos);
+    let rich = parseInt(opts.rich ?? "100", 10);
+    if (isNaN(rich)) rich = 100;
+    rich = Math.max(0, Math.min(200, rich));
+    const r = rich / 100;
+    wp.style.objectFit = fit;
+    wp.style.objectPosition = pos;
+    wp.style.backgroundSize = fit === "fill" ? "100% 100%" : fit;
+    wp.style.backgroundPosition = pos;
+    wp.style.filter = rich === 0 ? "" : `saturate(${(1 + 0.1 * r).toFixed(3)}) contrast(${(1 + 0.04 * r).toFixed(3)})`;
+    console.log("[SpoTUI-dbg] applied:", { fit, pos, rich });
 
     if (isVideo) {
         if (wp.getAttribute("src") !== url) {
@@ -150,6 +168,9 @@ export function setWallpaper(url, opacity, save = true) {
     if (save) {
         storageSet(WP_URL_KEY, url);
         storageSet(WP_OPACITY_KEY, opacity);
+        storageSet(WP_FIT_KEY, fit);
+        storageSet(WP_POS_KEY, pos);
+        storageSet(WP_RICH_KEY, String(rich));
         console.log("[SpoTUI-dbg] saved to storage. Clear anytime with: tui -wp off");
     }
 }
