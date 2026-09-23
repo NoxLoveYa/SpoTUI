@@ -604,6 +604,7 @@ export async function refreshBoards(filter) {
         } catch (e) { console.warn("[SpoTUI-pin] re-pull failed for", b, "-", e.message); }
     }
     shufflePosters();
+    pinToast(`re-pulled ${ok}/${boards.length} board(s) — wall recreated`);
     dbg(`[SpoTUI-pin] re-pulled ${ok}/${boards.length} board(s), wall recreated randomly.`);
 }
 
@@ -647,8 +648,13 @@ export async function syncPinterestBoard(input, tokenArg) {
         }
     }
     if (!media.length) {
-        if (!token) console.warn("[SpoTUI-pin] nothing fetched. Board may be private — save a token (tui -pin-token <token>) and retry, or paste image URLs directly: tui -posters add <url>");
-        else console.warn("[SpoTUI-pin] nothing fetched. Check the board URL/id and token scopes (boards:read, pins:read).");
+        if (!token) {
+            pinToast("nothing fetched — board may be private (save a token) or blocked");
+            console.warn("[SpoTUI-pin] nothing fetched. Board may be private — save a token (tui -pin-token <token>) and retry, or paste image URLs directly: tui -posters add <url>");
+        } else {
+            pinToast("nothing fetched — check board URL/id and token scopes");
+            console.warn("[SpoTUI-pin] nothing fetched. Check the board URL/id and token scopes (boards:read, pins:read).");
+        }
         return;
     }
     const label = ref.slug ? `${ref.user}/${ref.slug}` : `board:${ref.id}`;
@@ -668,6 +674,7 @@ export async function syncPinterestBoard(input, tokenArg) {
     if (!isPostersEnabled()) storageSet(POSTERS_ON, "1");
     startRotateTimer();
     renderPosters();
+    pinToast(`synced ${added} new item(s), ${addedVids} video — wall updated`);
     dbg(`[SpoTUI-pin] synced ${added} new item(s) (${addedVids} video), ${imgs.length} total. Shuffle: tui -posters shuffle`);
 }
 
@@ -702,6 +709,7 @@ export async function syncPinterestFeed(tokenArg) {
         if (!isPostersEnabled()) storageSet(POSTERS_ON, "1");
         startRotateTimer();
         renderPosters();
+        pinToast(`feed mix: ${added} new from ${shuffled.length} board(s)`);
         dbg(`[SpoTUI-pin] feed mix: ${added} new image(s) from ${shuffled.length} board(s).`);
     } catch (e) {
         if (String(e.message || "").includes("Failed to fetch")) {
