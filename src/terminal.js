@@ -85,7 +85,8 @@ export function createTerminal() {
             }
             return;
         }
-        if (e.key === "Enter") {            const cmd = input.value.trim();
+        if (e.key === "Enter") {
+            const cmd = input.value.trim();
             if (cmd) {
                 app.commandHistory = [cmd, ...app.commandHistory.filter((entry) => entry !== cmd)].slice(0, 50);
             }

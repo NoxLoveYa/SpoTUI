@@ -120,6 +120,11 @@ export function savedThemeNames() {
     return Object.keys(readSaves());
 }
 
+export function savedThemeDetails() {
+    const saves = readSaves();
+    return Object.keys(saves).map((n) => ({ name: n, savedAt: (saves[n] && saves[n].savedAt) || 0 }));
+}
+
 export function deleteTheme(name) {
     const n = String(name || "").trim();
     if (!n) {

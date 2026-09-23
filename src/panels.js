@@ -7,7 +7,7 @@ import { closeLyricsPanel } from "./lyrics.js";
 import { closeOnboardingPanel } from "./onboarding.js";
 import { getPlaylists, handlePlaylistPanelKeydown, renderPlaylistPanel } from "./playlists.js";
 import { closeSearchPanel } from "./search.js";
-import { applyTheme as applySavedTheme, deleteTheme, savedThemeNames } from "./saves.js";
+import { applyTheme as applySavedTheme, deleteTheme, savedThemeDetails, savedThemeNames } from "./saves.js";
 import { clearBoard, getBoardCounts, refreshBoards } from "./posters.js";
 import { app } from "./state.js";
 import { print } from "./terminal.js";
@@ -241,7 +241,7 @@ function renderMenuRows(content, rows, selected) {
 // prefix reopens that menu (see consumePendingMenu) — the add/save
 // round-trip back into an updated list.
 function prefillCommand(text, menu, prefix) {
-    app.pendingMenu = menu ? { menu, prefix } : null;
+    app.pendingMenu = { menu, prefix };
     closeActivePanel();
     const input = document.getElementById("spotui-input");
     if (input) {
@@ -330,9 +330,9 @@ function renderSavesPanel() {
     const panel = document.getElementById("spotui-saves-panel");
     const content = panel && panel.querySelector(".spotui-saves-content");
     if (!content) return;
-    const names = savedThemeNames();
-    if (app.selectedSave >= names.length) app.selectedSave = 0;
-    renderMenuRows(content, names.map((n) => [escMenu(n), "saved theme"]), app.selectedSave);
+    const items = savedThemeDetails();
+    if (app.selectedSave >= items.length) app.selectedSave = 0;
+    renderMenuRows(content, items.map((t) => [escMenu(t.name), t.savedAt ? new Date(t.savedAt).toLocaleDateString() : "saved theme"]), app.selectedSave);
 }
 
 export function openSavesPanel() {
@@ -351,25 +351,25 @@ export function closeSavesPanel() {
 }
 
 export async function handleSavesKeydown(e) {
-    const names = savedThemeNames();
+    const items = savedThemeDetails();
     if (e.key === "Escape") {
         e.preventDefault();
         closeSavesPanel();
         return;
     }
-    if (!names.length) { closeSavesPanel(); return; }
+    if (!items.length) { closeSavesPanel(); return; }
     if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         e.preventDefault();
-        app.selectedSave = (app.selectedSave + (e.key === "ArrowUp" ? -1 : 1) + names.length) % names.length;
+        app.selectedSave = (app.selectedSave + (e.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
         renderSavesPanel();
     } else if (e.key === "Enter") {
         e.preventDefault();
-        const name = names[app.selectedSave];
+        const name = items[app.selectedSave].name;
         closeSavesPanel();
         applySavedTheme(name);
     } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        deleteTheme(names[app.selectedSave]);
+        deleteTheme(items[app.selectedSave].name);
         if (!savedThemeNames().length) closeSavesPanel();
         else renderSavesPanel();
     } else if (e.key === "s" || e.key === "S") {

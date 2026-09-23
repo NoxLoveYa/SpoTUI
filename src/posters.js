@@ -49,6 +49,16 @@ function mulberry32(a) {
     };
 }
 
+// Seeded Fisher-Yates shared by every wall shuffle so layouts stay
+// deterministic per seed.
+function shuffleSeeded(arr, rnd) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
 // Stored as [{u:url, b:boardLabel}]; legacy entries carrying retired
 // video fields ({u,p,id,k}) resolve to their still thumbnail.
 export function getPosterImages() {
@@ -167,20 +177,12 @@ export function renderPosters() {
     const [cLo, cHi] = parseCountRange();
     const count = Math.min(cLo + Math.floor(rnd() * (cHi - cLo + 1)), SLOTS.length, imgs.length);
     const [dLo, dHi] = parseDensity();
-    const slotIdx = SLOTS.map((_, i) => i);
-    for (let i = slotIdx.length - 1; i > 0; i--) {
-        const j = Math.floor(rnd() * (i + 1));
-        [slotIdx[i], slotIdx[j]] = [slotIdx[j], slotIdx[i]];
-    }
-    const imgIdx = imgs.map((_, i) => i);
-    for (let i = imgIdx.length - 1; i > 0; i--) {
-        const j = Math.floor(rnd() * (i + 1));
-        [imgIdx[i], imgIdx[j]] = [imgIdx[j], imgIdx[i]];
-    }
     let shown = count;
     if (storageGet(POSTERS_SYMMETRIC) === "1") {
         shown = renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs);
     } else {
+        const slotIdx = shuffleSeeded(SLOTS.map((_, i) => i), rnd);
+        const imgIdx = shuffleSeeded(imgs.map((_, i) => i), rnd);
         for (let k = 0; k < count; k++) {
             const mult = (dLo + rnd() * (dHi - dLo)) / 5;
             placePoster(box, frame, SLOTS[slotIdx[k]], mult, imgs[imgIdx[k]].u);
@@ -214,7 +216,7 @@ function mirrorPairs() {
     const pairs = [];
     while (free.length) {
         const i = free.shift();
-        let best = -1, bestD = 1.01;
+        let best = -1, bestD = 1.01; // float drift only; true mirrors match exactly
         for (const j of free) {
             const d = Math.abs(cx(SLOTS[j]) - (100 - cx(SLOTS[i])));
             if (d < bestD) { bestD = d; best = j; }
@@ -225,17 +227,9 @@ function mirrorPairs() {
     return pairs;
 }
 
-export function renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs) {
-    const pairs = mirrorPairs();
-    for (let i = pairs.length - 1; i > 0; i--) {
-        const j = Math.floor(rnd() * (i + 1));
-        [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
-    }
-    const order = imgs.map((_, i) => i);
-    for (let i = order.length - 1; i > 0; i--) {
-        const j = Math.floor(rnd() * (i + 1));
-        [order[i], order[j]] = [order[j], order[i]];
-    }
+function renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs) {
+    const pairs = shuffleSeeded(mirrorPairs(), rnd);
+    const order = shuffleSeeded(imgs.map((_, i) => i), rnd);
     let shown = 0, ip = 0;
     for (const pair of pairs) {
         if (shown >= count) break;
