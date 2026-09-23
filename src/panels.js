@@ -302,6 +302,9 @@ export async function handleBoardsKeydown(e) {
         if (!boardRows().length) closeBoardsPanel();
         else renderBoardsPanel();
     } else if (e.key === "a" || e.key === "A") {
+        // preventDefault first: focusing the input below must not let this
+        // same keystroke type itself into the composer after the prefill.
+        e.preventDefault();
         prefillCommand("tui -pin-board ");
     }
 }
@@ -355,6 +358,8 @@ export async function handleSavesKeydown(e) {
         if (!savedThemeNames().length) closeSavesPanel();
         else renderSavesPanel();
     } else if (e.key === "s" || e.key === "S") {
+        // Same as above: prefill focuses the bar, so swallow the keystroke.
+        e.preventDefault();
         prefillCommand("tui -t save ");
     }
 }
