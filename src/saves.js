@@ -37,13 +37,23 @@ function snapshotSettings() {
 function describeSnapshot(settings) {
     const parts = [];
     const wp = settings[WP_URL_KEY];
-    parts.push(wp ? `wallpaper ${String(wp).split("/").pop().slice(0, 36)}` : "no wallpaper");
+    parts.push(wp
+        ? `wallpaper ${String(wp).split("/").pop().slice(0, 30)} @${settings[WP_OPACITY_KEY] || "1"} ${settings[WP_FIT_KEY] || "cover"}/${settings[WP_POS_KEY] || "center"} rich${settings[WP_RICH_KEY] || "100"}`
+        : "no wallpaper");
     let posters = 0;
+    const boards = {};
     try {
         const arr = JSON.parse(settings[POSTERS_IMGS] || "[]");
-        if (Array.isArray(arr)) posters = arr.length;
+        if (Array.isArray(arr)) {
+            posters = arr.length;
+            for (const e of arr) {
+                const b = (e && e.b) || "?";
+                boards[b] = (boards[b] || 0) + 1;
+            }
+        }
     } catch (e) {}
-    parts.push(`${posters} posters`);
+    const names = Object.keys(boards);
+    parts.push(`${posters} posters${names.length ? ` (${names.map((b) => `${b}:${boards[b]}`).join(", ")})` : ""}`);
     parts.push(settings[SHADE_KEY] ? `shade ${settings[SHADE_KEY]}` : "orange");
     return parts.join(" · ");
 }
