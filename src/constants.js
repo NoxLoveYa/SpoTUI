@@ -16,6 +16,12 @@ export const DEBUG_KEY = "spotui:debug";
 export const PINTEREST_WIDGET_BASE = "https://widgets.pinterest.com/v3/pidgets";
 export const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
 export const PINTEREST_WWW_BASE = "https://www.pinterest.com";
+
+// Companion cache script (local file, runs OUTSIDE Spotify — the theme can
+// neither convert video nor touch the filesystem). Default path is just a
+// default: override per machine with `tui -pin-cache <path>`.
+export const CACHE_SCRIPT_KEY = "spotui:pin-cache-script";
+export const CACHE_SCRIPT_DEFAULT = "D:\\Ressources\\spotui-cache.ps1";
 export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";
@@ -171,5 +177,6 @@ export const COMMAND_LIST = [
     { cmd: "tui -pin-board &lt;board-url&gt; [token] [-o/-c/-d/-t/-r]", desc: "Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync" },
     { cmd: "tui -pin-boards | tui -pin-clear &lt;board&gt;", desc: "List synced boards with counts / forget one board (wall switches off if empty)" },
     { cmd: "tui -pin-feed | tui -pin-refresh [board] [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins incl. videos, then recreate the wall (flags apply after) / save API token on this machine only" },
+    { cmd: "tui -pin-cache &lt;path&gt;", desc: "Where the local video-cache script lives (convert command auto-copies here); bare tui -pin-cache shows current" },
     { cmd: "help", desc: "Show this panel" },
 ];

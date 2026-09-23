@@ -1,4 +1,4 @@
-import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
+import { CACHE_SCRIPT_DEFAULT, CACHE_SCRIPT_KEY, HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
@@ -91,6 +91,17 @@ export function clearBoard(ref) {
     if (isPostersEnabled()) renderPosters();
     else { const box = document.getElementById("spotui-posters"); if (box) box.innerHTML = ""; }
     dbg(`[SpoTUI-pin] forgot ${removed} image(s) matching "${ref}". Left:`, getBoardCounts());
+    if (removed > 0 && q.includes("/")) {
+        // Cached video files can't be deleted from here — hand over the prune
+        // command for the local script instead.
+        copyText(`powershell -NoProfile -File "${cacheScriptPath()}" -BoardUrl ${PINTEREST_WWW_BASE}/${q} -Prune`).then((ok) => {
+            pinToast(ok
+                ? `forgot ${removed} — prune command copied, paste in terminal to delete cached files`
+                : `forgot ${removed} — prune cached files with the cache script (see tui -pin-cache)`);
+        });
+    } else {
+        pinToast(`forgot ${removed} image(s).`);
+    }
 }
 
 export function isPostersEnabled() {
@@ -501,6 +512,43 @@ export function startRotateTimer() {
 
 // ---------- Pinterest sync ----------
 
+// Best-effort clipboard (Spicetify API first, async-clipboard fallback).
+function copyText(t) {
+    try {
+        const api = window.Spicetify && Spicetify.Platform && Spicetify.Platform.ClipboardAPI;
+        if (api && typeof api.copy === "function") {
+            return Promise.resolve(api.copy(t)).then(() => true).catch(() => false);
+        }
+    } catch (e) {}
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(t).then(() => true).catch(() => false);
+        }
+    } catch (e) {}
+    return Promise.resolve(false);
+}
+
+export function cacheScriptPath() {
+    return storageGet(CACHE_SCRIPT_KEY) || CACHE_SCRIPT_DEFAULT;
+}
+
+export function setCacheScript(path) {
+    const p = String(path || "").trim().replace(/^["']|["']$/g, "");
+    if (!p) {
+        console.warn("[SpoTUI-pin] usage: tui -pin-cache <path-to-spotui-cache.ps1>");
+        return;
+    }
+    storageSet(CACHE_SCRIPT_KEY, p);
+    pinToast(`cache script: ${p}`);
+    dbg("[SpoTUI-pin] cache script set:", p);
+}
+
+export function reportCacheScript() {
+    const cur = cacheScriptPath();
+    pinToast(`cache script: ${cur}`);
+    dbg("[SpoTUI-pin] cache script:", cur);
+}
+
 // Extract both the still image and, for story/video pins, the playable file.
 // Prefers a direct mp4, falls back to the HLS stream URL (needs hls.js).
 function pickPidgetMedia(p) {
@@ -719,7 +767,21 @@ export async function syncPinterestBoard(input, tokenArg) {
     if (!isPostersEnabled()) storageSet(POSTERS_ON, "1");
     startRotateTimer();
     renderPosters();
-    pinToast(`synced ${added} new item(s), ${addedVids} video — wall updated`);
+    const streams = media.filter((m) => m.video && m.video.stream).length;
+    if (streams > 0) {
+        // HLS streams can't play or be converted inside Spotify — hand over
+        // the local convert command instead of leaving dead entries silent.
+        const boardUrl = /pinterest\.[a-z.]+/i.test(input)
+            ? input
+            : (label.includes("/") ? `${PINTEREST_WWW_BASE}/${label}/` : input);
+        copyText(`powershell -NoProfile -File "${cacheScriptPath()}" -BoardUrl ${boardUrl}`).then((ok) => {
+            pinToast(ok
+                ? `synced ${added} new (${addedVids} video) — convert command copied, paste in terminal`
+                : `synced ${added} new (${addedVids} video) — streams need local convert (see tui -pin-cache)`);
+        });
+    } else {
+        pinToast(`synced ${added} new item(s), ${addedVids} video — wall updated`);
+    }
     dbg(`[SpoTUI-pin] synced ${added} new item(s) (${addedVids} video), ${imgs.length} total. Shuffle: tui -posters shuffle`);
 }
 

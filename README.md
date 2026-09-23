@@ -65,6 +65,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -pin-feed` / `tui -pin-refresh [board] [-o/-c/-d/-t/-r]` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins incl. videos, then recreate the wall (flags apply after) / save API token on this machine only |
 | `tui -pin-feed` | Random mix from all your boards (needs token) |
 | `tui -pin-token <token>` | Save your Pinterest API token (local only) |
+| `tui -pin-cache <path>` | Where the local video-cache script lives (convert command auto-copies here); bare command shows current |
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |
 | `tui -ly -cp off` | Reset lyrics colors |
 | `tui -ly -animation <on/off>` | Toggle lyrics loader animation |
@@ -115,7 +116,10 @@ tui -pin-refresh         # re-pull synced boards, recreate the wall with current
 tui -pin-refresh posters # re-pull only boards matching "posters" (picks up pins added later)
 ```
 
-Sync straight from Pinterest:
+Sync straight from Pinterest (video pins need one local convert step —
+Spotify can't download or transcode, and Pinterest blocks cross-origin
+reads — so a sync copies the exact `spotui-cache.ps1` command for the
+board; run it in a terminal, then pin the printed lines):
 
 ```bash
 tui -pin-board pinterest.com/<you>/<board>/   # public boards need no login

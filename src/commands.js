@@ -16,7 +16,7 @@ import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
-import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
+import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, reportCacheScript, setCacheScript, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 import { dbg, pinToast } from "./utils.js";
 
 export async function execute(cmd, opts = {}) {
@@ -194,6 +194,11 @@ export async function execute(cmd, opts = {}) {
         }
         if (argsLower[0] === "-pin-feed") {
             syncPinterestFeed(args[1]).catch((e) => console.error("[SpoTUI-pin] feed failed:", e.message));
+            return;
+        }
+        if (argsLower[0] === "-pin-cache") {
+            if (!args[1]) reportCacheScript();
+            else setCacheScript(args.slice(1).join(" "));
             return;
         }
         if (argsLower[0] === "-pin-token") {
