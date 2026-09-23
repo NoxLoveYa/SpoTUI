@@ -542,13 +542,48 @@ function parseBoardRef(input) {
     return {};
 }
 
+// Board listings carry only story_pin_data.id — no page video files. Pull
+// full records for pins that look animated (story container or video flag)
+// in one batched call and merge any video files found.
+async function enrichStoryVideos(pins, items) {
+    const byId = new Map(items.filter((e) => e.id).map((e) => [e.id, e]));
+    const ids = pins
+        .filter((p) => p && p.id != null)
+        .map((p) => String(p.id))
+        .filter((id, i, all) => all.indexOf(id) === i)
+        .filter((id) => {
+            const e = byId.get(id);
+            if (!e || (e.m.video && e.m.video.url)) return false;
+            const p = pins.find((q) => String(q.id) === id);
+            return !!p && !!(p.is_video || (p.story_pin_data && p.story_pin_data.id));
+        })
+        .slice(0, 50);
+    if (!ids.length) return;
+    try {
+        const data = await fetchJsonLoose(`${PINTEREST_WIDGET_BASE}/pins/info/?pin_ids=${ids.map(encodeURIComponent).join(",")}`);
+        const info = Array.isArray(data && data.data) ? data.data : ((data && data.data && data.data.pins) || []);
+        for (const p of info) {
+            const m = pickPidgetMedia(p);
+            const e = p && p.id != null ? byId.get(String(p.id)) : null;
+            if (e && m.video && m.video.url) e.m = { image: m.image || e.m.image, video: m.video };
+        }
+        dbg(`[SpoTUI-pin] story enrichment: ${info.length} record(s) checked.`);
+    } catch (e) {
+        console.warn("[SpoTUI-pin] story enrichment failed:", e.message);
+    }
+}
+
 // No-auth attempt via Pinterest's public widget endpoint.
 async function syncViaPidgets(user, slug) {
     const url = `${PINTEREST_WIDGET_BASE}/boards/${encodeURIComponent(user)}/${encodeURIComponent(slug)}/pins/`;
     dbg("[SpoTUI-pin] trying public board endpoint (no login needed)...");
     const data = await fetchJsonLoose(url);
     const pins = (data && data.data && data.data.pins) || [];
-    return pins.map(pickPidgetMedia).filter((m) => m.image || (m.video && m.video.url));
+    const items = pins
+        .map((p) => ({ id: p && p.id != null ? String(p.id) : "", m: pickPidgetMedia(p) }))
+        .filter((e) => e.m.image || (e.m.video && e.m.video.url));
+    await enrichStoryVideos(pins, items);
+    return items.map((e) => e.m);
 }
 
 async function pinterestV5(path, token) {
