@@ -18,10 +18,11 @@ export const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
 export const PINTEREST_WWW_BASE = "https://www.pinterest.com";
 
 // Companion cache script (local file, runs OUTSIDE Spotify — the theme can
-// neither convert video nor touch the filesystem). Default path is just a
-// default: override per machine with `tui -pin-cache <path>`.
+// neither convert video nor touch the filesystem). Default points at the
+// copy shipped inside this theme; override per machine with
+// `tui -pin-cache <path>`.
 export const CACHE_SCRIPT_KEY = "spotui:pin-cache-script";
-export const CACHE_SCRIPT_DEFAULT = "D:\\Ressources\\spotui-cache.ps1";
+export const CACHE_SCRIPT_DEFAULT = "C:\\Users\\Obnoxious\\AppData\\Roaming\\spicetify\\Themes\\SpoTUI-debug\\scripts\\spotui-cache.ps1";
 export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";
