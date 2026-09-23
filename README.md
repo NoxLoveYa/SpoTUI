@@ -116,10 +116,10 @@ tui -pin-refresh         # re-pull synced boards, recreate the wall with current
 tui -pin-refresh posters # re-pull only boards matching "posters" (picks up pins added later)
 ```
 
-Sync straight from Pinterest (video pins need one local convert step —
-Spotify can't download or transcode, and Pinterest blocks cross-origin
-reads — so a sync copies the exact `spotui-cache.ps1` command for the
-board; run it in a terminal, then pin the printed lines):
+Sync straight from Pinterest (video pins stream through the bundled
+`scripts/spotui-server.py` loopback proxy — launch Spotify with
+`scripts/spotify-with-server.ps1`, which starts the server and stops it
+again when Spotify exits; without it, videos fall back to thumbnails):
 
 ```bash
 tui -pin-board pinterest.com/<you>/<board>/   # public boards need no login
