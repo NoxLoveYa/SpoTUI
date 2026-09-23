@@ -1,8 +1,7 @@
-import { CACHE_SCRIPT_DEFAULT, CACHE_SCRIPT_KEY, HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE, PIN_PROXY_DEFAULT, PIN_PROXY_KEY } from "./constants.js";
+import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
-import Hls from "./vendor/hls.light.min.mjs";
 
 // Poster wall: Pinterest-style prints pinned on top of the video wallpaper.
 // Layer order: wallpaper (z -1) < posters (z 0) < terminal content (z 1).
@@ -91,17 +90,7 @@ export function clearBoard(ref) {
     if (isPostersEnabled()) renderPosters();
     else { const box = document.getElementById("spotui-posters"); if (box) box.innerHTML = ""; }
     dbg(`[SpoTUI-pin] forgot ${removed} image(s) matching "${ref}". Left:`, getBoardCounts());
-    if (removed > 0 && q.includes("/")) {
-        // Cached video files can't be deleted from here — hand over the prune
-        // command for the local script instead.
-        copyText(`powershell -NoProfile -File "${cacheScriptPath()}" -BoardUrl ${PINTEREST_WWW_BASE}/${q} -Prune`).then((ok) => {
-            pinToast(ok
-                ? `forgot ${removed} — prune command copied, paste in terminal to delete cached files`
-                : `forgot ${removed} — prune cached files with the cache script (see tui -pin-cache)`);
-        });
-    } else {
-        pinToast(`forgot ${removed} image(s).`);
-    }
+    pinToast(`forgot ${removed} image(s).`);
 }
 
 export function isPostersEnabled() {
@@ -222,28 +211,11 @@ export function renderPosters() {
     dbg(`[SpoTUI-pin] rendered ${count} poster(s) from ${imgs.length} saved.`);
 }
 
-// Animated poster: muted looping <video>. Direct files (mp4/webm) play
-// natively; Pinterest HLS streams (.m3u8) play through the bundled hls.js
-// build (vendored, no runtime CDN). Anything unplayable falls back to the
-// pin's static thumbnail.
-function getHls() {
-    try {
-        return Hls && Hls.isSupported() ? Hls : null;
-    } catch (e) { return null; }
-}
-
+// Animated poster: muted looping <video> for direct files (mp4/webm).
+// Progressive playback needs no CORS, so Pinterest mp4s play as-is.
+// Anything unplayable falls back to the pin's static thumbnail.
 function buildVideoPoster(entry, fig) {
     const url = entry.u;
-    // One toast per dead URL per session — shuffles re-render often and the
-    // underlying cause (e.g. missing CORS) won't change between renders.
-    const toastOnce = (msg) => {
-        try {
-            buildVideoPoster._toasted = buildVideoPoster._toasted || new Set();
-            if (buildVideoPoster._toasted.has(url)) return;
-            buildVideoPoster._toasted.add(url);
-            pinToast(msg);
-        } catch (e) {}
-    };
     const fallbackToImage = () => {
         if (!fig.isConnected) return;
         fig.innerHTML = "";
@@ -270,57 +242,18 @@ function buildVideoPoster(entry, fig) {
     vd.style.display = "block";
     vd.style.pointerEvents = "none";
     if (entry.p) vd.poster = entry.p;
-    if (/\.m3u8($|[?#])/i.test(url)) {
-        proxyUp().then((up) => {
-            if (!vd.isConnected) return;
-            if (!up) {
-                console.warn("[SpoTUI-pin] stream proxy offline, showing thumbnail. Start spotui-server.py:", url);
-                toastOnce("video server offline — start spotui-server (thumbnail shown)");
-                fallbackToImage();
-                return;
-            }
-            const HlsCls = getHls();
-            if (!HlsCls) {
-                console.warn("[SpoTUI-pin] HLS video unsupported in this client, showing thumbnail:", url);
-                toastOnce("video pin needs HLS (unsupported here) — thumbnail shown");
-                fallbackToImage();
-                return;
-            }
-            let hls;
-            try {
-                hls = new HlsCls({ maxBufferLength: 10, enableWorker: false });
-            } catch (e) {
-                console.warn("[SpoTUI-pin] HLS setup failed, showing thumbnail:", e.message);
-                fallbackToImage();
-                return;
-            }
-            hls.on(HlsCls.Events.ERROR, (_, data) => {
-                if (data && data.fatal) {
-                    try { hls.destroy(); } catch (e) {}
-                    console.warn("[SpoTUI-pin] stream failed, showing thumbnail:", url);
-                    toastOnce("video pin stream failed — thumbnail shown");
-                    fallbackToImage();
-                }
-            });
-            hls.loadSource(`${pinProxyBase()}/hls?url=${encodeURIComponent(url)}`);
-            hls.attachMedia(vd);
-            const pr = vd.play();
-            if (pr && pr.catch) pr.catch(() => {});
-        });
-    } else {
-        vd.src = url;
-        vd.onerror = () => {
-            console.warn("[SpoTUI-pin] video poster failed to load, showing thumbnail:", url);
-            fallbackToImage();
-        };
-        // Some Chromium builds need a nudge once data arrives.
-        vd.addEventListener("canplay", () => {
-            const pr = vd.play();
-            if (pr && pr.catch) pr.catch(() => {});
-        });
+    vd.src = url;
+    vd.onerror = () => {
+        console.warn("[SpoTUI-pin] video poster failed to load, showing thumbnail:", url);
+        fallbackToImage();
+    };
+    // Some Chromium builds need a nudge once data arrives.
+    vd.addEventListener("canplay", () => {
         const pr = vd.play();
         if (pr && pr.catch) pr.catch(() => {});
-    }
+    });
+    const pr = vd.play();
+    if (pr && pr.catch) pr.catch(() => {});
     return vd;
 }
 
@@ -521,103 +454,19 @@ export function startRotateTimer() {
 
 // ---------- Pinterest sync ----------
 
-// Best-effort clipboard (Spicetify API first, async-clipboard fallback).
-function copyText(t) {
+// Extract the still image and, for story/video pins, a directly playable
+// mp4. Prefers an explicit mp4 rendition; otherwise derives the expMp4 file
+// from the HLS URL (same hash path: .../hls/a/b/c/<hash>.m3u8 becomes
+// .../expMp4/a/b/c/<hash>_720w.mp4). <video> needs no CORS, so it plays
+// as-is; HLS-only with no derivable mp4 stays a still.
+function deriveMp4(hlsUrl) {
     try {
-        const api = window.Spicetify && Spicetify.Platform && Spicetify.Platform.ClipboardAPI;
-        if (api && typeof api.copy === "function") {
-            return Promise.resolve(api.copy(t)).then(() => true).catch(() => false);
-        }
-    } catch (e) {}
-    try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            return navigator.clipboard.writeText(t).then(() => true).catch(() => false);
-        }
-    } catch (e) {}
-    return Promise.resolve(false);
+        const m = String(hlsUrl).match(/^(https?:\/\/[^/]+\/videos\/[^/]+\/)hls(\/[a-f0-9]\/[a-f0-9]\/[a-f0-9]\/)([a-f0-9]+)\.m3u8/i);
+        if (!m) return null;
+        return `${m[1]}expMp4${m[2]}${m[3]}_720w.mp4`;
+    } catch (e) { return null; }
 }
 
-export function cacheScriptPath() {
-    return storageGet(CACHE_SCRIPT_KEY) || CACHE_SCRIPT_DEFAULT;
-}
-
-export function setCacheScript(path) {
-    const p = String(path || "").trim().replace(/^["']|["']$/g, "");
-    if (!p) {
-        console.warn("[SpoTUI-pin] usage: tui -pin-cache <path-to-spotui-cache.ps1>");
-        return;
-    }
-    storageSet(CACHE_SCRIPT_KEY, p);
-    pinToast(`cache script: ${p}`);
-    dbg("[SpoTUI-pin] cache script set:", p);
-}
-
-export function reportCacheScript() {
-    const cur = cacheScriptPath();
-    pinToast(`cache script: ${cur}`);
-    dbg("[SpoTUI-pin] cache script:", cur);
-}
-
-// Stream playback goes through the local proxy (Pinterest serves no CORS
-// headers, so browsers can't read the stream directly). Health is cached
-// briefly so every shuffle doesn't re-probe.
-export function pinProxyBase() {
-    const v = (storageGet(PIN_PROXY_KEY) || PIN_PROXY_DEFAULT).trim();
-    if (!v || v.toLowerCase() === "off") return null;
-    return v.replace(/\/+$/, "");
-}
-
-let proxyState = { ok: false, at: 0 };
-
-export function proxyUp() {
-    const base = pinProxyBase();
-    if (!base) return Promise.resolve(false);
-    if (Date.now() - proxyState.at < 60000) return Promise.resolve(proxyState.ok);
-    let timer = null;
-    try {
-        const ctrl = new AbortController();
-        timer = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 2500);
-        return fetch(`${base}/health`, { signal: ctrl.signal }).then((r) => {
-            clearTimeout(timer);
-            proxyState = { ok: !!r.ok, at: Date.now() };
-            return proxyState.ok;
-        }).catch(() => {
-            clearTimeout(timer);
-            proxyState = { ok: false, at: Date.now() };
-            return false;
-        });
-    } catch (e) {
-        if (timer) clearTimeout(timer);
-        proxyState = { ok: false, at: Date.now() };
-        return Promise.resolve(false);
-    }
-}
-
-export function setPinProxy(arg) {
-    const v = String(arg || "").trim();
-    if (!v) {
-        reportPinProxy();
-        return;
-    }
-    if (v.toLowerCase() === "off") {
-        storageSet(PIN_PROXY_KEY, "off");
-        pinToast("stream proxy off — video pins show thumbnails");
-    } else {
-        storageSet(PIN_PROXY_KEY, v.replace(/\/+$/, ""));
-        proxyState = { ok: false, at: 0 };
-        pinToast(`stream proxy: ${v}`);
-    }
-    dbg("[SpoTUI-pin] proxy set:", v);
-}
-
-export function reportPinProxy() {
-    const base = pinProxyBase();
-    pinToast(base ? `stream proxy: ${base}` : "stream proxy off");
-    dbg("[SpoTUI-pin] proxy:", base || "off");
-}
-
-// Extract both the still image and, for story/video pins, the playable file.
-// Prefers a direct mp4, falls back to the HLS stream URL (needs hls.js).
 function pickPidgetMedia(p) {
     try {
         const im = p.images || {};
@@ -629,15 +478,16 @@ function pickPidgetMedia(p) {
             if (!list) continue;
             const keys = Object.keys(list);
             const mp4Key = keys.find((k) => /\.mp4($|[?#])/i.test((list[k] && list[k].url) || ""));
-            if (mp4Key) { video = { url: list[mp4Key].url, stream: false }; break; }
+            if (mp4Key) { video = { url: list[mp4Key].url }; break; }
             const hlsKey = keys.find((k) => /\.m3u8($|[?#])/i.test((list[k] && list[k].url) || ""));
-            if (hlsKey) { video = { url: list[hlsKey].url, stream: true }; break; }
+            const derived = hlsKey ? deriveMp4(list[hlsKey].url) : null;
+            if (derived) { video = { url: derived }; break; }
         }
         if (!video && p.videos) {
             const vl = p.videos.video_list || p.videos;
             const keys = (vl && typeof vl === "object") ? Object.keys(vl) : [];
             const mp4Key = keys.find((k) => /\.mp4($|[?#])/i.test((vl[k] && vl[k].url) || ""));
-            if (mp4Key) video = { url: vl[mp4Key].url, stream: false };
+            if (mp4Key) video = { url: vl[mp4Key].url };
         }
         return { image, video };
     } catch (e) { return { image: null, video: null }; }
@@ -834,9 +684,8 @@ export async function syncPinterestBoard(input, tokenArg) {
     if (!isPostersEnabled()) storageSet(POSTERS_ON, "1");
     startRotateTimer();
     renderPosters();
-    const streams = media.filter((m) => m.video && m.video.stream).length;
     pinToast(`synced ${added} new item(s), ${addedVids} video — wall updated`);
-    dbg(`[SpoTUI-pin] synced ${added} new item(s) (${addedVids} video, ${streams} stream), ${imgs.length} total. Shuffle: tui -posters shuffle`);
+    dbg(`[SpoTUI-pin] synced ${added} new item(s) (${addedVids} video), ${imgs.length} total. Shuffle: tui -posters shuffle`);
 }
 
 // Random mix across ALL your boards = closest thing to a "feed" the API allows.

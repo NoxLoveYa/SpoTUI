@@ -65,7 +65,6 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -pin-feed` / `tui -pin-refresh [board] [-o/-c/-d/-t/-r]` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins incl. videos, then recreate the wall (flags apply after) / save API token on this machine only |
 | `tui -pin-feed` | Random mix from all your boards (needs token) |
 | `tui -pin-token <token>` | Save your Pinterest API token (local only) |
-| `tui -pin-cache <path>` | Where the local video-cache script lives (convert command auto-copies here); bare command shows current |
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |
 | `tui -ly -cp off` | Reset lyrics colors |
 | `tui -ly -animation <on/off>` | Toggle lyrics loader animation |
@@ -116,10 +115,9 @@ tui -pin-refresh         # re-pull synced boards, recreate the wall with current
 tui -pin-refresh posters # re-pull only boards matching "posters" (picks up pins added later)
 ```
 
-Sync straight from Pinterest (video pins stream through the bundled
-`scripts/spotui-server.py` loopback proxy — launch Spotify with
-`scripts/spotify-with-server.ps1`, which starts the server and stops it
-again when Spotify exits; without it, videos fall back to thumbnails):
+Sync straight from Pinterest (video pins sync as animated posters — the
+theme prefers a direct mp4, deriving the file from the HLS URL when that is
+all Pinterest exposes; anything unplayable stays a still):
 
 ```bash
 tui -pin-board pinterest.com/<you>/<board>/   # public boards need no login
@@ -131,10 +129,9 @@ Notes: video wallpaper wants `.webm` (VP9, e.g. Spotify's own `shimmer.webm`
 format) — `.mp4`/H.264 is blocked in some Spotify builds, `file://` URLs are
 often blocked, so same-origin `https://xpui.app.spotify.com/videos/...` or any
 `https://` link works best. Image URLs with spaces must be `%20`-encoded.
-The token never leaves your machine (localStorage only). Video pins sync as
-animated posters (direct mp4 plays natively; HLS streams play through the
-bundled player, thumbnail fallback if unplayable). Something misbehaving?
-`tui -debug on`, reproduce, and read the `[SpoTUI-*]` console lines.
+The token never leaves your machine (localStorage only). Something
+misbehaving? `tui -debug on`, reproduce, and read the `[SpoTUI-*]` console
+lines.
 
 ## UI shade
 
