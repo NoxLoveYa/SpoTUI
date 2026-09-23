@@ -1,7 +1,8 @@
-import { HEX_COLOR_REGEX, HLS_CDN_URL, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
+import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
+import Hls from "./vendor/hls.light.min.mjs";
 
 // Poster wall: Pinterest-style prints pinned on top of the video wallpaper.
 // Layer order: wallpaper (z -1) < posters (z 0) < terminal content (z 1).
@@ -63,6 +64,17 @@ export function getBoardCounts() {
     const map = {};
     for (const e of getPosterImages()) map[e.b || "?"] = (map[e.b || "?"] || 0) + 1;
     return map;
+}
+
+export function showBoardList() {
+    const boards = getBoardCounts();
+    const names = Object.keys(boards);
+    if (!names.length) {
+        pinToast("no synced boards — pull one with: tui -pin-board <board-url>");
+    } else {
+        pinToast("synced boards:\n" + names.map((b) => `${b} (${boards[b]})`).join("\n"));
+    }
+    dbg("[SpoTUI-pin] synced boards:", boards);
 }
 
 export function clearBoard(ref) {
@@ -200,25 +212,13 @@ export function renderPosters() {
 }
 
 // Animated poster: muted looping <video>. Direct files (mp4/webm) play
-// natively; Pinterest HLS streams (.m3u8) go through hls.js when it can
-// load, otherwise the pin falls back to its static thumbnail.
-let hlsPromise = null;
-function ensureHls() {
-    if (window.Hls && window.Hls.isSupported && window.Hls.isSupported()) return Promise.resolve(window.Hls);
-    if (hlsPromise) return hlsPromise;
-    hlsPromise = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("hls.js load timeout")), 15000);
-        const s = document.createElement("script");
-        s.src = HLS_CDN_URL;
-        s.onload = () => {
-            clearTimeout(timer);
-            (window.Hls && window.Hls.isSupported()) ? resolve(window.Hls) : reject(new Error("hls.js loaded but MSE unsupported"));
-        };
-        s.onerror = () => { clearTimeout(timer); reject(new Error("hls.js CDN blocked/failed")); };
-        document.head.appendChild(s);
-    });
-    hlsPromise = hlsPromise.catch((e) => { hlsPromise = null; throw e; });
-    return hlsPromise;
+// natively; Pinterest HLS streams (.m3u8) play through the bundled hls.js
+// build (vendored, no runtime CDN). Anything unplayable falls back to the
+// pin's static thumbnail.
+function getHls() {
+    try {
+        return Hls && Hls.isSupported() ? Hls : null;
+    } catch (e) { return null; }
 }
 
 function buildVideoPoster(entry, fig) {
@@ -250,10 +250,21 @@ function buildVideoPoster(entry, fig) {
     vd.style.pointerEvents = "none";
     if (entry.p) vd.poster = entry.p;
     if (/\.m3u8($|[?#])/i.test(url)) {
-        ensureHls().then((Hls) => {
-            if (!vd.isConnected) return;
-            const hls = new Hls({ maxBufferLength: 10 });
-            hls.on(Hls.Events.ERROR, (_, data) => {
+        const HlsCls = getHls();
+        if (!HlsCls) {
+            console.warn("[SpoTUI-pin] HLS video unsupported in this client, showing thumbnail:", url);
+            pinToast("video pin needs HLS (unsupported here) — thumbnail shown");
+            fallbackToImage();
+        } else {
+            let hls;
+            try {
+                hls = new HlsCls({ maxBufferLength: 10, enableWorker: false });
+            } catch (e) {
+                console.warn("[SpoTUI-pin] HLS setup failed, showing thumbnail:", e.message);
+                fallbackToImage();
+            }
+            if (!hls) return vd;
+            hls.on(HlsCls.Events.ERROR, (_, data) => {
                 if (data && data.fatal) {
                     try { hls.destroy(); } catch (e) {}
                     console.warn("[SpoTUI-pin] stream failed, showing thumbnail:", url);
@@ -265,11 +276,7 @@ function buildVideoPoster(entry, fig) {
             hls.attachMedia(vd);
             const pr = vd.play();
             if (pr && pr.catch) pr.catch(() => {});
-        }).catch((e) => {
-            console.warn("[SpoTUI-pin] stream playback unavailable, showing thumbnail:", e.message);
-            pinToast(`video pin can't stream (${e.message}) — thumbnail shown`);
-            fallbackToImage();
-        });
+        }
     } else {
         vd.src = url;
         vd.onerror = () => {

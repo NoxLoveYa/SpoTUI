@@ -128,8 +128,8 @@ format) — `.mp4`/H.264 is blocked in some Spotify builds, `file://` URLs are
 often blocked, so same-origin `https://xpui.app.spotify.com/videos/...` or any
 `https://` link works best. Image URLs with spaces must be `%20`-encoded.
 The token never leaves your machine (localStorage only). Video pins sync as
-animated posters (direct mp4 plays natively; HLS streams need hls.js from
-CDN and fall back to the thumbnail if it can't load). Something misbehaving?
+animated posters (direct mp4 plays natively; HLS streams play through the
+bundled player, thumbnail fallback if unplayable). Something misbehaving?
 `tui -debug on`, reproduce, and read the `[SpoTUI-*]` console lines.
 
 ## UI shade

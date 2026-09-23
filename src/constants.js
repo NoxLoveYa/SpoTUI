@@ -16,7 +16,6 @@ export const DEBUG_KEY = "spotui:debug";
 export const PINTEREST_WIDGET_BASE = "https://widgets.pinterest.com/v3/pidgets";
 export const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
 export const PINTEREST_WWW_BASE = "https://www.pinterest.com";
-export const HLS_CDN_URL = "https://cdn.jsdelivr.net/npm/hls.js@1";
 export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";
