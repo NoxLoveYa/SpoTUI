@@ -14,6 +14,7 @@ import { app } from "./state.js";
 import { storageClear, storageGet, storageRemove, storageSet } from "./storage.js";
 import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
+import { applyTheme as applySavedTheme, deleteTheme, listThemes, saveTheme } from "./saves.js";
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
 import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
@@ -205,6 +206,12 @@ export async function execute(cmd, opts = {}) {
         }
         if (argsLower.includes("-t")) {
             const tIndex = argsLower.indexOf("-t");
+            const tSub = (args[tIndex + 1] || "").toLowerCase();
+            const tName = args[tIndex + 2];
+            if (tSub === "save") { saveTheme(tName); return; }
+            if (tSub === "list") { listThemes(); return; }
+            if (tSub === "apply" || tSub === "load") { applySavedTheme(tName); return; }
+            if (tSub === "delete" || tSub === "rm" || tSub === "remove") { deleteTheme(tName); return; }
             if (argsLower[tIndex+1] === "pull" && args[tIndex+2]) {
                 const base64Name = args[tIndex+2];
                 try {

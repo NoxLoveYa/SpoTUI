@@ -1,0 +1,136 @@
+import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, toggleLogo } from "./appearance.js";
+import { resetGrid } from "./ascii.js";
+import { ANIMATION_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { renderPosters, startRotateTimer } from "./posters.js";
+import { applyShade } from "./shade.js";
+import { app } from "./state.js";
+import { storageGet, storageSet } from "./storage.js";
+import { dbg, pinToast } from "./utils.js";
+import { setWallpaper } from "./wallpaper.js";
+
+// Local theme snapshots: everything a Spotify restart preserves, saved
+// under one name. storage.js has no key enumeration, so this module touches
+// localStorage directly (guarded) for the snapshot/restore loops only.
+const SAVES_KEY = "spotui:theme-saves";
+
+function readSaves() {
+    try {
+        const raw = storageGet(SAVES_KEY);
+        const obj = raw ? JSON.parse(raw) : {};
+        return obj && typeof obj === "object" ? obj : {};
+    } catch (e) { return {}; }
+}
+
+function snapshotSettings() {
+    const out = {};
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("spotui:") && k !== SAVES_KEY) out[k] = localStorage.getItem(k);
+        }
+    } catch (e) {}
+    return out;
+}
+
+// Re-run the boot look-restore against current storage (mirrors main.js:
+// appearance everywhere, wallpaper, wall, shade — no session resume).
+function refreshLook() {
+    toggleLogo(storageGet("spotui:logo-visible") === "off" ? "off" : "on");
+    if (storageGet(ANIMATION_KEY) === "off") {
+        app.asciiEnabled = false;
+        resetGrid();
+    } else {
+        app.asciiEnabled = true;
+    }
+    applyLyricColors();
+    applyPlayerBarColors();
+    applyPlayerBarVisibility();
+    applyCustomBarState();
+    applyProgressBarColors();
+    applyInputColors();
+    applyInputButtonsVisibility();
+    applyPanelColors();
+    applyShade();
+    const url = storageGet(WP_URL_KEY);
+    if (url) {
+        setWallpaper(url, storageGet(WP_OPACITY_KEY) || "1", false, {
+            fit: storageGet(WP_FIT_KEY) || undefined,
+            pos: storageGet(WP_POS_KEY) || undefined,
+            rich: storageGet(WP_RICH_KEY) || undefined,
+        });
+    } else {
+        const wp = document.getElementById("spotui-wallpaper");
+        if (wp) wp.remove();
+    }
+    renderPosters();
+    startRotateTimer();
+}
+
+export function saveTheme(name) {
+    const n = String(name || "").trim();
+    if (!n) {
+        console.warn("[SpoTUI] usage: tui -t save <name>  (single word, e.g. tui -t save cozy)");
+        return;
+    }
+    const saves = readSaves();
+    const existed = !!saves[n];
+    saves[n] = { savedAt: Date.now(), settings: snapshotSettings() };
+    storageSet(SAVES_KEY, JSON.stringify(saves));
+    pinToast(existed ? `theme updated: ${n}` : `theme saved: ${n}`);
+    dbg("[SpoTUI] theme saved:", n);
+}
+
+export function listThemes() {
+    const names = Object.keys(readSaves());
+    pinToast(names.length ? "saved themes:\n" + names.join("\n") : "no saved themes — save one with: tui -t save <name>");
+    dbg("[SpoTUI] saved themes:", names);
+}
+
+export function deleteTheme(name) {
+    const n = String(name || "").trim();
+    if (!n) {
+        console.warn("[SpoTUI] usage: tui -t delete <name>  (see tui -t list)");
+        return;
+    }
+    const saves = readSaves();
+    if (!saves[n]) {
+        console.warn(`[SpoTUI] no saved theme "${n}". See: tui -t list`);
+        return;
+    }
+    delete saves[n];
+    storageSet(SAVES_KEY, JSON.stringify(saves));
+    pinToast(`theme deleted: ${n}`);
+    dbg("[SpoTUI] theme deleted:", n);
+}
+
+export function applyTheme(name) {
+    const n = String(name || "").trim();
+    if (!n) {
+        console.warn("[SpoTUI] usage: tui -t apply <name>  (see tui -t list)");
+        return;
+    }
+    const snap = readSaves()[n];
+    if (!snap || typeof snap.settings !== "object") {
+        console.warn(`[SpoTUI] no saved theme "${n}". See: tui -t list`);
+        return;
+    }
+    try {
+        const keep = new Set(Object.keys(snap.settings));
+        for (const [k, v] of Object.entries(snap.settings)) localStorage.setItem(k, v);
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !keep.has(k)) localStorage.removeItem(k);
+        }
+    } catch (e) {
+        console.error("[SpoTUI] theme apply failed:", e.message);
+        return;
+    }
+    try {
+        refreshLook();
+    } catch (e) {
+        console.error("[SpoTUI] theme refresh failed:", e.message);
+        return;
+    }
+    pinToast(`theme applied: ${n}`);
+    dbg("[SpoTUI] theme applied:", n);
+}
