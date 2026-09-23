@@ -54,6 +54,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui actions disable <name>` | Disable an action |
 | `tui actions delete <name>` | Delete an action |
 | `tui -wp off` | Remove wallpaper |
+| `tui -shade <#hex\|off>` | Re-tint orange UI to any color (shades preserved); video + posters stay true; bare `tui -shade` shows current |
 | `tui -posters <on/off>` | Show the wall (pin images first) / hide it, images are kept |
 | `tui -posters <shuffle/clear/settings>` | Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings |
 | `tui -posters <add <url>\|count <1-8\|lo-hi>\|density <1-10\|lo-hi>\|theme <#hex>\|opacity <0-1>\|autoshuffle <on/off>\|rotate <min/off>>` | Pin an image; visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer |
@@ -126,6 +127,16 @@ often blocked, so same-origin `https://xpui.app.spotify.com/videos/...` or any
 `https://` link works best. Image URLs with spaces must be `%20`-encoded.
 The token never leaves your machine (localStorage only). Diagnostics are
 logged to the dev console under `[SpoTUI-pin]` / `[SpoTUI-dbg]`.
+
+## UI shade
+
+SpoTUI's orange re-tinted to any color — one hue rotation, so every shade
+step survives. Video wallpaper and posters are counter-rotated to true colors.
+
+```bash
+tui -shade #7fd4d4   # cyan UI, video + posters untouched
+tui -shade off       # back to orange
+```
 
 ## Action Targets
 

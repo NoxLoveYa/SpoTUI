@@ -15,6 +15,7 @@ import { storageClear, storageGet, storageRemove, storageSet } from "./storage.j
 import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { setWallpaper } from "./wallpaper.js";
+import { reportShade, setShade } from "./shade.js";
 import { WP_FIT_KEY, WP_POS_KEY, WP_RICH_KEY } from "./constants.js";
 import { addPoster, clearBoard, clearPosters, getBoardCounts, pinToast, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 
@@ -75,6 +76,13 @@ export async function execute(cmd, opts = {}) {
             if (state === "on" || state === "off") {
                 toggleLogo(state);
             }
+            return;
+        }
+        if (argsLower[0] === "-shade") {
+            const v = args[1];
+            if (!v) reportShade();
+            else if (v.toLowerCase() === "off") setShade("off");
+            else setShade(v);
             return;
         }
         if (argsLower.includes("-wp")) {

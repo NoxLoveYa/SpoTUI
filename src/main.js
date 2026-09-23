@@ -9,6 +9,7 @@ import { initLyricsBridge, openLyricsPanel, waitForPlayerReadyThen } from "./lyr
 import { isFirstBoot, launchFirstBootIfNeeded } from "./onboarding.js";
 import { storageGet } from "./storage.js";
 import { getBoardCounts, getPosterImages, isPostersEnabled, maybeAutoshuffle, renderPosters, startRotateTimer } from "./posters.js";
+import { applyShade } from "./shade.js";
 import { injectStyle } from "./styles.js";
 import { initSync } from "./sync.js";
 import { createTerminal } from "./terminal.js";
@@ -73,6 +74,8 @@ try {
     } else {
         console.log("[SpoTUI-dbg] boot: no saved wallpaper. Set one with: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5");
     }
+    // Restore UI shade (retries once; terminal may still be booting).
+    setTimeout(() => { if (!applyShade()) setTimeout(applyShade, 2000); }, 2600);
     if (isPostersEnabled()) {
         console.log("[SpoTUI-pin] boot: wall ON,", getPosterImages().length, "stored image(s), boards:", getBoardCounts());
         setTimeout(() => { maybeAutoshuffle(); renderPosters(); startRotateTimer(); }, 2200);

@@ -1,4 +1,5 @@
 import { HEX_COLOR_REGEX } from "./constants.js";
+import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 
 // Poster wall: Pinterest-style prints pinned on top of the video wallpaper.
@@ -114,6 +115,7 @@ export function renderPosters() {
     box.innerHTML = "";
     const opRaw = parseFloat(storageGet(POSTERS_OPACITY) || "1");
     box.style.opacity = String(Math.max(0, Math.min(1, isNaN(opRaw) ? 1 : opRaw)));
+    box.style.filter = shadeCounterFilter();
     const frame = posterFrameColor();
     if (!isPostersEnabled()) return;
     const imgs = getPosterImages();

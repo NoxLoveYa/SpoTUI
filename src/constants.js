@@ -9,6 +9,7 @@ export const WP_URL_KEY = "spotui:wp-url";
 export const WP_FIT_KEY = "spotui:wp-fit";
 export const WP_POS_KEY = "spotui:wp-pos";
 export const WP_RICH_KEY = "spotui:wp-rich";
+export const SHADE_KEY = "spotui:shade";
 export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";
@@ -110,6 +111,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -l -a &lt;on/off&gt;", desc: "Toggle ASCII animation" },
     { cmd: "tui -wp &lt;url&gt; [-o &lt;0-1&gt;] [-fit &lt;cover/contain/fill/none&gt;] [-pos &lt;center/top/bottom/left/right&gt;] [-rich &lt;0-200&gt;]", desc: "Set wallpaper — bare tui -wp shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off)" },
     { cmd: "tui -wp off", desc: "Remove wallpaper" },
+    { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Re-tint orange UI to any color (shades preserved); video + posters stay true; bare tui -shade shows current" },
     { cmd: "tui -t pull &lt;theme_id&gt;", desc: "Apply a theme by its ID (you can find the id on our website)" },
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command" },
     { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
