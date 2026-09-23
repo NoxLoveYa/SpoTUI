@@ -44,6 +44,8 @@ body.spotui-help-panel #spotui-logo,
 body.spotui-theme-panel #spotui-logo,
 body.spotui-search-panel #spotui-logo,
 body.spotui-about-panel #spotui-logo,
+body.spotui-boards-panel #spotui-logo,
+body.spotui-saves-panel #spotui-logo,
 body.spotui-onboarding-panel #spotui-logo {
     top: 12px;
     transform: translate(-50%, 0) scale(0.6);
@@ -194,7 +196,9 @@ body:has(#spotui-wallpaper) body.spotui-dj-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-playlist-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-help-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-theme-panel #spotui-logo,
-body:has(#spotui-wallpaper) body.spotui-about-panel #spotui-logo {
+body:has(#spotui-wallpaper) body.spotui-about-panel #spotui-logo,
+body:has(#spotui-wallpaper) body.spotui-boards-panel #spotui-logo,
+body:has(#spotui-wallpaper) body.spotui-saves-panel #spotui-logo {
     background-color: #000;
 }
 
@@ -238,6 +242,8 @@ body.spotui-playlist-panel #spotui-output,
 body.spotui-help-panel #spotui-output,
 body.spotui-about-panel #spotui-output,
 body.spotui-theme-panel #spotui-output,
+body.spotui-boards-panel #spotui-output,
+body.spotui-saves-panel #spotui-output,
 body.spotui-dj-panel #spotui-output,
 body.spotui-lyrics-panel #spotui-output {
     display: none !important;
@@ -251,6 +257,8 @@ body.spotui-cli-mode #spotui-output {
 #spotui-help-panel::-webkit-scrollbar,
 #spotui-about-panel::-webkit-scrollbar,
 #spotui-theme-panel::-webkit-scrollbar,
+#spotui-boards-panel::-webkit-scrollbar,
+#spotui-saves-panel::-webkit-scrollbar,
 #spotui-playlist-list::-webkit-scrollbar,
 #spotui-song-list::-webkit-scrollbar,
 .spotui-lyrics-lines::-webkit-scrollbar {
@@ -535,7 +543,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     transition-delay: 0.6s;
 }
 
-#spotui-help-panel, #spotui-about-panel, #spotui-theme-panel {
+#spotui-help-panel, #spotui-about-panel, #spotui-theme-panel, #spotui-boards-panel, #spotui-saves-panel {
     display: none;
     flex: 1 1 auto;
     flex-direction: column;
@@ -569,7 +577,9 @@ body.spotui-playlist-panel #spotui-playlist-panel {
 
 body.spotui-help-panel #spotui-help-panel,
 body.spotui-about-panel #spotui-about-panel,
-body.spotui-theme-panel #spotui-theme-panel {
+body.spotui-theme-panel #spotui-theme-panel,
+body.spotui-boards-panel #spotui-boards-panel,
+body.spotui-saves-panel #spotui-saves-panel {
     display: flex;
 }
 
@@ -661,6 +671,10 @@ body.spotui-theme-panel #spotui-theme-panel {
 .help-item .description {
     flex-basis: 70%;
     color: #b3b3b3;
+}
+
+.help-item.selected .command, .help-item.selected .description {
+    color: #000;
 }
 
 #spotui-playlist-list, #spotui-song-list {
