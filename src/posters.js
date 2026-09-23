@@ -1,4 +1,4 @@
-import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE, POSTER_ASSET_BASE } from "./constants.js";
+import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE, POSTER_ASSET_BASE, PROBE_URL } from "./constants.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
@@ -264,6 +264,71 @@ function buildVideoPoster(entry, fig) {
     });
     playNext();
     return vd;
+}
+
+// If this Chromium blocks programmatic play(), a real user gesture unlocks
+// it — resume every wallpaper/wall video on interaction. Harmless no-op
+// when everything already plays.
+export function armVideoResume() {
+    const kick = () => {
+        document.querySelectorAll("#spotui-wallpaper, #spotui-posters video").forEach((v) => {
+            try {
+                if (v.tagName === "VIDEO" && v.paused) {
+                    const pr = v.play();
+                    if (pr && pr.catch) pr.catch(() => {});
+                }
+            } catch (e) {}
+        });
+    };
+    ["pointerdown", "keydown"].forEach((ev) => {
+        try { document.addEventListener(ev, kick, { passive: true }); } catch (e) {}
+    });
+}
+
+function probeOne(url, label) {
+    return new Promise((resolve) => {
+        const v = document.createElement("video");
+        v.muted = true;
+        v.setAttribute("muted", "");
+        v.playsInline = true;
+        v.setAttribute("playsinline", "");
+        v.style.cssText = "position:fixed;left:0;top:0;width:4px;height:4px;opacity:0.01;pointer-events:none;z-index:0;";
+        let done = false, rejected = null;
+        const finish = (outcome) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            try { v.pause(); v.removeAttribute("src"); v.load(); v.remove(); } catch (e) {}
+            resolve(`${label}: ${outcome}`);
+        };
+        const timer = setTimeout(() => {
+            if (!v.paused) finish("PLAYING (late)");
+            else if (rejected) finish(`play() rejected (${rejected}) — autoplay/policy suspected`);
+            else if (v.readyState >= 2) finish(`DATA but PAUSED (readyState ${v.readyState}) — policy suspected`);
+            else finish("TIMEOUT (loads nothing, errors nothing — network suspected)");
+        }, 9000);
+        v.onerror = () => finish(`LOAD ERROR (code ${v.error && v.error.code} — undecodable/blocked)`);
+        v.onplaying = () => finish("PLAYING");
+        try { document.body.appendChild(v); } catch (e) {}
+        v.src = url;
+        const pr = v.play();
+        if (pr && pr.catch) pr.catch((e) => { rejected = (e && e.name) || "unknown"; });
+    });
+}
+
+// Diagnose video playback where the user can see it: first Spotify's own
+// clip (client capability), then the first stored video pin (content).
+export async function testVideoPlayback() {
+    pinToast("video diag running — verdict in ~10s…", 11000);
+    const a = await probeOne(PROBE_URL, "client");
+    const vids = getPosterImages().filter((e) => e.k === "video");
+    let b = "pin: none stored";
+    if (vids.length) {
+        const e = vids[0];
+        b = await probeOne(posterAssetUrl(e.id) || e.u, "pin");
+    }
+    pinToast(`${a}\n${b}`, 14000);
+    dbg("[SpoTUI-pin] diag:", a, "|", b);
 }
 
 export function setPostersEnabled(on) {

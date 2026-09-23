@@ -7,7 +7,7 @@ import { initDjBridge } from "./dj.js";
 import { initLyricsBridge, openLyricsPanel, waitForPlayerReadyThen } from "./lyrics.js";
 import { isFirstBoot, launchFirstBootIfNeeded } from "./onboarding.js";
 import { storageGet } from "./storage.js";
-import { getBoardCounts, getPosterImages, isPostersEnabled, maybeAutoshuffle, renderPosters, startRotateTimer } from "./posters.js";
+import { armVideoResume, getBoardCounts, getPosterImages, isPostersEnabled, maybeAutoshuffle, renderPosters, startRotateTimer } from "./posters.js";
 import { applyShade } from "./shade.js";
 import { injectStyle } from "./styles.js";
 import { initSync } from "./sync.js";
@@ -74,6 +74,9 @@ try {
     } else {
         dbg("[SpoTUI-dbg] boot: no saved wallpaper. Set one with: tui -wp <url> -o 0.5 (video needs .webm — .mp4/H.264 is blocked in some builds)");
     }
+    // Resume wall/wallpaper videos on user gestures (covers Chromiums that
+    // block programmatic play()).
+    try { armVideoResume(); } catch (e) {}
     // Restore UI shade (retries once; terminal may still be booting).
     setTimeout(() => { if (!applyShade()) setTimeout(applyShade, 2000); }, 2600);
     if (isPostersEnabled()) {
