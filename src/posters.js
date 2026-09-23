@@ -223,6 +223,16 @@ function getHls() {
 
 function buildVideoPoster(entry, fig) {
     const url = entry.u;
+    // One toast per dead URL per session — shuffles re-render often and the
+    // underlying cause (e.g. missing CORS) won't change between renders.
+    const toastOnce = (msg) => {
+        try {
+            buildVideoPoster._toasted = buildVideoPoster._toasted || new Set();
+            if (buildVideoPoster._toasted.has(url)) return;
+            buildVideoPoster._toasted.add(url);
+            pinToast(msg);
+        } catch (e) {}
+    };
     const fallbackToImage = () => {
         if (!fig.isConnected) return;
         fig.innerHTML = "";
@@ -253,7 +263,7 @@ function buildVideoPoster(entry, fig) {
         const HlsCls = getHls();
         if (!HlsCls) {
             console.warn("[SpoTUI-pin] HLS video unsupported in this client, showing thumbnail:", url);
-            pinToast("video pin needs HLS (unsupported here) — thumbnail shown");
+            toastOnce("video pin needs HLS (unsupported here) — thumbnail shown");
             fallbackToImage();
         } else {
             let hls;
@@ -268,7 +278,7 @@ function buildVideoPoster(entry, fig) {
                 if (data && data.fatal) {
                     try { hls.destroy(); } catch (e) {}
                     console.warn("[SpoTUI-pin] stream failed, showing thumbnail:", url);
-                    pinToast("video pin stream failed — thumbnail shown");
+                    toastOnce("video pin stream failed — thumbnail shown");
                     fallbackToImage();
                 }
             });
