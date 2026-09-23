@@ -1,3 +1,6 @@
+import { DEBUG_KEY } from "./constants.js";
+import { storageGet } from "./storage.js";
+
 export function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -17,4 +20,28 @@ export function createButton(id, className, text, onClick) {
     btn.textContent = text;
     btn.addEventListener("click", onClick);
     return btn;
+}
+
+// Verbose troubleshooting logs. Off by default — toggle with `tui -debug on`.
+// Warnings/errors always print; only info-level chatter goes through here.
+export function isDebug() {
+    try { return storageGet(DEBUG_KEY) === "1"; } catch (e) { return false; }
+}
+
+export function dbg(tag, ...args) {
+    if (isDebug()) console.log(tag, ...args);
+}
+
+// Small non-blocking toast (console.log alone is invisible without DevTools).
+export function pinToast(text, ms = 7000) {
+    try {
+        const old = document.getElementById("spotui-pin-toast");
+        if (old) old.remove();
+        const t = document.createElement("div");
+        t.id = "spotui-pin-toast";
+        t.textContent = text;
+        t.style.cssText = "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:var(--panel-bg-color,var(--background-base,rgba(10,14,18,.92)));color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--panel-border-color,var(--essential-base,#7fd4d4));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;";
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), ms);
+    } catch (e) {}
 }

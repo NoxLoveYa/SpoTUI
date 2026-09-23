@@ -55,13 +55,14 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui actions delete <name>` | Delete an action |
 | `tui -wp off` | Remove wallpaper |
 | `tui -shade <#hex\|off>` | Re-tint orange UI to any color (shades preserved); video + posters stay true; bare `tui -shade` shows current |
+| `tui -debug <on/off>` | Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print) |
 | `tui -posters <on/off>` | Show the wall (pin images first) / hide it, images are kept |
 | `tui -posters <shuffle/clear/settings>` | Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings |
 | `tui -posters <add <url>\|count <1-8\|lo-hi>\|density <1-10\|lo-hi>\|theme <#hex>\|opacity <0-1>\|autoshuffle <on/off>\|rotate <min/off>>` | Pin an image; visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer |
 | `tui -posters [-o <0-1>] [-c <1-8\|lo-hi>] [-d <1-10\|lo-hi>] [-t <#hex>] [-r <min/off>]` | Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer |
 | `tui -pin-board <board-url> [token] [-o/-c/-d/-t/-r]` | Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync |
 | `tui -pin-boards` / `tui -pin-clear <board>` | List synced boards with counts / forget one board (wall switches off if empty) |
-| `tui -pin-feed` / `tui -pin-refresh [-o/-c/-d/-t/-r]` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards and recreate the wall (flags apply after) / save API token on this machine only |
+| `tui -pin-feed` / `tui -pin-refresh [board] [-o/-c/-d/-t/-r]` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins incl. videos, then recreate the wall (flags apply after) / save API token on this machine only |
 | `tui -pin-feed` | Random mix from all your boards (needs token) |
 | `tui -pin-token <token>` | Save your Pinterest API token (local only) |
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |
@@ -111,6 +112,7 @@ tui -posters clear       # forget all pinned images
 tui -pin-boards          # what came from which board
 tui -pin-clear lifr112/aesthetic   # forget one board only
 tui -pin-refresh         # re-pull synced boards, recreate the wall with current ranges
+tui -pin-refresh posters # re-pull only boards matching "posters" (picks up pins added later)
 ```
 
 Sync straight from Pinterest:
@@ -125,8 +127,10 @@ Notes: video wallpaper wants `.webm` (VP9, e.g. Spotify's own `shimmer.webm`
 format) — `.mp4`/H.264 is blocked in some Spotify builds, `file://` URLs are
 often blocked, so same-origin `https://xpui.app.spotify.com/videos/...` or any
 `https://` link works best. Image URLs with spaces must be `%20`-encoded.
-The token never leaves your machine (localStorage only). Diagnostics are
-logged to the dev console under `[SpoTUI-pin]` / `[SpoTUI-dbg]`.
+The token never leaves your machine (localStorage only). Video pins sync as
+animated posters (direct mp4 plays natively; HLS streams need hls.js from
+CDN and fall back to the thumbnail if it can't load). Something misbehaving?
+`tui -debug on`, reproduce, and read the `[SpoTUI-*]` console lines.
 
 ## UI shade
 

@@ -10,6 +10,13 @@ export const WP_FIT_KEY = "spotui:wp-fit";
 export const WP_POS_KEY = "spotui:wp-pos";
 export const WP_RICH_KEY = "spotui:wp-rich";
 export const SHADE_KEY = "spotui:shade";
+export const DEBUG_KEY = "spotui:debug";
+
+// External endpoints used by the poster wall (kept here, not inline).
+export const PINTEREST_WIDGET_BASE = "https://widgets.pinterest.com/v3/pidgets";
+export const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
+export const PINTEREST_WWW_BASE = "https://www.pinterest.com";
+export const HLS_CDN_URL = "https://cdn.jsdelivr.net/npm/hls.js@1";
 export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";
@@ -112,6 +119,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -wp &lt;url&gt; [-o &lt;0-1&gt;] [-fit &lt;cover/contain/fill/none&gt;] [-pos &lt;center/top/bottom/left/right&gt;] [-rich &lt;0-200&gt;]", desc: "Set wallpaper — bare tui -wp shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off)" },
     { cmd: "tui -wp off", desc: "Remove wallpaper" },
     { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Re-tint orange UI to any color (shades preserved); video + posters stay true; bare tui -shade shows current" },
+    { cmd: "tui -debug &lt;on/off&gt;", desc: "Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print)" },
     { cmd: "tui -t pull &lt;theme_id&gt;", desc: "Apply a theme by its ID (you can find the id on our website)" },
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command" },
     { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
@@ -159,10 +167,10 @@ export const COMMAND_LIST = [
     { cmd: "jam leave", desc: "Leave the current jam" },
     { cmd: "tui -posters &lt;on/off&gt;", desc: "Show the wall (pin images first) / hide it, images are kept" },
     { cmd: "tui -posters &lt;shuffle/clear/settings&gt;", desc: "Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings" },
-    { cmd: "tui -posters &lt;add &lt;url&gt;|count &lt;1-8|lo-hi&gt;|density &lt;1-10|lo-hi&gt;|theme &lt;#hex&gt;|opacity &lt;0-1&gt;|autoshuffle &lt;on/off&gt;|rotate &lt;min/off&gt;&gt;", desc: "Pin an image; visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer" },
+    { cmd: "tui -posters &lt;add &lt;url&gt;|count &lt;1-8|lo-hi&gt;|density &lt;1-10|lo-hi&gt;|theme &lt;#hex&gt;|opacity &lt;0-1&gt;|autoshuffle &lt;on/off&gt;|rotate &lt;min/off&gt;&gt;", desc: "Pin an image or video URL; visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer" },
     { cmd: "tui -posters [-o &lt;0-1&gt;] [-c &lt;1-8|lo-hi&gt;] [-d &lt;1-10|lo-hi&gt;] [-t &lt;#hex&gt;] [-r &lt;min|off&gt;]", desc: "Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer" },
     { cmd: "tui -pin-board &lt;board-url&gt; [token] [-o/-c/-d/-t/-r]", desc: "Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync" },
     { cmd: "tui -pin-boards | tui -pin-clear &lt;board&gt;", desc: "List synced boards with counts / forget one board (wall switches off if empty)" },
-    { cmd: "tui -pin-feed | tui -pin-refresh [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards and recreate the wall (flags apply after) / save API token on this machine only" },
+    { cmd: "tui -pin-feed | tui -pin-refresh [board] [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins incl. videos, then recreate the wall (flags apply after) / save API token on this machine only" },
     { cmd: "help", desc: "Show this panel" },
 ];

@@ -2,6 +2,7 @@ import { WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from 
 import { reassertPosterLayer } from "./posters.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageSet } from "./storage.js";
+import { dbg } from "./utils.js";
 
 // Check if URL points to video file
 export function isVideoWallpaperUrl(url) {
@@ -15,7 +16,7 @@ export function isVideoWallpaperUrl(url) {
 
 function dbgState(tag, wp, url) {
     try {
-        console.log(`[SpoTUI-dbg] ${tag}`, {
+        dbg(`[SpoTUI-dbg] ${tag}`, {
             url,
             tag: wp && wp.tagName,
             src: wp && (wp.currentSrc || wp.src || wp.style.backgroundImage),
@@ -32,9 +33,9 @@ function dbgState(tag, wp, url) {
 function explainFailure(url, wp) {
     const u = String(url);
     const hints = [];
-    if (/^[A-Za-z]:\\/.test(u) || u.includes("\\")) hints.push("Windows path with backslashes will NOT load. Use file:///D:/path/file.webm with forward slashes, or better the same-origin URL below.");
+    if (/^[A-Za-z]:\\/.test(u) || u.includes("\\")) hints.push("Windows path with backslashes will NOT load. Use a file:///D:/path/file.webm URL with forward slashes, or better a same-origin https://xpui.app.spotify.com/videos/<file>.webm URL.");
     if (/\s/.test(u) && !/%20/.test(u)) hints.push("URL contains raw spaces. Encode as %20 or rename file to dashes.");
-    if (/^file:\/\//i.test(u)) hints.push("file:// is often blocked by Spotify (Not allowed to load local resource). Prefer https://xpui.app.spotify.com/videos/lake-golden-hour.webm (already bundled on your machine).");
+    if (/^file:\/\//i.test(u)) hints.push("file:// is often blocked by Spotify (Not allowed to load local resource). Prefer an https:// link or a same-origin https://xpui.app.spotify.com/videos/<file>.webm URL.");
     if (/^http:\/\/(?!localhost|127\.0\.0\.1)/i.test(u)) hints.push("http:// (non-localhost) from Spotify's https:// origin is mixed-content and gets blocked. Use https:// URLs.");
     if (/\.mp4$/i.test(u.split("?")[0].split("#")[0])) hints.push(".mp4/H.264 is blocked in some Spotify builds. .webm/VP9 (like shimmer.webm) always works.");
     if (wp && wp.error) {
@@ -48,7 +49,7 @@ function explainFailure(url, wp) {
 // Set background wallpaper (image or video) — debug instrumented.
 // opts: { fit: cover|contain|fill|none, pos: css position, rich: 0-200 }.
 export function setWallpaper(url, opacity, save = true, opts = {}) {
-    console.log("[SpoTUI-dbg] setWallpaper called:", { url, opacity, save, ...opts });
+    dbg("[SpoTUI-dbg] setWallpaper called:", { url, opacity, save, ...opts });
     let tui = document.getElementById("spotui-tui");
     if (!tui) {
         console.warn("[SpoTUI-dbg] abort: #spotui-tui not found yet (Spotify still loading). Retry the command in a few seconds.");
@@ -57,18 +58,18 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
 
     const clean = String(url).split("?")[0].split("#")[0];
     const isVideo = isVideoWallpaperUrl(url);
-    console.log("[SpoTUI-dbg] detect:", { clean, isVideo });
+    dbg("[SpoTUI-dbg] detect:", { clean, isVideo });
     if (!isVideo && /\.(mp4|webm)/i.test(String(url))) {
         console.warn("[SpoTUI-dbg] URL has video extension but with ?# suffix confusing detection. Clean:", clean);
     }
     if (/^[A-Za-z]:\\/.test(String(url))) {
-        console.warn('[SpoTUI-dbg] Got a raw Windows path (C:\\...). The <video> src needs a URL. Use file:///D:/Ressources/Wallpapers/lake-golden-hour.webm or https://xpui.app.spotify.com/videos/lake-golden-hour.webm');
+        console.warn('[SpoTUI-dbg] Got a raw Windows path (C:\\...). The <video> src needs a URL — use file:///D:/path/file.webm (forward slashes) or an https:// link.');
     }
 
     let wp = document.getElementById("spotui-wallpaper");
 
     if (wp && ((isVideo && wp.tagName !== "VIDEO") || (!isVideo && wp.tagName === "VIDEO"))) {
-        console.log(`[SpoTUI-dbg] swapping element ${wp.tagName} -> ${isVideo ? "VIDEO" : "DIV"}`);
+        dbg(`[SpoTUI-dbg] swapping element ${wp.tagName} -> ${isVideo ? "VIDEO" : "DIV"}`);
         wp.remove();
         wp = null;
     }
@@ -99,9 +100,9 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
             );
         }
         tui.prepend(wp);
-        console.log(`[SpoTUI-dbg] created <${wp.tagName} id=spotui-wallpaper>`);
+        dbg(`[SpoTUI-dbg] created <${wp.tagName} id=spotui-wallpaper>`);
     } else {
-        console.log("[SpoTUI-dbg] reusing existing element:", wp.tagName);
+        dbg("[SpoTUI-dbg] reusing existing element:", wp.tagName);
     }
 
     // Fit / position / richness — applied on create AND reuse so changes take
@@ -124,11 +125,11 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
     const richFilter = rich === 0 ? "" : `saturate(${(1 + 0.1 * r).toFixed(3)}) contrast(${(1 + 0.04 * r).toFixed(3)})`;
     // Shade counter-filter keeps video/photos true-colored under UI hue-rotate.
     wp.style.filter = [richFilter, shadeCounterFilter()].filter(Boolean).join(" ");
-    console.log("[SpoTUI-dbg] applied:", { fit, pos, rich });
+    dbg("[SpoTUI-dbg] applied:", { fit, pos, rich });
 
     if (isVideo) {
         if (wp.getAttribute("src") !== url) {
-            console.log("[SpoTUI-dbg] setting video src:", url);
+            dbg("[SpoTUI-dbg] setting video src:", url);
             wp.src = url;
             wp.onerror = () => {
                 console.error("[SpoTUI-dbg] wallpaper video FAILED:", url);
@@ -136,7 +137,7 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
                 explainFailure(url, wp);
             };
         } else {
-            console.log("[SpoTUI-dbg] src unchanged, re-playing");
+            dbg("[SpoTUI-dbg] src unchanged, re-playing");
         }
         dbgState("before play()", wp, url);
         wp.muted = true;
@@ -150,13 +151,13 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
         setTimeout(() => {
             dbgState("4s health-check", wp, url);
             if (wp.readyState < 2 || !wp.videoWidth) explainFailure(url, wp);
-            else console.log("[SpoTUI-dbg] OK: video is rendering.");
+            else dbg("[SpoTUI-dbg] OK: video is rendering.");
         }, 4000);
     } else {
-        console.log("[SpoTUI-dbg] setting image background:", url);
+        dbg("[SpoTUI-dbg] setting image background:", url);
         wp.style.backgroundImage = `url("${url}")`;
         const probe = new Image();
-        probe.onload = () => console.log("[SpoTUI-dbg] image probe OK:", url);
+        probe.onload = () => dbg("[SpoTUI-dbg] image probe OK:", url);
         probe.onerror = () => console.error("[SpoTUI-dbg] image probe FAILED (404/blocked/CORS):", url);
         probe.src = url;
     }
@@ -174,6 +175,6 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
         storageSet(WP_FIT_KEY, fit);
         storageSet(WP_POS_KEY, pos);
         storageSet(WP_RICH_KEY, String(rich));
-        console.log("[SpoTUI-dbg] saved to storage. Clear anytime with: tui -wp off");
+        dbg("[SpoTUI-dbg] saved to storage. Clear anytime with: tui -wp off");
     }
 }

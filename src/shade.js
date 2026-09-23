@@ -1,6 +1,6 @@
 import { HEX_COLOR_REGEX, SHADE_KEY } from "./constants.js";
-import { pinToast } from "./posters.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
+import { dbg, pinToast } from "./utils.js";
 
 // SpoTUI's default accent color (orange #ff8c42). The shade command rotates
 // every orange element in the UI away from this hue by the same delta,
@@ -63,7 +63,13 @@ function shadeStyleEl() {
 export function applyShade() {
     const tui = document.getElementById("spotui-tui");
     if (!tui) return false;
-    const target = storageGet(SHADE_KEY);
+    const rawTarget = storageGet(SHADE_KEY);
+    // Self-heal a corrupt stored value instead of painting invalid CSS.
+    if (rawTarget && !HEX_COLOR_REGEX.test(rawTarget)) {
+        storageRemove(SHADE_KEY);
+        console.warn("[SpoTUI-shade] ignoring invalid stored shade, reset to orange:", rawTarget);
+    }
+    const target = rawTarget && HEX_COLOR_REGEX.test(rawTarget) ? rawTarget : null;
     const st = shadeStyleEl();
     if (!target) {
         tui.style.filter = "";
@@ -103,7 +109,7 @@ export function setShade(arg) {
         storageRemove(SHADE_KEY);
         applyShade();
         pinToast("shade off — back to orange");
-        console.log("[SpoTUI-shade] off, orange restored.");
+        dbg("[SpoTUI-shade] off, orange restored.");
         return;
     }
     if (!HEX_COLOR_REGEX.test(v)) {
@@ -117,11 +123,11 @@ export function setShade(arg) {
     storageSet(SHADE_KEY, v);
     applyShade();
     pinToast(`UI shade ${v} (video + posters untouched)`);
-    console.log("[SpoTUI-shade] applied:", v);
+    dbg("[SpoTUI-shade] applied:", v);
 }
 
 export function reportShade() {
     const cur = storageGet(SHADE_KEY);
     pinToast(cur ? `UI shade ${cur}` : "UI shade: orange (default)");
-    console.log("[SpoTUI-shade] current:", cur || "orange (default)");
+    dbg("[SpoTUI-shade] current:", cur || "orange (default)");
 }

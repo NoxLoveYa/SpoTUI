@@ -1,7 +1,6 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, createControlButtons } from "./appearance.js";
 import { initUpdateBanner, showRestartPopup } from "./banner.js";
-import { LYRICS_ANIMATION_KEY, LYRICS_STORAGE_KEY, WP_OPACITY_KEY, WP_URL_KEY } from "./constants.js";
-import { WP_FIT_KEY, WP_POS_KEY, WP_RICH_KEY } from "./constants.js";
+import { LYRICS_ANIMATION_KEY, LYRICS_STORAGE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { resumeJamFromStorage } from "./jam.js";
 import { handleKeybindKeydown } from "./keybinds.js";
 import { initDjBridge } from "./dj.js";
@@ -14,6 +13,7 @@ import { injectStyle } from "./styles.js";
 import { initSync } from "./sync.js";
 import { createTerminal } from "./terminal.js";
 import { setWallpaper } from "./wallpaper.js";
+import { dbg } from "./utils.js";
 
 // Inject styles, set up event listeners, and restore saved state
 injectStyle();
@@ -65,22 +65,22 @@ try {
         });
     }
     if (storageGet(WP_URL_KEY)) {
-        console.log("[SpoTUI-dbg] boot: restoring saved wallpaper:", storageGet(WP_URL_KEY), "opacity:", storageGet(WP_OPACITY_KEY) || "1", "(clear with tui -wp off)");
+        dbg("[SpoTUI-dbg] boot: restoring saved wallpaper:", storageGet(WP_URL_KEY), "opacity:", storageGet(WP_OPACITY_KEY) || "1", "(clear with tui -wp off)");
         setTimeout(() => setWallpaper(storageGet(WP_URL_KEY), storageGet(WP_OPACITY_KEY) || "1", false, {
             fit: storageGet(WP_FIT_KEY) || undefined,
             pos: storageGet(WP_POS_KEY) || undefined,
             rich: storageGet(WP_RICH_KEY) || undefined,
         }), 1500);
     } else {
-        console.log("[SpoTUI-dbg] boot: no saved wallpaper. Set one with: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5");
+        dbg("[SpoTUI-dbg] boot: no saved wallpaper. Set one with: tui -wp <url> -o 0.5 (video needs .webm — .mp4/H.264 is blocked in some builds)");
     }
     // Restore UI shade (retries once; terminal may still be booting).
     setTimeout(() => { if (!applyShade()) setTimeout(applyShade, 2000); }, 2600);
     if (isPostersEnabled()) {
-        console.log("[SpoTUI-pin] boot: wall ON,", getPosterImages().length, "stored image(s), boards:", getBoardCounts());
+        dbg("[SpoTUI-pin] boot: wall ON,", getPosterImages().length, "stored image(s), boards:", getBoardCounts());
         setTimeout(() => { maybeAutoshuffle(); renderPosters(); startRotateTimer(); }, 2200);
     } else {
-        console.log("[SpoTUI-pin] boot: wall OFF,", getPosterImages().length, "stored image(s) (enable with tui -posters on).");
+        dbg("[SpoTUI-pin] boot: wall OFF,", getPosterImages().length, "stored image(s) (enable with tui -posters on).");
     }
     applyLyricColors();
     applyPlayerBarColors();
