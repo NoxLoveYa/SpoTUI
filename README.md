@@ -54,11 +54,12 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui actions disable <name>` | Disable an action |
 | `tui actions delete <name>` | Delete an action |
 | `tui -wp off` | Remove wallpaper |
-| `tui -posters <on/off/shuffle/clear>` | Toggle/shuffle/clear the poster wall |
-| `tui -posters add <url>` | Pin an image URL to the wall |
-| `tui -posters count <1-8>` | How many posters to show |
-| `tui -posters rotate <min/off>` | Auto-pick new random posters on a timer |
-| `tui -pin-board <board-url> [token]` | Sync posters from a Pinterest board |
+| `tui -posters <on/off>` | Show the wall (pin images first) / hide it, images are kept |
+| `tui -posters <shuffle/clear>` | Re-roll posters, spots and sizes / delete everything and switch the wall off |
+| `tui -posters <add <url>\|count <1-8\|lo-hi>\|density <1-10\|lo-hi>\|theme <light/dark>\|opacity <0-1>\|rotate <min/off>>` | Pin an image; visible count (range = random each shuffle); size (range = random per poster); dark/light frames; layer opacity; auto re-roll timer |
+| `tui -pin-board <board-url> [token]` | Sync a board's pins; public boards need no token, private ones do |
+| `tui -pin-boards` / `tui -pin-clear <board>` | List synced boards with counts / forget one board (wall switches off if empty) |
+| `tui -pin-feed` / `tui -pin-refresh` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards and recreate the wall / save API token on this machine only |
 | `tui -pin-feed` | Random mix from all your boards (needs token) |
 | `tui -pin-token <token>` | Save your Pinterest API token (local only) |
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |
@@ -100,8 +101,14 @@ tui -posters add https://i.pinimg.com/736x/....jpg
 tui -posters on
 tui -posters shuffle
 tui -posters count 6
+tui -posters count 3-6  # random visible number in that range, re-rolled each shuffle
+tui -posters density 7    # bigger prints; 3 = subtle, 10 = full wall
+tui -posters density 3-8  # each poster rolls its own size in that range
 tui -posters rotate 10   # new random picks every 10 min, off to disable
 tui -posters clear       # forget all pinned images
+tui -pin-boards          # what came from which board
+tui -pin-clear lifr112/aesthetic   # forget one board only
+tui -pin-refresh         # re-pull synced boards, recreate the wall with current ranges
 ```
 
 Sync straight from Pinterest:

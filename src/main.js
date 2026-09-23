@@ -7,7 +7,7 @@ import { initDjBridge } from "./dj.js";
 import { initLyricsBridge, openLyricsPanel, waitForPlayerReadyThen } from "./lyrics.js";
 import { isFirstBoot, launchFirstBootIfNeeded } from "./onboarding.js";
 import { storageGet } from "./storage.js";
-import { isPostersEnabled, renderPosters, startRotateTimer } from "./posters.js";
+import { getBoardCounts, getPosterImages, isPostersEnabled, renderPosters, startRotateTimer } from "./posters.js";
 import { injectStyle } from "./styles.js";
 import { initSync } from "./sync.js";
 import { createTerminal } from "./terminal.js";
@@ -69,7 +69,10 @@ try {
         console.log("[SpoTUI-dbg] boot: no saved wallpaper. Set one with: tui -wp https://xpui.app.spotify.com/videos/lake-golden-hour.webm -o 0.5");
     }
     if (isPostersEnabled()) {
+        console.log("[SpoTUI-pin] boot: wall ON,", getPosterImages().length, "stored image(s), boards:", getBoardCounts());
         setTimeout(() => { renderPosters(); startRotateTimer(); }, 2200);
+    } else {
+        console.log("[SpoTUI-pin] boot: wall OFF,", getPosterImages().length, "stored image(s) (enable with tui -posters on).");
     }
     applyLyricColors();
     applyPlayerBarColors();

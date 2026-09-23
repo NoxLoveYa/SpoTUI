@@ -15,7 +15,7 @@ import { storageClear, storageGet, storageRemove, storageSet } from "./storage.j
 import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { setWallpaper } from "./wallpaper.js";
-import { addPoster, clearPosters, setPinToken, setPosterCount, setPosterRotate, setPostersEnabled, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
+import { addPoster, clearBoard, clearPosters, getBoardCounts, refreshBoards, setPinToken, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 
 export async function execute(cmd, opts = {}) {
     const cleanedCmd = stripCommandPrefix(cmd);
@@ -85,8 +85,24 @@ export async function execute(cmd, opts = {}) {
             else if (sub === "clear") clearPosters();
             else if (sub === "add" && args[2]) addPoster(args[2]);
             else if (sub === "count") setPosterCount(args[2]);
+            else if (sub === "density") setPosterDensity(args[2]);
+            else if (sub === "theme") setPosterTheme(args[2]);
+            else if (sub === "opacity") setPosterOpacity(args[2]);
             else if (sub === "rotate") setPosterRotate(args[2]);
-            else console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|add <url>|count <1-8>|rotate <min|off>>");
+            else console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|add <url>|count <1-8|lo-hi>|density <1-10|lo-hi>|theme <light|dark>|opacity <0-1>|rotate <min|off>>");
+            return;
+        }
+        if (argsLower[0] === "-pin-refresh") {
+            refreshBoards().catch((e) => console.error("[SpoTUI-pin] refresh failed:", e.message));
+            return;
+        }
+        if (argsLower[0] === "-pin-boards") {
+            console.log("[SpoTUI-pin] synced boards:", getBoardCounts());
+            return;
+        }
+        if (argsLower[0] === "-pin-clear") {
+            if (!args[1]) console.warn("[SpoTUI-pin] usage: tui -pin-clear <board>  (see tui -pin-boards)");
+            else clearBoard(args.slice(1).join(" "));
             return;
         }
         if (argsLower[0] === "-pin-board") {

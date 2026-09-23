@@ -8,6 +8,9 @@ const POSTERS_IMGS = "spotui:posters-imgs";
 const POSTERS_COUNT = "spotui:posters-count";
 const POSTERS_ROTATE = "spotui:posters-rotate";
 const POSTERS_SEED = "spotui:posters-seed";
+const POSTERS_DENSITY = "spotui:posters-density";
+const POSTERS_THEME = "spotui:posters-theme";
+const POSTERS_OPACITY = "spotui:posters-opacity";
 const PIN_TOKEN = "spotui:pin-token";
 
 const MAX_STORED = 40;
@@ -16,10 +19,10 @@ const MAX_STORED = 40;
 const SLOTS = [
     { x: 2, y: 5, w: 13, r: -4 },
     { x: 2, y: 37, w: 12, r: 3 },
-    { x: 3, y: 68, w: 13, r: -2 },
+    { x: 3, y: 58, w: 13, r: -2 },
     { x: 85, y: 5, w: 13, r: 3 },
     { x: 86, y: 37, w: 12, r: -3 },
-    { x: 84, y: 68, w: 13, r: 4 },
+    { x: 84, y: 58, w: 13, r: 4 },
     { x: 19, y: 3, w: 11, r: 2 },
     { x: 70, y: 3, w: 11, r: -2 },
 ];
@@ -35,16 +38,42 @@ function mulberry32(a) {
     };
 }
 
+// Stored as [{u:url, b:boardLabel}]; legacy plain-string arrays migrate to b:"?".
 export function getPosterImages() {
     try {
         const raw = storageGet(POSTERS_IMGS);
         const arr = raw ? JSON.parse(raw) : [];
-        return Array.isArray(arr) ? arr.filter((u) => typeof u === "string") : [];
+        if (!Array.isArray(arr)) return [];
+        return arr
+            .map((e) => (typeof e === "string" ? { u: e, b: "?" } : e))
+            .filter((e) => e && typeof e.u === "string");
     } catch (e) { return []; }
 }
 
 function savePosterImages(imgs) {
     storageSet(POSTERS_IMGS, JSON.stringify(imgs.slice(0, MAX_STORED)));
+}
+
+export function getBoardCounts() {
+    const map = {};
+    for (const e of getPosterImages()) map[e.b || "?"] = (map[e.b || "?"] || 0) + 1;
+    return map;
+}
+
+export function clearBoard(ref) {
+    const q = String(ref || "").toLowerCase();
+    const imgs = getPosterImages();
+    const kept = imgs.filter((e) => !String(e.b || "").toLowerCase().includes(q));
+    const removed = imgs.length - kept.length;
+    savePosterImages(kept);
+    if (!kept.length) {
+        // Library is empty: power the wall off so boot stays clean too.
+        storageRemove(POSTERS_ON);
+        stopRotateTimer();
+    }
+    if (isPostersEnabled()) renderPosters();
+    else { const box = document.getElementById("spotui-posters"); if (box) box.innerHTML = ""; }
+    console.log(`[SpoTUI-pin] forgot ${removed} image(s) matching "${ref}". Left:`, getBoardCounts());
 }
 
 export function isPostersEnabled() {
@@ -81,15 +110,20 @@ export function renderPosters() {
     const box = ensureContainer();
     if (!box) return;
     box.innerHTML = "";
+    const opRaw = parseFloat(storageGet(POSTERS_OPACITY) || "1");
+    box.style.opacity = String(Math.max(0, Math.min(1, isNaN(opRaw) ? 1 : opRaw)));
+    const frame = storageGet(POSTERS_THEME) === "dark" ? "#1a1e24" : "#f5f1e6";
     if (!isPostersEnabled()) return;
     const imgs = getPosterImages();
     if (!imgs.length) {
         console.log("[SpoTUI-pin] posters on but no images yet. Add: tui -posters add <url> or tui -pin-board <board-url>");
         return;
     }
-    const count = Math.min(parseInt(storageGet(POSTERS_COUNT) || "5", 10) || 5, SLOTS.length, imgs.length);
     const seed = parseInt(storageGet(POSTERS_SEED) || "7", 10) || 7;
     const rnd = mulberry32(seed);
+    const [cLo, cHi] = parseCountRange();
+    const count = Math.min(cLo + Math.floor(rnd() * (cHi - cLo + 1)), SLOTS.length, imgs.length);
+    const [dLo, dHi] = parseDensity();
     const slotIdx = SLOTS.map((_, i) => i);
     for (let i = slotIdx.length - 1; i > 0; i--) {
         const j = Math.floor(rnd() * (i + 1));
@@ -102,18 +136,21 @@ export function renderPosters() {
     }
     for (let k = 0; k < count; k++) {
         const s = SLOTS[slotIdx[k]];
+        const mult = (dLo + rnd() * (dHi - dLo)) / 5;
         const fig = document.createElement("figure");
         fig.style.margin = "0";
         fig.style.position = "absolute";
         fig.style.left = s.x + "%";
         fig.style.top = s.y + "%";
-        fig.style.width = s.w + "%";
+        fig.style.width = Math.min(30, s.w * mult) + "%";
+        fig.style.maxHeight = "28vh";
+        fig.style.overflow = "hidden";
         fig.style.transform = `rotate(${s.r}deg)`;
-        fig.style.background = "#f5f1e6";
+        fig.style.background = frame;
         fig.style.padding = "6px 6px 20px 6px";
         fig.style.boxShadow = "0 6px 18px rgba(0,0,0,.55)";
         const img = document.createElement("img");
-        img.src = imgs[imgIdx[k]];
+        img.src = imgs[imgIdx[k]].u;
         img.alt = "";
         img.draggable = false;
         img.style.width = "100%";
@@ -144,26 +181,30 @@ export function setPostersEnabled(on) {
     }
 }
 
-export function addPoster(url) {
+export function addPoster(url, board) {
     const u = String(url || "").trim();
+    const b = String(board || "manual");
     if (!u) return;
     if (/\s/.test(u) && !/%20/.test(u)) console.warn("[SpoTUI-pin] URL has raw spaces, encode as %20:", u);
     const imgs = getPosterImages();
-    if (imgs.includes(u)) {
+    if (imgs.some((e) => e.u === u)) {
         console.log("[SpoTUI-pin] already pinned:", u);
         return;
     }
-    imgs.unshift(u);
+    imgs.unshift({ u, b });
     savePosterImages(imgs);
     console.log(`[SpoTUI-pin] pinned (${imgs.length} total):`, u);
     if (isPostersEnabled()) renderPosters();
 }
 
 export function clearPosters() {
+    const n = getPosterImages().length;
     storageRemove(POSTERS_IMGS);
+    storageRemove(POSTERS_ON);
+    stopRotateTimer();
     const box = document.getElementById("spotui-posters");
     if (box) box.innerHTML = "";
-    console.log("[SpoTUI-pin] cleared all pinned images.");
+    console.log(`[SpoTUI-pin] nuked ${n} image(s) and switched the wall OFF. Nothing can come back on restart. Re-enable with: tui -posters on`);
 }
 
 export function shufflePosters() {
@@ -172,11 +213,79 @@ export function shufflePosters() {
     console.log("[SpoTUI-pin] shuffled.");
 }
 
-export function setPosterCount(n) {
-    const v = Math.max(1, Math.min(SLOTS.length, parseInt(n, 10) || 5));
-    storageSet(POSTERS_COUNT, String(v));
+export function setPosterCount(arg) {
+    const s = String(arg || "").trim();
+    const m = s.match(/(\d+)\s*-\s*(\d+)/);
+    let val;
+    if (m) {
+        let lo = Math.max(1, Math.min(SLOTS.length, parseInt(m[1], 10)));
+        let hi = Math.max(1, Math.min(SLOTS.length, parseInt(m[2], 10)));
+        if (lo > hi) [lo, hi] = [hi, lo];
+        val = lo === hi ? String(lo) : `${lo}-${hi}`;
+    } else {
+        val = String(Math.max(1, Math.min(SLOTS.length, parseInt(s, 10) || 5)));
+    }
+    storageSet(POSTERS_COUNT, val);
     renderPosters();
-    console.log("[SpoTUI-pin] showing", v, "poster(s).");
+    console.log(`[SpoTUI-pin] showing ${val} poster(s)${val.includes("-") ? " (random in range each shuffle)" : ""}.`);
+}
+
+function parseCountRange() {
+    const raw = String(storageGet(POSTERS_COUNT) || "5");
+    const m = raw.match(/(\d+)\s*-\s*(\d+)/);
+    let lo, hi;
+    if (m) { lo = parseInt(m[1], 10); hi = parseInt(m[2], 10); }
+    else { lo = hi = parseInt(raw, 10) || 5; }
+    lo = Math.max(1, Math.min(SLOTS.length, lo)); hi = Math.max(1, Math.min(SLOTS.length, hi));
+    if (lo > hi) [lo, hi] = [hi, lo];
+    return [lo, hi];
+}
+
+export function setPosterTheme(mode) {
+    const m = String(mode || "").toLowerCase();
+    if (m !== "dark" && m !== "light") {
+        console.warn("[SpoTUI-pin] usage: tui -posters theme <light|dark>");
+        return;
+    }
+    storageSet(POSTERS_THEME, m);
+    renderPosters();
+    console.log("[SpoTUI-pin] poster frames:", m);
+}
+
+export function setPosterOpacity(v) {
+    const f = parseFloat(String(v));
+    const op = Math.max(0, Math.min(1, isNaN(f) ? 1 : f));
+    storageSet(POSTERS_OPACITY, String(op));
+    renderPosters();
+    console.log("[SpoTUI-pin] poster layer opacity:", op);
+}
+
+export function setPosterDensity(arg) {
+    const s = String(arg || "").trim();
+    const m = s.match(/(\d+)\s*-\s*(\d+)/);
+    let val;
+    if (m) {
+        let lo = Math.max(1, Math.min(10, parseInt(m[1], 10)));
+        let hi = Math.max(1, Math.min(10, parseInt(m[2], 10)));
+        if (lo > hi) [lo, hi] = [hi, lo];
+        val = lo === hi ? String(lo) : `${lo}-${hi}`;
+    } else {
+        val = String(Math.max(1, Math.min(10, parseInt(s, 10) || 5)));
+    }
+    storageSet(POSTERS_DENSITY, val);
+    renderPosters();
+    console.log(`[SpoTUI-pin] density ${val}/10 — each poster rolls a random size in that range (re-rolled on shuffle).`);
+}
+
+function parseDensity() {
+    const raw = String(storageGet(POSTERS_DENSITY) || "5");
+    const m = raw.match(/(\d+)\s*-\s*(\d+)/);
+    let lo, hi;
+    if (m) { lo = parseInt(m[1], 10); hi = parseInt(m[2], 10); }
+    else { lo = hi = parseInt(raw, 10) || 5; }
+    lo = Math.max(1, Math.min(10, lo)); hi = Math.max(1, Math.min(10, hi));
+    if (lo > hi) [lo, hi] = [hi, lo];
+    return [lo, hi];
 }
 
 export function setPosterRotate(min) {
@@ -277,6 +386,29 @@ async function syncViaV5(ref, token) {
     return ((pins.items || pins) || []).map((p) => (p.image && p.image.original && p.image.original.url) || null).filter(Boolean);
 }
 
+// Re-pull every previously synced board, then recreate the wall randomly
+// with the current count/density ranges.
+export async function refreshBoards() {
+    const boards = Object.keys(getBoardCounts()).filter((b) => b && b !== "manual" && b !== "?");
+    if (!boards.length) {
+        console.log("[SpoTUI-pin] nothing to re-pull (only manual pins). Sync a board first: tui -pin-board <url>");
+        shufflePosters();
+        return;
+    }
+    const token = (storageGet(PIN_TOKEN) || "").trim();
+    let ok = 0;
+    for (const b of boards) {
+        try {
+            if (b === "feed-mix") await syncPinterestFeed(token);
+            else if (b.startsWith("board:")) await syncPinterestBoard(b.slice(6), token);
+            else await syncPinterestBoard(`https://www.pinterest.com/${b}/`, token);
+            ok++;
+        } catch (e) { console.warn("[SpoTUI-pin] re-pull failed for", b, "-", e.message); }
+    }
+    shufflePosters();
+    console.log(`[SpoTUI-pin] re-pulled ${ok}/${boards.length} board(s), wall recreated randomly.`);
+}
+
 export function setPinToken(token) {
     const t = String(token || "").trim();
     if (!t) {
@@ -319,10 +451,11 @@ export async function syncPinterestBoard(input, tokenArg) {
         else console.warn("[SpoTUI-pin] nothing fetched. Check the board URL/id and token scopes (boards:read, pins:read).");
         return;
     }
+    const label = ref.slug ? `${ref.user}/${ref.slug}` : `board:${ref.id}`;
     const imgs = getPosterImages();
     let added = 0;
     for (const u of urls) {
-        if (!imgs.includes(u) && imgs.length < MAX_STORED) { imgs.unshift(u); added++; }
+        if (!imgs.some((e) => e.u === u) && imgs.length < MAX_STORED) { imgs.unshift({ u, b: label }); added++; }
     }
     savePosterImages(imgs);
     if (!isPostersEnabled()) storageSet(POSTERS_ON, "1");
@@ -356,7 +489,7 @@ export async function syncPinterestFeed(tokenArg) {
         const imgs = getPosterImages();
         let added = 0;
         for (const u of urls) {
-            if (!imgs.includes(u) && imgs.length < MAX_STORED) { imgs.unshift(u); added++; }
+            if (!imgs.some((e) => e.u === u) && imgs.length < MAX_STORED) { imgs.unshift({ u, b: "feed-mix" }); added++; }
         }
         savePosterImages(imgs);
         if (!isPostersEnabled()) storageSet(POSTERS_ON, "1");
