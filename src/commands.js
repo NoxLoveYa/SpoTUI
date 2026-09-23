@@ -204,20 +204,23 @@ export async function execute(cmd, opts = {}) {
             setPinToken(args[1]);
             return;
         }
-        if (argsLower.includes("-t")) {
-            const tIndex = argsLower.indexOf("-t");
-            const tSub = (args[tIndex + 1] || "").toLowerCase();
-            const tName = args[tIndex + 2];
+        // Theme ops only trigger in first position so a "-t" token inside
+        // other commands (bind strings, search queries) can't hijack them.
+        if (argsLower[0] === "-t") {
+            const tSub = (args[1] || "").toLowerCase();
+            const tName = args[2];
             if (tSub === "save") { saveTheme(tName); return; }
             if (tSub === "list") { listThemes(); return; }
             if (tSub === "apply" || tSub === "load") { applySavedTheme(tName); return; }
             if (tSub === "delete" || tSub === "rm" || tSub === "remove") { deleteTheme(tName); return; }
-            if (argsLower[tIndex+1] === "pull" && args[tIndex+2]) {
-                const base64Name = args[tIndex+2];
+            if (tSub === "pull" && args[2]) {
+                const base64Name = args[2];
                 try {
                     const themeName = atob(base64Name);
                     applyThemeByName(themeName);
                 } catch (e) {}
+            } else if (tSub !== "pull") {
+                console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id>>");
             }
             return;
         }
