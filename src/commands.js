@@ -161,7 +161,7 @@ export async function execute(cmd, opts = {}) {
             else if (sub === "opacity") { setPosterOpacity(args[2]); acted = true; }
             else if (sub === "autoshuffle") { setPosterAutoshuffle(args[2]); acted = true; }
             else if (sub === "rotate") { setPosterRotate(args[2]); acted = true; }
-            else if (sub !== "-o" && sub !== "-c" && sub !== "-d" && sub !== "-t" && sub !== "-r") console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|settings|add <url> [board]|count <1-8|lo-hi>|density <1-10|lo-hi>|theme <#hex>|opacity <0-1>|autoshuffle <on|off>|rotate <min|off>> [-o <0-1>] [-c <1-8|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
+            else if (sub !== "-o" && sub !== "-c" && sub !== "-d" && sub !== "-t" && sub !== "-r") console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|settings|add <url> [board]|count <1-12|lo-hi>|density <1-10|lo-hi>|theme <#hex>|opacity <0-1>|autoshuffle <on|off>|rotate <min|off>> [-o <0-1>] [-c <1-12|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
             if (applyPosterFlags(argsLower, args) > 0) acted = true;
             if (!acted) console.warn("[SpoTUI-pin] nothing to do — see usage above.");
             return;
@@ -183,7 +183,7 @@ export async function execute(cmd, opts = {}) {
             return;
         }
         if (argsLower[0] === "-pin-board") {
-            if (!args[1] || args[1].startsWith("-")) console.warn("[SpoTUI-pin] usage: tui -pin-board <board-url-or-id> [token] [-o <0-1>] [-c <1-8|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
+            if (!args[1] || args[1].startsWith("-")) console.warn("[SpoTUI-pin] usage: tui -pin-board <board-url-or-id> [token] [-o <0-1>] [-c <1-12|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
             else {
                 const token = args[2] && !args[2].startsWith("-") ? args[2] : undefined;
                 syncPinterestBoard(args[1], token)

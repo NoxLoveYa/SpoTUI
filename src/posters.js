@@ -20,15 +20,21 @@ const PIN_TOKEN = "spotui:pin-token";
 const MAX_STORED = 40;
 
 // Fixed wall slots (percent coords) so posters frame the terminal, never cover it.
+// Columns hug the left/right edges, top row clears the logo, bottom corners
+// stop at y63 so capped posters (28vh) stay above the command bar.
 const SLOTS = [
-    { x: 2, y: 5, w: 13, r: -4 },
-    { x: 2, y: 37, w: 12, r: 3 },
-    { x: 3, y: 58, w: 13, r: -2 },
-    { x: 85, y: 5, w: 13, r: 3 },
-    { x: 86, y: 37, w: 12, r: -3 },
-    { x: 84, y: 58, w: 13, r: 4 },
-    { x: 19, y: 3, w: 11, r: 2 },
-    { x: 70, y: 3, w: 11, r: -2 },
+    { x: 2, y: 2, w: 12, r: -4 },
+    { x: 2, y: 23, w: 12, r: 3 },
+    { x: 2, y: 44, w: 12, r: -2 },
+    { x: 2, y: 63, w: 12, r: 4 },
+    { x: 86, y: 2, w: 12, r: 3 },
+    { x: 86, y: 23, w: 12, r: -3 },
+    { x: 86, y: 44, w: 12, r: 2 },
+    { x: 86, y: 63, w: 12, r: -4 },
+    { x: 20, y: 1, w: 11, r: 2 },
+    { x: 69, y: 1, w: 11, r: -2 },
+    { x: 15, y: 63, w: 11, r: -3 },
+    { x: 74, y: 63, w: 11, r: 3 },
 ];
 
 let rotateTimer = null;
