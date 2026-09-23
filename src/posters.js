@@ -23,20 +23,17 @@ const MAX_STORED = 40;
 // Fixed wall slots (percent coords) so posters frame the terminal, never cover it.
 // Columns hug the left/right edges, top row clears the logo, bottom corners
 // stop at y63 so capped posters (28vh) stay above the command bar.
-const SLOTS = [
-    { x: 2, y: 2, w: 12, r: -4 },
-    { x: 2, y: 23, w: 12, r: 3 },
-    { x: 2, y: 44, w: 12, r: -2 },
-    { x: 2, y: 63, w: 12, r: 4 },
-    { x: 86, y: 2, w: 12, r: 3 },
-    { x: 86, y: 23, w: 12, r: -3 },
-    { x: 86, y: 44, w: 12, r: 2 },
-    { x: 86, y: 63, w: 12, r: -4 },
-    { x: 20, y: 1, w: 11, r: 2 },
-    { x: 69, y: 1, w: 11, r: -2 },
-    { x: 15, y: 63, w: 11, r: -3 },
-    { x: 74, y: 63, w: 11, r: 3 },
+// Declared as mirrored pairs: symmetric mode fills a pair together, and a
+// lone slot in its own pair renders solo — no geometric guessing involved.
+const SLOT_PAIRS = [
+    [{ x: 2, y: 2, w: 12, r: -4 }, { x: 86, y: 2, w: 12, r: 3 }],
+    [{ x: 2, y: 23, w: 12, r: 3 }, { x: 86, y: 23, w: 12, r: -3 }],
+    [{ x: 2, y: 44, w: 12, r: -2 }, { x: 86, y: 44, w: 12, r: 2 }],
+    [{ x: 2, y: 63, w: 12, r: 4 }, { x: 86, y: 63, w: 12, r: -4 }],
+    [{ x: 20, y: 1, w: 11, r: 2 }, { x: 69, y: 1, w: 11, r: -2 }],
+    [{ x: 15, y: 63, w: 11, r: -3 }, { x: 74, y: 63, w: 11, r: 3 }],
 ];
+const SLOTS = SLOT_PAIRS.flat();
 
 let rotateTimer = null;
 
@@ -208,35 +205,16 @@ function placePoster(box, frame, slot, mult, imgUrl) {
     box.appendChild(fig);
 }
 
-// Mirror pairs derived from slot geometry (centers equidistant from 50%),
-// so the table stays editable without renumbering pairs by hand.
-function mirrorPairs() {
-    const cx = (s) => s.x + s.w / 2;
-    const free = SLOTS.map((_, i) => i);
-    const pairs = [];
-    while (free.length) {
-        const i = free.shift();
-        let best = -1, bestD = 1.01; // float drift only; true mirrors match exactly
-        for (const j of free) {
-            const d = Math.abs(cx(SLOTS[j]) - (100 - cx(SLOTS[i])));
-            if (d < bestD) { bestD = d; best = j; }
-        }
-        if (best === -1) pairs.push([i]);
-        else { free.splice(free.indexOf(best), 1); pairs.push([i, best]); }
-    }
-    return pairs;
-}
-
 function renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs) {
-    const pairs = shuffleSeeded(mirrorPairs(), rnd);
-    const order = shuffleSeeded(imgs.map((_, i) => i), rnd);
+    const order = shuffleSeeded(SLOT_PAIRS.map((_, i) => i), rnd);
+    const picks = shuffleSeeded(imgs.map((_, i) => i), rnd);
     let shown = 0, ip = 0;
-    for (const pair of pairs) {
+    for (const pi of order) {
         if (shown >= count) break;
         const mult = (dLo + rnd() * (dHi - dLo)) / 5;
-        for (const si of pair) {
-            if (shown >= count || ip >= order.length) break;
-            placePoster(box, frame, SLOTS[si], mult, imgs[order[ip++]].u);
+        for (const s of SLOT_PAIRS[pi]) {
+            if (shown >= count || ip >= picks.length) break;
+            placePoster(box, frame, s, mult, imgs[picks[ip++]].u);
             shown++;
         }
     }
