@@ -7,7 +7,7 @@ import { getAllowedJamGuestCommands, jamCreate, jamJoin, jamLeave, jamSay } from
 import { getKeybinds, isRestrictedThemeCommand, saveKeybinds, stripCommandPrefix } from "./keybinds.js";
 import { handleLyricsCommand, syncLyricsHighlight } from "./lyrics.js";
 import { getAllowedOnboardingCommands } from "./onboarding.js";
-import { openAboutPanel, closeActivePanel, openBoardsPanel, openHelpPanel, openPlaylistPanel, openSavesPanel, openThemePanel } from "./panels.js";
+import { openAboutPanel, closeActivePanel, consumePendingMenu, openBoardsPanel, openHelpPanel, openPlaylistPanel, openSavesPanel, openThemePanel } from "./panels.js";
 import { getPlaylists } from "./playlists.js";
 import { openSearchPanel } from "./search.js";
 import { app } from "./state.js";
@@ -20,7 +20,18 @@ import { reportShade, setShade } from "./shade.js";
 import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, getBoardCounts, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 import { dbg, pinToast } from "./utils.js";
 
+// All command traffic (typed, keybound, themed, synced) flows through here,
+// so menu round-trips are consumed in one place: if a menu prefill armed a
+// reopen and this command matches it, the menu comes back with fresh data.
 export async function execute(cmd, opts = {}) {
+    const out = await executeInner(cmd, opts);
+    try {
+        consumePendingMenu(stripCommandPrefix(cmd).trim());
+    } catch (e) {}
+    return out;
+}
+
+async function executeInner(cmd, opts = {}) {
     const cleanedCmd = stripCommandPrefix(cmd);
     const [rawCommand, ...args] = cleanedCmd.split(/\s+/);
     const command = (rawCommand || "").toLowerCase();
@@ -170,9 +181,10 @@ export async function execute(cmd, opts = {}) {
         }
         if (argsLower[0] === "-pin-refresh") {
             const filter = args.slice(1).find((a) => !a.startsWith("-"));
-            refreshBoards(filter)
-                .then(() => { applyPosterFlags(argsLower, args); })
-                .catch((e) => console.error("[SpoTUI-pin] refresh failed:", e.message));
+            try {
+                await refreshBoards(filter);
+            } catch (e) { console.error("[SpoTUI-pin] refresh failed:", e.message); }
+            applyPosterFlags(argsLower, args);
             return;
         }
         if (argsLower[0] === "-pin-boards") {
@@ -189,9 +201,10 @@ export async function execute(cmd, opts = {}) {
             if (!args[1] || args[1].startsWith("-")) console.warn("[SpoTUI-pin] usage: tui -pin-board <board-url-or-id> [token] [-o <0-1>] [-c <1-12|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
             else {
                 const token = args[2] && !args[2].startsWith("-") ? args[2] : undefined;
-                syncPinterestBoard(args[1], token)
-                    .then(() => { applyPosterFlags(argsLower, args); })
-                    .catch((e) => console.error("[SpoTUI-pin] sync failed:", e.message));
+                try {
+                    await syncPinterestBoard(args[1], token);
+                } catch (e) { console.error("[SpoTUI-pin] sync failed:", e.message); }
+                applyPosterFlags(argsLower, args);
             }
             return;
         }

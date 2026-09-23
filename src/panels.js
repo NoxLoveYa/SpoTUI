@@ -237,13 +237,28 @@ function renderMenuRows(content, rows, selected) {
 }
 
 // Close everything and hand the command bar back with text ready to edit.
-function prefillCommand(text) {
+// When menu/prefix are given, the next fired command that starts with the
+// prefix reopens that menu (see consumePendingMenu) — the add/save
+// round-trip back into an updated list.
+function prefillCommand(text, menu, prefix) {
+    app.pendingMenu = menu ? { menu, prefix } : null;
     closeActivePanel();
     const input = document.getElementById("spotui-input");
     if (input) {
         input.value = text;
         input.focus();
     }
+}
+
+// Called after every executed command: a menu prefill that got its
+// associated command reopens with fresh data; anything else just clears.
+export function consumePendingMenu(cmd) {
+    if (!app.pendingMenu) return;
+    const pending = app.pendingMenu;
+    app.pendingMenu = null;
+    if (!cmd || !cmd.startsWith(pending.prefix)) return;
+    if (pending.menu === "boards") openBoardsPanel();
+    else if (pending.menu === "saves") openSavesPanel();
 }
 
 // ---- Synced-boards menu (Enter re-pulls, Del forgets, A adds) ----
@@ -305,7 +320,7 @@ export async function handleBoardsKeydown(e) {
         // preventDefault first: focusing the input below must not let this
         // same keystroke type itself into the composer after the prefill.
         e.preventDefault();
-        prefillCommand("tui -pin-board ");
+        prefillCommand("tui -pin-board ", "boards", "tui -pin-board ");
     }
 }
 
@@ -360,6 +375,6 @@ export async function handleSavesKeydown(e) {
     } else if (e.key === "s" || e.key === "S") {
         // Same as above: prefill focuses the bar, so swallow the keystroke.
         e.preventDefault();
-        prefillCommand("tui -t save ");
+        prefillCommand("tui -t save ", "saves", "tui -t save ");
     }
 }

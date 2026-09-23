@@ -29,6 +29,7 @@ export const app = {
     savesPanelOpen: false,
     selectedBoard: 0,
     selectedSave: 0,
+    pendingMenu: null,
     onboardingPanelOpen: false,
     onboardingStage: "commands",
     onboardingShowAllThemes: false,
