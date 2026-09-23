@@ -564,6 +564,11 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     margin: 33vh 5vw 8px;
 }
 
+#spotui-boards-panel, #spotui-saves-panel {
+    border: none;
+    padding: 0;
+}
+
 .spotui-help-fieldset {
     border: 1px solid var(--panel-border-color, rgba(255, 140, 66, 0.3));
     border-radius: 6px;
