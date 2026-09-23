@@ -2,8 +2,9 @@ import { HEX_COLOR_REGEX, SHADE_KEY } from "./constants.js";
 import { pinToast } from "./posters.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 
-// SpoTUI's house orange. Every orange shade in the UI is rotated away from
-// this hue by the same delta, so shade steps are preserved exactly.
+// SpoTUI's default accent color (orange #ff8c42). The shade command rotates
+// every orange element in the UI away from this hue by the same delta,
+// so the relative shade steps are preserved exactly.
 const BASE_HEX = "#ff8c42";
 
 function hexToHsl(hex) {
