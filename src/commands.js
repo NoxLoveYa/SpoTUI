@@ -16,7 +16,7 @@ import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
-import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed, testVideoPlayback } from "./posters.js";
+import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 import { dbg, pinToast } from "./utils.js";
 
 export async function execute(cmd, opts = {}) {
@@ -150,7 +150,6 @@ export async function execute(cmd, opts = {}) {
             else if (sub === "shuffle") { shufflePosters(); acted = true; }
             else if (sub === "clear") { clearPosters(); acted = true; }
             else if (sub === "settings" || sub === "status") { showPosterSettings(); acted = true; }
-            else if (sub === "diag") { testVideoPlayback(); acted = true; }
             else if (sub === "add" && args[2]) {
                 const addBoard = args.slice(3).find((a) => !a.startsWith("-"));
                 addPoster(args[2], addBoard);

@@ -16,20 +16,6 @@ export const DEBUG_KEY = "spotui:debug";
 export const PINTEREST_WIDGET_BASE = "https://widgets.pinterest.com/v3/pidgets";
 export const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
 export const PINTEREST_WWW_BASE = "https://www.pinterest.com";
-
-// CI-converted poster videos: `spotui-<pinid>.webm`, published on the
-// Posters-Assets branch and served by jsDelivr with correct MIME + CORS.
-// Solved at render time from the pin id — no per-machine setup, no keys.
-export const POSTER_ASSET_BASE = "https://cdn.jsdelivr.net/gh/NoxLoveYa/SpoTUI@posters-assets/assets/posters";
-
-// Which pins actually have video (CI-maintained; the client can't reliably
-// discover this itself). Small file, fetched per sync, cached on failure.
-export const POSTER_MANIFEST_URL = "https://cdn.jsdelivr.net/gh/NoxLoveYa/SpoTUI@posters-assets/assets/posters/videos.json";
-export const MANIFEST_KEY = "spotui:pin-manifest";
-
-// Spotify's own clip: guaranteed present and decodable. Used only as a
-// playback-capability probe, never displayed.
-export const PROBE_URL = "https://xpui.app.spotify.com/videos/shimmer.webm";
 export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";
@@ -179,11 +165,11 @@ export const COMMAND_LIST = [
     { cmd: "jam join <pin>", desc: "Join a jam by PIN (volume/lyrics only)" },
     { cmd: "jam leave", desc: "Leave the current jam" },
     { cmd: "tui -posters &lt;on/off&gt;", desc: "Show the wall (pin images first) / hide it, images are kept" },
-    { cmd: "tui -posters &lt;shuffle/clear/settings/diag&gt;", desc: "Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings / probe video playback with a visible verdict" },
-    { cmd: "tui -posters &lt;add &lt;url&gt; [board]|count &lt;1-8|lo-hi&gt;|density &lt;1-10|lo-hi&gt;|theme &lt;#hex&gt;|opacity &lt;0-1&gt;|autoshuffle &lt;on/off&gt;|rotate &lt;min/off&gt;&gt;", desc: "Pin an image or video URL (optional board tag so -pin-clear removes it); visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer" },
+    { cmd: "tui -posters &lt;shuffle/clear/settings&gt;", desc: "Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings" },
+    { cmd: "tui -posters &lt;add &lt;url&gt; [board]|count &lt;1-8|lo-hi&gt;|density &lt;1-10|lo-hi&gt;|theme &lt;#hex&gt;|opacity &lt;0-1&gt;|autoshuffle &lt;on/off&gt;|rotate &lt;min/off&gt;&gt;", desc: "Pin an image URL (optional board tag so -pin-clear removes it); visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer" },
     { cmd: "tui -posters [-o &lt;0-1&gt;] [-c &lt;1-8|lo-hi&gt;] [-d &lt;1-10|lo-hi&gt;] [-t &lt;#hex&gt;] [-r &lt;min|off&gt;]", desc: "Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer" },
     { cmd: "tui -pin-board &lt;board-url&gt; [token] [-o/-c/-d/-t/-r]", desc: "Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync" },
     { cmd: "tui -pin-boards | tui -pin-clear &lt;board&gt;", desc: "List synced boards with counts / forget one board (wall switches off if empty)" },
-    { cmd: "tui -pin-feed | tui -pin-refresh [board] [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins incl. videos, then recreate the wall (flags apply after) / save API token on this machine only" },
+    { cmd: "tui -pin-feed | tui -pin-refresh [board] [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins, then recreate the wall (flags apply after) / save API token on this machine only" },
     { cmd: "help", desc: "Show this panel" },
 ];

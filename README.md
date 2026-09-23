@@ -57,12 +57,12 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -shade <#hex\|off>` | Re-tint orange UI to any color (shades preserved); video + posters stay true; bare `tui -shade` shows current |
 | `tui -debug <on/off>` | Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print) |
 | `tui -posters <on/off>` | Show the wall (pin images first) / hide it, images are kept |
-| `tui -posters <shuffle/clear/settings/diag>` | Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings / probe video playback |
-| `tui -posters <add <url> [board]\|count <1-8\|lo-hi>\|density <1-10\|lo-hi>\|theme <#hex>\|opacity <0-1>\|autoshuffle <on/off>\|rotate <min/off>>` | Pin an image or video URL (optional board tag so -pin-clear removes it); visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer |
+| `tui -posters <shuffle/clear/settings>` | Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings / probe video playback |
+| `tui -posters <add <url> [board]\|count <1-8\|lo-hi>\|density <1-10\|lo-hi>\|theme <#hex>\|opacity <0-1>\|autoshuffle <on/off>\|rotate <min/off>>` | Pin an image URL (optional board tag so -pin-clear removes it); visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer |
 | `tui -posters [-o <0-1>] [-c <1-8\|lo-hi>] [-d <1-10\|lo-hi>] [-t <#hex>] [-r <min/off>]` | Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer |
 | `tui -pin-board <board-url> [token] [-o/-c/-d/-t/-r]` | Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync |
 | `tui -pin-boards` / `tui -pin-clear <board>` | List synced boards with counts / forget one board (wall switches off if empty) |
-| `tui -pin-feed` / `tui -pin-refresh [board] [-o/-c/-d/-t/-r]` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins incl. videos, then recreate the wall (flags apply after) / save API token on this machine only |
+| `tui -pin-feed` / `tui -pin-refresh [board] [-o/-c/-d/-t/-r]` / `tui -pin-token <token>` | Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins, then recreate the wall (flags apply after) / save API token on this machine only |
 | `tui -pin-feed` | Random mix from all your boards (needs token) |
 | `tui -pin-token <token>` | Save your Pinterest API token (local only) |
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |
@@ -115,10 +115,7 @@ tui -pin-refresh         # re-pull synced boards, recreate the wall with current
 tui -pin-refresh posters # re-pull only boards matching "posters" (picks up pins added later)
 ```
 
-Sync straight from Pinterest (video pins become animated posters: the
-`posters-convert` workflow turns new pins into VP9 clips on the
-`posters-assets` branch, served over CDN — trigger it from the Actions tab (plus a nightly run)
-after syncing a board with fresh videos, then shuffle):
+Sync straight from Pinterest (video pins resolve to their cover still):
 
 ```bash
 tui -pin-board pinterest.com/<you>/<board>/   # public boards need no login

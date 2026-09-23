@@ -1,4 +1,4 @@
-import { HEX_COLOR_REGEX, MANIFEST_KEY, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE, POSTER_ASSET_BASE, POSTER_MANIFEST_URL, PROBE_URL } from "./constants.js";
+import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
@@ -42,16 +42,16 @@ function mulberry32(a) {
     };
 }
 
-// Stored as [{u:url, b:boardLabel, k:"video"|undefined, p:posterThumb|undefined}];
-// legacy plain-string arrays migrate to b:"?".
+// Stored as [{u:url, b:boardLabel}]; legacy entries carrying retired
+// video fields ({u,p,id,k}) resolve to their still thumbnail.
 export function getPosterImages() {
     try {
         const raw = storageGet(POSTERS_IMGS);
         const arr = raw ? JSON.parse(raw) : [];
         if (!Array.isArray(arr)) return [];
         return arr
-            .map((e) => (typeof e === "string" ? { u: e, b: "?" } : e))
-            .filter((e) => e && typeof e.u === "string");
+            .map((e) => (typeof e === "string" ? { u: e, b: "?" } : { u: e.u || e.p, b: e.b || "?" }))
+            .filter((e) => e && typeof e.u === "string" && e.u.length > 0);
     } catch (e) { return []; }
 }
 
@@ -190,11 +190,7 @@ export function renderPosters() {
         fig.style.padding = "6px 6px 20px 6px";
         fig.style.boxShadow = "0 6px 18px rgba(0,0,0,.55)";
         const entry = imgs[imgIdx[k]];
-        if (entry.k === "video") {
-            fig.appendChild(buildVideoPoster(entry, fig));
-        } else {
-            fig.appendChild(posterImg(entry.u, fig));
-        }
+        fig.appendChild(posterImg(entry.u, fig));
         box.appendChild(fig);
     }
     dbg(`[SpoTUI-pin] rendered ${count} poster(s) from ${imgs.length} saved.`);
@@ -213,124 +209,6 @@ function posterImg(src, fig) {
         fig.remove();
     };
     return img;
-}
-
-function posterAssetUrl(id) {
-    const clean = String(id || "").trim();
-    if (!/^\d+$/.test(clean)) return null;
-    return `${POSTER_ASSET_BASE}/spotui-${clean}.webm`;
-}
-
-// Animated poster: muted looping <video>. Sources tried in order —
-// CI-converted asset first (stable, guaranteed VP9), direct file second,
-// thumbnail last. <video> needs no CORS, so all of these play as-is.
-function buildVideoPoster(entry, fig) {
-    const vd = document.createElement("video");
-    vd.muted = true;
-    vd.loop = true;
-    vd.autoplay = true;
-    vd.playsInline = true;
-    vd.setAttribute("muted", "");
-    vd.setAttribute("autoplay", "");
-    vd.setAttribute("loop", "");
-    vd.setAttribute("playsinline", "");
-    vd.style.width = "100%";
-    vd.style.display = "block";
-    vd.style.pointerEvents = "none";
-    if (entry.p) vd.poster = entry.p;
-    const asset = posterAssetUrl(entry.id);
-    const sources = [asset, entry.u].filter(Boolean);
-    if (!sources.length) return posterImg(entry.p, fig);
-    let i = 0;
-    const playNext = () => {
-        if (i >= sources.length) {
-            const thumb = posterImg(entry.p || entry.u, fig);
-            fig.innerHTML = "";
-            fig.appendChild(thumb);
-            return;
-        }
-        vd.src = sources[i++];
-        vd.onerror = () => {
-            console.warn("[SpoTUI-pin] video source failed, trying next:", vd.src);
-            playNext();
-        };
-        const pr = vd.play();
-        if (pr && pr.catch) pr.catch(() => {});
-    };
-    // Some Chromium builds need a nudge once data arrives.
-    vd.addEventListener("canplay", () => {
-        const pr = vd.play();
-        if (pr && pr.catch) pr.catch(() => {});
-    });
-    playNext();
-    return vd;
-}
-
-// If this Chromium blocks programmatic play(), a real user gesture unlocks
-// it — resume every wallpaper/wall video on interaction. Harmless no-op
-// when everything already plays.
-export function armVideoResume() {
-    const kick = () => {
-        document.querySelectorAll("#spotui-wallpaper, #spotui-posters video").forEach((v) => {
-            try {
-                if (v.tagName === "VIDEO" && v.paused) {
-                    const pr = v.play();
-                    if (pr && pr.catch) pr.catch(() => {});
-                }
-            } catch (e) {}
-        });
-    };
-    ["pointerdown", "keydown"].forEach((ev) => {
-        try { document.addEventListener(ev, kick, { passive: true }); } catch (e) {}
-    });
-}
-
-function probeOne(url, label) {
-    return new Promise((resolve) => {
-        const v = document.createElement("video");
-        v.muted = true;
-        v.setAttribute("muted", "");
-        v.playsInline = true;
-        v.setAttribute("playsinline", "");
-        v.style.cssText = "position:fixed;left:0;top:0;width:4px;height:4px;opacity:0.01;pointer-events:none;z-index:0;";
-        let done = false, rejected = null;
-        const finish = (outcome) => {
-            if (done) return;
-            done = true;
-            clearTimeout(timer);
-            try { v.pause(); v.removeAttribute("src"); v.load(); v.remove(); } catch (e) {}
-            resolve(`${label}: ${outcome}`);
-        };
-        const timer = setTimeout(() => {
-            if (!v.paused) finish("PLAYING (late)");
-            else if (rejected) finish(`play() rejected (${rejected}) — autoplay/policy suspected`);
-            else if (v.readyState >= 2) finish(`DATA but PAUSED (readyState ${v.readyState}) — policy suspected`);
-            else finish("TIMEOUT (loads nothing, errors nothing — network suspected)");
-        }, 9000);
-        v.onerror = () => finish(`LOAD ERROR (code ${v.error && v.error.code} — undecodable/blocked)`);
-        v.onplaying = () => finish("PLAYING");
-        try { document.body.appendChild(v); } catch (e) {}
-        v.src = url;
-        const pr = v.play();
-        if (pr && pr.catch) pr.catch((e) => { rejected = (e && e.name) || "unknown"; });
-    });
-}
-
-// Diagnose video playback where the user can see it: first Spotify's own
-// clip (client capability), then the first stored video pin (content).
-export async function testVideoPlayback() {
-    pinToast("video diag running — verdict in ~10s…", 11000);
-    const a = await probeOne(PROBE_URL, "client");
-    const vids = getPosterImages().filter((e) => e.k === "video");
-    let b = "pin: none stored";
-    if (vids.length) {
-        const e = vids[0];
-        const target = posterAssetUrl(e.id) || e.u;
-        const short = String(target || "").split("/").pop().slice(0, 44);
-        b = await probeOne(target, `pin [${e.id ? `id ${e.id}` : "no id"}] ${short}`);
-    }
-    pinToast(`${a}\n${b}`, 14000);
-    dbg("[SpoTUI-pin] diag:", a, "|", b);
 }
 
 export function setPostersEnabled(on) {
@@ -358,11 +236,9 @@ export function addPoster(url, board) {
         dbg("[SpoTUI-pin] already pinned:", u);
         return;
     }
-    const clean = u.split("?")[0].split("#")[0];
-    const isVid = /\.(mp4|webm|m3u8)$/i.test(clean);
-    imgs.unshift(isVid ? { u, b, k: "video" } : { u, b });
+    imgs.unshift({ u, b });
     savePosterImages(imgs);
-    dbg(`[SpoTUI-pin] pinned (${imgs.length} total${isVid ? ", animated" : ""}):`, u);
+    dbg(`[SpoTUI-pin] pinned (${imgs.length} total):`, u);
     if (isPostersEnabled()) renderPosters();
 }
 
@@ -504,7 +380,7 @@ export function showPosterSettings() {
         ? Object.entries(boards).map(([b, n]) => `${b} (${n})`).join(", ")
         : "none";
     const summary =
-        `wall ${isPostersEnabled() ? "ON" : "OFF"} · ${getPosterImages().length} images (${getPosterImages().filter((e) => e.k === "video").length} video)\n` +
+        `wall ${isPostersEnabled() ? "ON" : "OFF"} · ${getPosterImages().length} images\n` +
         `boards: ${boardStr}\n` +
         `count ${cLo === cHi ? cLo : `${cLo}-${cHi}`} · density ${dLo === dHi ? dLo : `${dLo}-${dHi}`} · ${theme} · opacity ${op}\n` +
         `rotate ${storageGet(POSTERS_ROTATE) ? `every ${storageGet(POSTERS_ROTATE)} min` : "off"} · autoshuffle ${storageGet(POSTERS_AUTOSHUFFLE) === "1" ? "on" : "off"}`;
@@ -530,33 +406,8 @@ export function startRotateTimer() {
 
 // ---------- Pinterest sync ----------
 
-// Which pins have video, per the CI manifest. Board listings can't be
-// trusted for this (story containers without video files are common) and
-// the per-pin lookup is flaky from some clients — the manifest is built
-// server-side where it always works.
-let manifestCache = null, manifestAt = 0;
-
-async function videoManifest() {
-    if (manifestCache && Date.now() - manifestAt < 10 * 60 * 1000) return manifestCache;
-    try {
-        const data = await fetchJsonLoose(POSTER_MANIFEST_URL);
-        if (data && Array.isArray(data.videos)) {
-            manifestCache = new Set(data.videos.map(String));
-            manifestAt = Date.now();
-            try { storageSet(MANIFEST_KEY, JSON.stringify([...manifestCache])); } catch (e) {}
-            return manifestCache;
-        }
-    } catch (e) {
-        dbg("[SpoTUI-pin] manifest fetch failed, trying cache:", e.message);
-    }
-    try {
-        const raw = storageGet(MANIFEST_KEY);
-        if (raw) return new Set(JSON.parse(raw).map(String));
-    } catch (e) {}
-    return new Set();
-}
-
-// Extract the still image URL from a board pin record.
+// Extract the still image URL from a board pin record. Video pins resolve
+// to their cover still — animation lives in wallpapers, not the wall.
 function pickPidgetImage(p) {
     try {
         const im = p.images || {};
@@ -588,26 +439,16 @@ function parseBoardRef(input) {
     return {};
 }
 
-// Board listings carry only story_pin_data.id — no page video files. Pull
-// full records for pins that look animated (story container or video flag)
-// in one batched call and merge any video files found.
-// No-auth attempt via Pinterest's public widget endpoint.
+// No-auth attempt via Pinterest's public widget endpoint. Returns still
+// thumbnails — video pins resolve to their cover still, like at the start.
 async function syncViaPidgets(user, slug) {
     const url = `${PINTEREST_WIDGET_BASE}/boards/${encodeURIComponent(user)}/${encodeURIComponent(slug)}/pins/`;
     dbg("[SpoTUI-pin] trying public board endpoint (no login needed)...");
     const data = await fetchJsonLoose(url);
     const pins = (data && data.data && data.data.pins) || [];
-    const vids = await videoManifest();
     return pins
-        .map((p) => {
-            const id = p && p.id != null ? String(p.id) : "";
-            const image = pickPidgetImage(p);
-            // A pin is a video poster only if the CI manifest says so —
-            // the clip itself is resolved at render time from the pin id.
-            const video = id && vids.has(id) && image ? { id } : null;
-            return { id, m: { image, video } };
-        })
-        .filter((e) => e.m.image || (e.m.video && e.id));
+        .map((p) => pickPidgetImage(p))
+        .filter(Boolean);
 }
 
 async function pinterestV5(path, token) {
@@ -637,8 +478,8 @@ async function syncViaV5(ref, token) {
 }
 
 // Re-pull synced boards (or only those matching `filter`), merge any new
-// pins — including videos added since the last sync — then recreate the
-// wall randomly with the current count/density ranges.
+// pins, then recreate the wall randomly with the current count/density
+// ranges.
 export async function refreshBoards(filter) {
     const q = String(filter || "").toLowerCase();
     const boards = Object.keys(getBoardCounts())
@@ -690,8 +531,7 @@ export async function syncPinterestBoard(input, tokenArg) {
     if (ref.user) {
         try {
             media = await syncViaPidgets(ref.user, ref.slug);
-            const vids = media.filter((e) => e.m.video).length;
-            dbg(`[SpoTUI-pin] public endpoint gave ${media.length} item(s), ${vids} video(s).`);
+            dbg(`[SpoTUI-pin] public endpoint gave ${media.length} image(s).`);
         } catch (e) {
             console.warn("[SpoTUI-pin] public endpoint failed:", e.message);
         }
@@ -700,7 +540,7 @@ export async function syncPinterestBoard(input, tokenArg) {
     if (!media.length && token) {
         try {
             const urls = await syncViaV5(ref, token);
-            media = urls.map((u) => ({ id: "", m: { image: u, video: null } }));
+            media = urls;
             dbg(`[SpoTUI-pin] Pinterest API gave ${media.length} image(s).`);
         } catch (e) {
             console.error("[SpoTUI-pin] Pinterest API failed:", e.message);
@@ -718,33 +558,16 @@ export async function syncPinterestBoard(input, tokenArg) {
     }
     const label = ref.slug ? `${ref.user}/${ref.slug}` : `board:${ref.id}`;
     const imgs = getPosterImages();
-    let added = 0, addedVids = 0;
-    for (const e of media) {
-        const m = e.m;
-        if (m.video && e.id) {
-            const id = e.id;
-            if (imgs.some((x) => x.id === id)) continue;
-            if (imgs.length >= MAX_STORED) continue;
-            // Drop stale entries for the same pin (re-syncs, scheme upgrades).
-            const ix = imgs.findIndex((x) => x.id === id);
-            if (ix !== -1) imgs.splice(ix, 1);
-            // Drop the still thumbnail when its video arrives (no dupes).
-            if (m.image) {
-                const jx = imgs.findIndex((x) => !x.k && !x.id && x.u === m.image);
-                if (jx !== -1) imgs.splice(jx, 1);
-            }
-            imgs.unshift({ b: label, k: "video", p: m.image || undefined, id });
-            added++; addedVids++;
-        } else if (m.image) {
-            if (!imgs.some((x) => x.u === m.image) && imgs.length < MAX_STORED) { imgs.unshift({ u: m.image, b: label }); added++; }
-        }
+    let added = 0;
+    for (const u of media) {
+        if (!imgs.some((x) => x.u === u) && imgs.length < MAX_STORED) { imgs.unshift({ u, b: label }); added++; }
     }
     savePosterImages(imgs);
     if (!isPostersEnabled()) storageSet(POSTERS_ON, "1");
     startRotateTimer();
     renderPosters();
-    pinToast(`synced ${added} new item(s), ${addedVids} video — wall updated`);
-    dbg(`[SpoTUI-pin] synced ${added} new item(s) (${addedVids} video), ${imgs.length} total. Shuffle: tui -posters shuffle`);
+    pinToast(`synced ${added} new image(s) — wall updated`);
+    dbg(`[SpoTUI-pin] synced ${added} new image(s), ${imgs.length} total. Shuffle: tui -posters shuffle`);
 }
 
 // Random mix across ALL your boards = closest thing to a "feed" the API allows.
