@@ -16,7 +16,7 @@ import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
-import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
+import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 import { dbg, pinToast } from "./utils.js";
 
 export async function execute(cmd, opts = {}) {
@@ -160,8 +160,9 @@ export async function execute(cmd, opts = {}) {
             else if (sub === "theme") { setPosterTheme(args[2]); acted = true; }
             else if (sub === "opacity") { setPosterOpacity(args[2]); acted = true; }
             else if (sub === "autoshuffle") { setPosterAutoshuffle(args[2]); acted = true; }
+            else if (sub === "symmetric") { setPosterSymmetric(args[2]); acted = true; }
             else if (sub === "rotate") { setPosterRotate(args[2]); acted = true; }
-            else if (sub !== "-o" && sub !== "-c" && sub !== "-d" && sub !== "-t" && sub !== "-r") console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|settings|add <url> [board]|count <1-12|lo-hi>|density <1-10|lo-hi>|theme <#hex>|opacity <0-1>|autoshuffle <on|off>|rotate <min|off>> [-o <0-1>] [-c <1-12|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
+            else if (sub !== "-o" && sub !== "-c" && sub !== "-d" && sub !== "-t" && sub !== "-r") console.warn("[SpoTUI-pin] usage: tui -posters <on|off|shuffle|clear|settings|add <url> [board]|count <1-12|lo-hi>|density <1-10|lo-hi>|theme <#hex>|opacity <0-1>|autoshuffle <on|off>|symmetric <on/off>|rotate <min|off>> [-o <0-1>] [-c <1-12|lo-hi>] [-d <1-10|lo-hi>] [-t <#hex>] [-r <min|off>]");
             if (applyPosterFlags(argsLower, args) > 0) acted = true;
             if (!acted) console.warn("[SpoTUI-pin] nothing to do — see usage above.");
             return;

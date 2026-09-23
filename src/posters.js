@@ -15,6 +15,7 @@ const POSTERS_DENSITY = "spotui:posters-density";
 const POSTERS_THEME = "spotui:posters-theme";
 const POSTERS_OPACITY = "spotui:posters-opacity";
 const POSTERS_AUTOSHUFFLE = "spotui:posters-autoshuffle";
+const POSTERS_SYMMETRIC = "spotui:posters-symmetric";
 const PIN_TOKEN = "spotui:pin-token";
 
 const MAX_STORED = 40;
@@ -180,26 +181,76 @@ export function renderPosters() {
         const j = Math.floor(rnd() * (i + 1));
         [imgIdx[i], imgIdx[j]] = [imgIdx[j], imgIdx[i]];
     }
-    for (let k = 0; k < count; k++) {
-        const s = SLOTS[slotIdx[k]];
-        const mult = (dLo + rnd() * (dHi - dLo)) / 5;
-        const fig = document.createElement("figure");
-        fig.style.margin = "0";
-        fig.style.position = "absolute";
-        fig.style.left = s.x + "%";
-        fig.style.top = s.y + "%";
-        fig.style.width = Math.min(30, s.w * mult) + "%";
-        fig.style.maxHeight = "28vh";
-        fig.style.overflow = "hidden";
-        fig.style.transform = `rotate(${s.r}deg)`;
-        fig.style.background = frame;
-        fig.style.padding = "6px 6px 20px 6px";
-        fig.style.boxShadow = "0 6px 18px rgba(0,0,0,.55)";
-        const entry = imgs[imgIdx[k]];
-        fig.appendChild(posterImg(entry.u, fig));
-        box.appendChild(fig);
+    let shown = count;
+    if (storageGet(POSTERS_SYMMETRIC) === "1") {
+        shown = renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs);
+    } else {
+        for (let k = 0; k < count; k++) {
+            const mult = (dLo + rnd() * (dHi - dLo)) / 5;
+            placePoster(box, frame, SLOTS[slotIdx[k]], mult, imgs[imgIdx[k]].u);
+        }
     }
-    dbg(`[SpoTUI-pin] rendered ${count} poster(s) from ${imgs.length} saved.`);
+    dbg(`[SpoTUI-pin] rendered ${shown} poster(s) from ${imgs.length} saved.`);
+}
+
+function placePoster(box, frame, slot, mult, imgUrl) {
+    const fig = document.createElement("figure");
+    fig.style.margin = "0";
+    fig.style.position = "absolute";
+    fig.style.left = slot.x + "%";
+    fig.style.top = slot.y + "%";
+    fig.style.width = Math.min(30, slot.w * mult) + "%";
+    fig.style.maxHeight = "28vh";
+    fig.style.overflow = "hidden";
+    fig.style.transform = `rotate(${slot.r}deg)`;
+    fig.style.background = frame;
+    fig.style.padding = "6px 6px 20px 6px";
+    fig.style.boxShadow = "0 6px 18px rgba(0,0,0,.55)";
+    fig.appendChild(posterImg(imgUrl, fig));
+    box.appendChild(fig);
+}
+
+// Mirror pairs derived from slot geometry (centers equidistant from 50%),
+// so the table stays editable without renumbering pairs by hand.
+function mirrorPairs() {
+    const cx = (s) => s.x + s.w / 2;
+    const free = SLOTS.map((_, i) => i);
+    const pairs = [];
+    while (free.length) {
+        const i = free.shift();
+        let best = -1, bestD = 1.01;
+        for (const j of free) {
+            const d = Math.abs(cx(SLOTS[j]) - (100 - cx(SLOTS[i])));
+            if (d < bestD) { bestD = d; best = j; }
+        }
+        if (best === -1) pairs.push([i]);
+        else { free.splice(free.indexOf(best), 1); pairs.push([i, best]); }
+    }
+    return pairs;
+}
+
+export function renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs) {
+    const pairs = mirrorPairs();
+    for (let i = pairs.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
+    }
+    const order = imgs.map((_, i) => i);
+    for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+    }
+    let shown = 0, ip = 0;
+    for (const pair of pairs) {
+        if (shown >= count) break;
+        const mult = (dLo + rnd() * (dHi - dLo)) / 5;
+        for (const si of pair) {
+            if (shown >= count || ip >= order.length) break;
+            placePoster(box, frame, SLOTS[si], mult, imgs[order[ip++]].u);
+            shown++;
+        }
+    }
+    return shown;
 }
 
 function posterImg(src, fig) {
@@ -348,6 +399,14 @@ export function setPosterAutoshuffle(state) {
     dbg(`[SpoTUI-pin] launch shuffle ${on ? "ON (fresh layout every Spotify start)" : "OFF"}.`);
 }
 
+export function setPosterSymmetric(state) {
+    const on = String(state || "").toLowerCase() === "on";
+    if (on) storageSet(POSTERS_SYMMETRIC, "1");
+    else storageRemove(POSTERS_SYMMETRIC);
+    renderPosters();
+    dbg(`[SpoTUI-pin] symmetric layout ${on ? "ON (mirrored pairs)" : "OFF"}.`);
+}
+
 // Called on boot before first render when the wall is enabled.
 export function maybeAutoshuffle() {
     if (storageGet(POSTERS_AUTOSHUFFLE) !== "1") return false;
@@ -370,7 +429,7 @@ export function showPosterSettings() {
         `wall ${isPostersEnabled() ? "ON" : "OFF"} · ${getPosterImages().length} images\n` +
         `boards: ${boardStr}\n` +
         `count ${cLo === cHi ? cLo : `${cLo}-${cHi}`} · density ${dLo === dHi ? dLo : `${dLo}-${dHi}`} · ${theme} · opacity ${op}\n` +
-        `rotate ${storageGet(POSTERS_ROTATE) ? `every ${storageGet(POSTERS_ROTATE)} min` : "off"} · autoshuffle ${storageGet(POSTERS_AUTOSHUFFLE) === "1" ? "on" : "off"}`;
+        `rotate ${storageGet(POSTERS_ROTATE) ? `every ${storageGet(POSTERS_ROTATE)} min` : "off"} · autoshuffle ${storageGet(POSTERS_AUTOSHUFFLE) === "1" ? "on" : "off"} · symmetric ${storageGet(POSTERS_SYMMETRIC) === "1" ? "on" : "off"}`;
     pinToast(summary);
     console.log("[SpoTUI-pin] current settings:\n" + summary, boards);
 }

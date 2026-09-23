@@ -58,7 +58,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -debug <on/off>` | Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print) |
 | `tui -posters <on/off>` | Show the wall (pin images first) / hide it, images are kept |
 | `tui -posters <shuffle/clear/settings>` | Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings |
-| `tui -posters <add <url> [board]\|count <1-12\|lo-hi>\|density <1-10\|lo-hi>\|theme <#hex>\|opacity <0-1>\|autoshuffle <on/off>\|rotate <min/off>>` | Pin an image URL (optional board tag so -pin-clear removes it); visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer |
+| `tui -posters <add <url> [board]\|count <1-12\|lo-hi>\|density <1-10\|lo-hi>\|theme <#hex>\|opacity <0-1>\|autoshuffle <on/off>\|symmetric <on/off>\|rotate <min/off>>` | Pin an image URL (optional board tag so -pin-clear removes it); visible count (range = random each shuffle); size (range = random per poster); any frame color; layer opacity; fresh layout on every launch; auto re-roll timer |
 | `tui -posters [-o <0-1>] [-c <1-12\|lo-hi>] [-d <1-10\|lo-hi>] [-t <#hex>] [-r <min/off>]` | Flag style, combinable with each other and with on/off: opacity, count, density, frame color, re-roll timer |
 | `tui -pin-board <board-url> [token] [-o/-c/-d/-t/-r]` | Sync a board's pins; public boards need no token, private ones do; poster flags apply after sync |
 | `tui -pin-boards` / `tui -pin-clear <board>` | List synced boards with counts / forget one board (wall switches off if empty) |
@@ -105,6 +105,7 @@ tui -posters count 6
 tui -posters count 3-6  # random visible number in that range, re-rolled each shuffle
 tui -posters density 7    # bigger prints; 3 = subtle, 10 = full wall
 tui -posters density 3-8  # each poster rolls its own size in that range
+tui -posters symmetric on  # mirrored left/right pairs share sizes
 tui -posters rotate 10   # new random picks every 10 min, off to disable
 tui -posters clear       # forget all pinned images
 tui -pin-boards          # what came from which board
