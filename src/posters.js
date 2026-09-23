@@ -7,7 +7,7 @@ import { dbg, pinToast } from "./utils.js";
 // Layer order: wallpaper (z -1) < posters (z 0) < terminal content (z 1).
 
 const POSTERS_ON = "spotui:posters-on";
-const POSTERS_IMGS = "spotui:posters-imgs";
+export const POSTERS_IMGS = "spotui:posters-imgs";
 const POSTERS_COUNT = "spotui:posters-count";
 const POSTERS_ROTATE = "spotui:posters-rotate";
 const POSTERS_SEED = "spotui:posters-seed";

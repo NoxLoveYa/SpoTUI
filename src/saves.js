@@ -1,7 +1,7 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, toggleLogo } from "./appearance.js";
 import { resetGrid } from "./ascii.js";
-import { ANIMATION_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
-import { renderPosters, startRotateTimer } from "./posters.js";
+import { ANIMATION_KEY, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { POSTERS_IMGS, renderPosters, startRotateTimer } from "./posters.js";
 import { applyShade } from "./shade.js";
 import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
@@ -30,6 +30,22 @@ function snapshotSettings() {
         }
     } catch (e) {}
     return out;
+}
+
+// One-line inventory of a snapshot so save/apply toasts show what is
+// actually inside (e.g. whether a wallpaper URL was stored at all).
+function describeSnapshot(settings) {
+    const parts = [];
+    const wp = settings[WP_URL_KEY];
+    parts.push(wp ? `wallpaper ${String(wp).split("/").pop().slice(0, 36)}` : "no wallpaper");
+    let posters = 0;
+    try {
+        const arr = JSON.parse(settings[POSTERS_IMGS] || "[]");
+        if (Array.isArray(arr)) posters = arr.length;
+    } catch (e) {}
+    parts.push(`${posters} posters`);
+    parts.push(settings[SHADE_KEY] ? `shade ${settings[SHADE_KEY]}` : "orange");
+    return parts.join(" · ");
 }
 
 // Re-run the boot look-restore against current storage (mirrors main.js:
@@ -74,9 +90,10 @@ export function saveTheme(name) {
     }
     const saves = readSaves();
     const existed = !!saves[n];
-    saves[n] = { savedAt: Date.now(), settings: snapshotSettings() };
+    const settings = snapshotSettings();
+    saves[n] = { savedAt: Date.now(), settings };
     storageSet(SAVES_KEY, JSON.stringify(saves));
-    pinToast(existed ? `theme updated: ${n}` : `theme saved: ${n}`);
+    pinToast(`${existed ? "theme updated" : "theme saved"}: ${n}\n${describeSnapshot(settings)}`);
     dbg("[SpoTUI] theme saved:", n);
 }
 
@@ -131,6 +148,6 @@ export function applyTheme(name) {
         console.error("[SpoTUI] theme refresh failed:", e.message);
         return;
     }
-    pinToast(`theme applied: ${n}`);
+    pinToast(`theme applied: ${n}\n${describeSnapshot(snap.settings)}`);
     dbg("[SpoTUI] theme applied:", n);
 }
