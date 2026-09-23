@@ -73,8 +73,17 @@ export function createTerminal() {
             e.stopImmediatePropagation();
             return;
         }
-        if (e.key === "Enter") {
-            const cmd = input.value.trim();
+        if ((e.key === "c" || e.key === "C") && e.ctrlKey && !e.altKey && !e.metaKey) {
+            // Clear the compose box. A text selection is left alone so
+            // copying out of the input keeps working.
+            if (input.selectionStart === input.selectionEnd) {
+                e.preventDefault();
+                input.value = "";
+                app.commandHistoryIndex = -1;
+            }
+            return;
+        }
+        if (e.key === "Enter") {            const cmd = input.value.trim();
             if (cmd) {
                 app.commandHistory = [cmd, ...app.commandHistory.filter((entry) => entry !== cmd)].slice(0, 50);
             }
