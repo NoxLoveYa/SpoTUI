@@ -7,14 +7,16 @@ import { dbg, pinToast } from "./utils.js";
 // so the relative shade steps are preserved exactly.
 const BASE_HEX = "#ff8c42";
 
-function hexToHsl(hex) {
-    const m = hex.replace("#", "");
+function hexToRgb01(hex) {
+    const m = String(hex || "").replace("#", "");
     const full = (m.length === 3 || m.length === 4)
         ? [...m.slice(0, 3)].map((c) => c + c).join("")
         : m.slice(0, 6);
-    const r = parseInt(full.slice(0, 2), 16) / 255;
-    const g = parseInt(full.slice(2, 4), 16) / 255;
-    const b = parseInt(full.slice(4, 6), 16) / 255;
+    return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255);
+}
+
+function hexToHsl(hex) {
+    const [r, g, b] = hexToRgb01(hex);
     const max = Math.max(r, g, b), min = Math.min(r, g, b);
     const l = (max + min) / 2;
     const d = max - min;
@@ -43,11 +45,7 @@ export function shadeCounterFilter() {
 }
 
 function hexToRgb(hex) {
-    const m = hex.replace("#", "");
-    const full = (m.length === 3 || m.length === 4)
-        ? [...m.slice(0, 3)].map((c) => c + c).join("")
-        : m.slice(0, 6);
-    return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+    return hexToRgb01(hex).map((v) => Math.round(v * 255));
 }
 
 function shadeStyleEl() {

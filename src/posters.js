@@ -259,31 +259,28 @@ export function shufflePosters() {
 }
 
 export function setPosterCount(arg) {
-    const s = String(arg || "").trim();
-    const m = s.match(/(\d+)\s*-\s*(\d+)/);
-    let val;
-    if (m) {
-        let lo = Math.max(1, Math.min(SLOTS.length, parseInt(m[1], 10)));
-        let hi = Math.max(1, Math.min(SLOTS.length, parseInt(m[2], 10)));
-        if (lo > hi) [lo, hi] = [hi, lo];
-        val = lo === hi ? String(lo) : `${lo}-${hi}`;
-    } else {
-        val = String(Math.max(1, Math.min(SLOTS.length, parseInt(s, 10) || 5)));
-    }
+    const [lo, hi] = parseRange(arg, SLOTS.length, 5);
+    const val = lo === hi ? String(lo) : `${lo}-${hi}`;
     storageSet(POSTERS_COUNT, val);
     renderPosters();
     dbg(`[SpoTUI-pin] showing ${val} poster(s)${val.includes("-") ? " (random in range each shuffle)" : ""}.`);
 }
 
-function parseCountRange() {
-    const raw = String(storageGet(POSTERS_COUNT) || "5");
-    const m = raw.match(/(\d+)\s*-\s*(\d+)/);
+// Parse "n" or "lo-hi" into a clamped [lo, hi] pair (single numbers pass
+// through as [n, n], reversed ranges are swapped).
+function parseRange(arg, max, fallback) {
+    const s = String(arg ?? "").trim();
+    const m = s.match(/(\d+)\s*-\s*(\d+)/);
     let lo, hi;
     if (m) { lo = parseInt(m[1], 10); hi = parseInt(m[2], 10); }
-    else { lo = hi = parseInt(raw, 10) || 5; }
-    lo = Math.max(1, Math.min(SLOTS.length, lo)); hi = Math.max(1, Math.min(SLOTS.length, hi));
+    else { lo = hi = parseInt(s, 10) || fallback; }
+    lo = Math.max(1, Math.min(max, lo)); hi = Math.max(1, Math.min(max, hi));
     if (lo > hi) [lo, hi] = [hi, lo];
     return [lo, hi];
+}
+
+function parseCountRange() {
+    return parseRange(storageGet(POSTERS_COUNT), SLOTS.length, 5);
 }
 
 // Frame color: any hex. Legacy "dark"/"light" presets map to their hexes.
@@ -313,31 +310,15 @@ export function setPosterOpacity(v) {
 }
 
 export function setPosterDensity(arg) {
-    const s = String(arg || "").trim();
-    const m = s.match(/(\d+)\s*-\s*(\d+)/);
-    let val;
-    if (m) {
-        let lo = Math.max(1, Math.min(10, parseInt(m[1], 10)));
-        let hi = Math.max(1, Math.min(10, parseInt(m[2], 10)));
-        if (lo > hi) [lo, hi] = [hi, lo];
-        val = lo === hi ? String(lo) : `${lo}-${hi}`;
-    } else {
-        val = String(Math.max(1, Math.min(10, parseInt(s, 10) || 5)));
-    }
+    const [lo, hi] = parseRange(arg, 10, 5);
+    const val = lo === hi ? String(lo) : `${lo}-${hi}`;
     storageSet(POSTERS_DENSITY, val);
     renderPosters();
     dbg(`[SpoTUI-pin] density ${val}/10 — each poster rolls a random size in that range (re-rolled on shuffle).`);
 }
 
 function parseDensity() {
-    const raw = String(storageGet(POSTERS_DENSITY) || "5");
-    const m = raw.match(/(\d+)\s*-\s*(\d+)/);
-    let lo, hi;
-    if (m) { lo = parseInt(m[1], 10); hi = parseInt(m[2], 10); }
-    else { lo = hi = parseInt(raw, 10) || 5; }
-    lo = Math.max(1, Math.min(10, lo)); hi = Math.max(1, Math.min(10, hi));
-    if (lo > hi) [lo, hi] = [hi, lo];
-    return [lo, hi];
+    return parseRange(storageGet(POSTERS_DENSITY), 10, 5);
 }
 
 export function setPosterRotate(min) {

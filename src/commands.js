@@ -123,7 +123,7 @@ export async function execute(cmd, opts = {}) {
                     console.warn("[SpoTUI-dbg] no wallpaper set yet — give a URL first: tui -wp <url>");
                     return;
                 }
-                    dbg("[SpoTUI-dbg] -wp tweaking current wallpaper.");
+                dbg("[SpoTUI-dbg] -wp tweaking current wallpaper.");
                 setWallpaper(curUrl, flag("-o") ?? curOp, true, {
                     fit: flag("-fit") ?? storageGet(WP_FIT_KEY),
                     pos: flag("-pos") ?? storageGet(WP_POS_KEY),
@@ -193,7 +193,9 @@ export async function execute(cmd, opts = {}) {
             return;
         }
         if (argsLower[0] === "-pin-feed") {
-            syncPinterestFeed(args[1]).catch((e) => console.error("[SpoTUI-pin] feed failed:", e.message));
+            syncPinterestFeed(args[1])
+                .then(() => { applyPosterFlags(argsLower, args); })
+                .catch((e) => console.error("[SpoTUI-pin] feed failed:", e.message));
             return;
         }
         if (argsLower[0] === "-pin-token") {
