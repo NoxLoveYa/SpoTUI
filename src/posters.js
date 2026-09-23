@@ -325,7 +325,9 @@ export async function testVideoPlayback() {
     let b = "pin: none stored";
     if (vids.length) {
         const e = vids[0];
-        b = await probeOne(posterAssetUrl(e.id) || e.u, "pin");
+        const target = posterAssetUrl(e.id) || e.u;
+        const short = String(target || "").split("/").pop().slice(0, 44);
+        b = await probeOne(target, `pin [${e.id ? `id ${e.id}` : "no id"}] ${short}`);
     }
     pinToast(`${a}\n${b}`, 14000);
     dbg("[SpoTUI-pin] diag:", a, "|", b);
