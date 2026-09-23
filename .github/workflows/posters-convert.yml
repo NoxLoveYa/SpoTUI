@@ -1,0 +1,51 @@
+name: posters-convert
+
+on:
+  workflow_dispatch:
+    inputs:
+      boards:
+        description: "Board URLs (one per line; empty = use posters-boards.txt)"
+        required: false
+        type: string
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve board list
+        id: boards
+        run: |
+          if [ -n "${{ inputs.boards }}" ]; then
+            printf '%s\n' "${{ inputs.boards }}" > /tmp/boards.txt
+          else
+            cp posters-boards.txt /tmp/boards.txt
+          fi
+          wc -l /tmp/boards.txt
+
+      - name: Check out posters-assets branch
+        run: |
+          git fetch origin posters-assets || true
+          if git rev-parse --verify origin/posters-assets >/dev/null 2>&1; then
+            git checkout posters-assets
+          else
+            git checkout --orphan posters-assets
+            git rm -rf . || true
+            printf '# Poster video assets (CI-managed, do not edit by hand)\n' > README.md
+          fi
+
+      - name: Convert missing board videos to VP9 webm
+        run: python3 scripts/convert-posters.py assets/posters /tmp/boards.txt
+
+      - name: Commit and push new clips
+        run: |
+          git add assets/posters
+          git -c user.name="spotui-ci" -c user.email="spotui-ci@local" \
+            commit -m "posters assets update" || { echo "nothing new"; exit 0; }
+          git push -u origin posters-assets
