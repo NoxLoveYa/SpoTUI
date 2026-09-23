@@ -1,4 +1,5 @@
 import json, os, re, subprocess, sys, urllib.parse, urllib.request
+from datetime import datetime, timezone
 
 UA = {"User-Agent": "Mozilla/5.0"}
 OUTDIR = sys.argv[1] if len(sys.argv) > 1 else "assets/posters"
@@ -38,6 +39,7 @@ def video_url(pin):
 
 done, skipped, failed = 0, 0, []
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
+all_video_ids = set()
 for b in BOARDS:
     m = re.search(r"pinterest\.[a-z.]+/([^/?#]+)/([^/?#]+)", b, re.I)
     if not m:
@@ -50,6 +52,8 @@ for b in BOARDS:
     for i in range(0, len(cands), 50):
         for pin in pins_info(cands[i:i + 50]):
             pid = str(pin.get("id"))
+            if video_url(pin):
+                all_video_ids.add(pid)
             dest = os.path.join(OUTDIR, "spotui-%s.webm" % pid)
             if os.path.exists(dest):
                 skipped += 1
@@ -66,3 +70,7 @@ for b in BOARDS:
             else:
                 failed.append(pid)
 print("converted: %d, cached: %d, failed: %s" % (done, skipped, failed))
+manifest = {"updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "videos": sorted(all_video_ids)}
+open(os.path.join(OUTDIR, "videos.json"), "w").write(json.dumps(manifest))
+print("manifest: %d video pin(s)" % len(all_video_ids))

@@ -1,4 +1,4 @@
-import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE, POSTER_ASSET_BASE, PROBE_URL } from "./constants.js";
+import { HEX_COLOR_REGEX, MANIFEST_KEY, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE, POSTER_ASSET_BASE, POSTER_MANIFEST_URL, PROBE_URL } from "./constants.js";
 import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
@@ -530,43 +530,38 @@ export function startRotateTimer() {
 
 // ---------- Pinterest sync ----------
 
-// Extract the still image and, for story/video pins, a directly playable
-// mp4. Prefers an explicit mp4 rendition; otherwise derives the expMp4 file
-// from the HLS URL (same hash path: .../hls/a/b/c/<hash>.m3u8 becomes
-// .../expMp4/a/b/c/<hash>_720w.mp4). <video> needs no CORS, so it plays
-// as-is; HLS-only with no derivable mp4 stays a still.
-function deriveMp4(hlsUrl) {
+// Which pins have video, per the CI manifest. Board listings can't be
+// trusted for this (story containers without video files are common) and
+// the per-pin lookup is flaky from some clients — the manifest is built
+// server-side where it always works.
+let manifestCache = null, manifestAt = 0;
+
+async function videoManifest() {
+    if (manifestCache && Date.now() - manifestAt < 10 * 60 * 1000) return manifestCache;
     try {
-        const m = String(hlsUrl).match(/^(https?:\/\/[^/]+\/videos\/[^/]+\/)hls(\/[a-f0-9]\/[a-f0-9]\/[a-f0-9]\/)([a-f0-9]+)\.m3u8/i);
-        if (!m) return null;
-        return `${m[1]}expMp4${m[2]}${m[3]}_720w.mp4`;
-    } catch (e) { return null; }
+        const data = await fetchJsonLoose(POSTER_MANIFEST_URL);
+        if (data && Array.isArray(data.videos)) {
+            manifestCache = new Set(data.videos.map(String));
+            manifestAt = Date.now();
+            try { storageSet(MANIFEST_KEY, JSON.stringify([...manifestCache])); } catch (e) {}
+            return manifestCache;
+        }
+    } catch (e) {
+        dbg("[SpoTUI-pin] manifest fetch failed, trying cache:", e.message);
+    }
+    try {
+        const raw = storageGet(MANIFEST_KEY);
+        if (raw) return new Set(JSON.parse(raw).map(String));
+    } catch (e) {}
+    return new Set();
 }
 
-function pickPidgetMedia(p) {
+// Extract the still image URL from a board pin record.
+function pickPidgetImage(p) {
     try {
         const im = p.images || {};
-        const image = (im["600x"] && im["600x"].url) || (im.orig && im.orig.url) || (im["237x"] && im["237x"].url) || null;
-        let video = null;
-        const pages = (p.story_pin_data && p.story_pin_data.pages) || [];
-        for (const pg of pages) {
-            const list = pg && pg.video && pg.video.video_list;
-            if (!list) continue;
-            const keys = Object.keys(list);
-            const mp4Key = keys.find((k) => /\.mp4($|[?#])/i.test((list[k] && list[k].url) || ""));
-            if (mp4Key) { video = { url: list[mp4Key].url }; break; }
-            const hlsKey = keys.find((k) => /\.m3u8($|[?#])/i.test((list[k] && list[k].url) || ""));
-            const derived = hlsKey ? deriveMp4(list[hlsKey].url) : null;
-            if (derived) { video = { url: derived }; break; }
-        }
-        if (!video && p.videos) {
-            const vl = p.videos.video_list || p.videos;
-            const keys = (vl && typeof vl === "object") ? Object.keys(vl) : [];
-            const mp4Key = keys.find((k) => /\.mp4($|[?#])/i.test((vl[k] && vl[k].url) || ""));
-            if (mp4Key) video = { url: vl[mp4Key].url };
-        }
-        return { image, video };
-    } catch (e) { return { image: null, video: null }; }
+        return (im["600x"] && im["600x"].url) || (im.orig && im.orig.url) || (im["237x"] && im["237x"].url) || null;
+    } catch (e) { return null; }
 }
 
 async function fetchJsonLoose(url, headers) {
@@ -596,45 +591,23 @@ function parseBoardRef(input) {
 // Board listings carry only story_pin_data.id — no page video files. Pull
 // full records for pins that look animated (story container or video flag)
 // in one batched call and merge any video files found.
-async function enrichStoryVideos(pins, items) {
-    const byId = new Map(items.filter((e) => e.id).map((e) => [e.id, e]));
-    const ids = pins
-        .filter((p) => p && p.id != null)
-        .map((p) => String(p.id))
-        .filter((id, i, all) => all.indexOf(id) === i)
-        .filter((id) => {
-            const e = byId.get(id);
-            if (!e || (e.m.video && e.m.video.url)) return false;
-            const p = pins.find((q) => String(q.id) === id);
-            return !!p && !!(p.is_video || (p.story_pin_data && p.story_pin_data.id));
-        })
-        .slice(0, 50);
-    if (!ids.length) return;
-    try {
-        const data = await fetchJsonLoose(`${PINTEREST_WIDGET_BASE}/pins/info/?pin_ids=${ids.map(encodeURIComponent).join(",")}`);
-        const info = Array.isArray(data && data.data) ? data.data : ((data && data.data && data.data.pins) || []);
-        for (const p of info) {
-            const m = pickPidgetMedia(p);
-            const e = p && p.id != null ? byId.get(String(p.id)) : null;
-            if (e && m.video && m.video.url) e.m = { image: m.image || e.m.image, video: m.video };
-        }
-        dbg(`[SpoTUI-pin] story enrichment: ${info.length} record(s) checked.`);
-    } catch (e) {
-        console.warn("[SpoTUI-pin] story enrichment failed:", e.message);
-    }
-}
-
 // No-auth attempt via Pinterest's public widget endpoint.
 async function syncViaPidgets(user, slug) {
     const url = `${PINTEREST_WIDGET_BASE}/boards/${encodeURIComponent(user)}/${encodeURIComponent(slug)}/pins/`;
     dbg("[SpoTUI-pin] trying public board endpoint (no login needed)...");
     const data = await fetchJsonLoose(url);
     const pins = (data && data.data && data.data.pins) || [];
-    const items = pins
-        .map((p) => ({ id: p && p.id != null ? String(p.id) : "", m: pickPidgetMedia(p) }))
-        .filter((e) => e.m.image || (e.m.video && e.m.video.url));
-    await enrichStoryVideos(pins, items);
-    return items;
+    const vids = await videoManifest();
+    return pins
+        .map((p) => {
+            const id = p && p.id != null ? String(p.id) : "";
+            const image = pickPidgetImage(p);
+            // A pin is a video poster only if the CI manifest says so —
+            // the clip itself is resolved at render time from the pin id.
+            const video = id && vids.has(id) && image ? { id } : null;
+            return { id, m: { image, video } };
+        })
+        .filter((e) => e.m.image || (e.m.video && e.id));
 }
 
 async function pinterestV5(path, token) {
@@ -717,7 +690,7 @@ export async function syncPinterestBoard(input, tokenArg) {
     if (ref.user) {
         try {
             media = await syncViaPidgets(ref.user, ref.slug);
-            const vids = media.filter((e) => e.m.video && e.m.video.url).length;
+            const vids = media.filter((e) => e.m.video).length;
             dbg(`[SpoTUI-pin] public endpoint gave ${media.length} item(s), ${vids} video(s).`);
         } catch (e) {
             console.warn("[SpoTUI-pin] public endpoint failed:", e.message);
@@ -748,21 +721,19 @@ export async function syncPinterestBoard(input, tokenArg) {
     let added = 0, addedVids = 0;
     for (const e of media) {
         const m = e.m;
-        if (m.video && m.video.url) {
-            const id = e.id || "";
-            if (imgs.some((x) => (id && x.id === id) || x.u === m.video.url)) continue;
+        if (m.video && e.id) {
+            const id = e.id;
+            if (imgs.some((x) => x.id === id)) continue;
             if (imgs.length >= MAX_STORED) continue;
             // Drop stale entries for the same pin (re-syncs, scheme upgrades).
-            if (id) {
-                const ix = imgs.findIndex((x) => x.id === id);
-                if (ix !== -1) imgs.splice(ix, 1);
-            }
+            const ix = imgs.findIndex((x) => x.id === id);
+            if (ix !== -1) imgs.splice(ix, 1);
             // Drop the still thumbnail when its video arrives (no dupes).
             if (m.image) {
                 const jx = imgs.findIndex((x) => !x.k && !x.id && x.u === m.image);
                 if (jx !== -1) imgs.splice(jx, 1);
             }
-            imgs.unshift({ u: m.video.url, id: id || undefined, b: label, k: "video", p: m.image || undefined });
+            imgs.unshift({ b: label, k: "video", p: m.image || undefined, id });
             added++; addedVids++;
         } else if (m.image) {
             if (!imgs.some((x) => x.u === m.image) && imgs.length < MAX_STORED) { imgs.unshift({ u: m.image, b: label }); added++; }

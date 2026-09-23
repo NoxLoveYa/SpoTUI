@@ -22,6 +22,11 @@ export const PINTEREST_WWW_BASE = "https://www.pinterest.com";
 // Solved at render time from the pin id — no per-machine setup, no keys.
 export const POSTER_ASSET_BASE = "https://cdn.jsdelivr.net/gh/NoxLoveYa/SpoTUI@posters-assets/assets/posters";
 
+// Which pins actually have video (CI-maintained; the client can't reliably
+// discover this itself). Small file, fetched per sync, cached on failure.
+export const POSTER_MANIFEST_URL = "https://cdn.jsdelivr.net/gh/NoxLoveYa/SpoTUI@posters-assets/assets/posters/videos.json";
+export const MANIFEST_KEY = "spotui:pin-manifest";
+
 // Spotify's own clip: guaranteed present and decodable. Used only as a
 // playback-capability probe, never displayed.
 export const PROBE_URL = "https://xpui.app.spotify.com/videos/shimmer.webm";

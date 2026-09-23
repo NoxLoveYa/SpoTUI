@@ -117,7 +117,7 @@ tui -pin-refresh posters # re-pull only boards matching "posters" (picks up pins
 
 Sync straight from Pinterest (video pins become animated posters: the
 `posters-convert` workflow turns new pins into VP9 clips on the
-`posters-assets` branch, served over CDN — trigger it from the Actions tab
+`posters-assets` branch, served over CDN — trigger it from the Actions tab (plus a nightly run)
 after syncing a board with fresh videos, then shuffle):
 
 ```bash
