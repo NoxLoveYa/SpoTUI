@@ -1038,7 +1038,7 @@ body.spotui-search-panel #spotui-search-panel {
     color: #777;
 }
 
-// Command-bar fill suggestion: dimmed accent ghost over the input.
+/* Command-bar fill suggestion: dimmed accent ghost over the input. */
 #spotui-cmd-ghost {
     position: absolute;
     display: flex;
