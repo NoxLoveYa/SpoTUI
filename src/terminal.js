@@ -69,6 +69,7 @@ function cycleHistorySearch(input) {
     s.matchIdx = (s.matchIdx + 1) % s.matches.length;
     renderHistorySearch(input);
 }
+
 // Create main terminal interface
 export function createTerminal() {
     const box = document.createElement("div");

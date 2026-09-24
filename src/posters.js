@@ -99,6 +99,7 @@ export function clearBoard(ref) {
     if (!kept.length) {
         // Library is empty: power the wall off so boot stays clean too.
         storageRemove(POSTERS_ON);
+        storageRemove(POSTERS_LAYOUT);
         stopRotateTimer();
     }
     if (isPostersEnabled()) renderPosters();
@@ -332,6 +333,7 @@ export function clearPosters() {
     const n = getPosterImages().length;
     storageRemove(POSTERS_IMGS);
     storageRemove(POSTERS_ON);
+    storageRemove(POSTERS_LAYOUT);
     stopRotateTimer();
     const box = document.getElementById("spotui-posters");
     if (box) box.innerHTML = "";

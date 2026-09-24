@@ -6,10 +6,11 @@ import { storageGet, storageSet } from "./storage.js";
 // Spotify restarts in localStorage; Ctrl+R reverse-searches it from the
 // command bar. Only interactive bar input is recorded — commands fired by
 // keybinds, theme cards, or actions never land here (bash parity).
-// Secrets never persist: pin tokens stay session-only.
+// Secrets never persist: pin tokens and jam join lines stay session-only.
 
-// Commands matching this are kept out of persisted history.
-const HISTORY_SKIP_REGEX = /^\s*tui\s+-pin-token\b/i;
+// Commands matching this are kept out of persisted history (a PIN grants
+// jam guests volume/lyrics control while the jam lives).
+const HISTORY_SKIP_REGEX = /^\s*tui\s+-pin-token\b|^\s*jam\s+join\b/i;
 
 export function sanitizeHistory(raw) {
     if (!Array.isArray(raw)) return [];
