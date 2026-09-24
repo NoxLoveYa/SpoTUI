@@ -45,6 +45,7 @@ export async function fetchSongsForSelectedPlaylist() {
     }
 
     if (token !== app.playlistSongsFetchToken) return;
+    if (!app.playlistPanelOpen) return;
 
     app.playlistSongs = songs;
     app.playlistSongsTotal = songs.length;

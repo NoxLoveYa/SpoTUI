@@ -127,6 +127,11 @@ export function closePlaylistPanel() {
     const input = document.getElementById("spotui-input");
     if (input) input.focus();
     document.removeEventListener("keydown", handlePlaylistPanelKeydown);
+    // A pending prefetch must not fetch+render into the closed panel.
+    if (app.playlistSongsFetchTimer) {
+        clearTimeout(app.playlistSongsFetchTimer);
+        app.playlistSongsFetchTimer = null;
+    }
     if (wasOpen) emitPaneClose("playlist");
 }
 
