@@ -1,6 +1,6 @@
 import { closePlaylistPanel } from "./panels.js";
 import { app } from "./state.js";
-import { print } from "./terminal.js";
+import { dbg } from "./utils.js";
 
 export const PLAYLIST_SONGS_FETCH_DELAY = 150;
 
@@ -319,7 +319,7 @@ export async function handlePlaylistPanelKeydown(e) {
             const p = app.playlists[app.selectedPlaylist];
             if (p) {
                 Spicetify.Player.playUri(p.uri);
-                print("Playing playlist: " + p.name);
+                dbg("[SpoTUI] playing playlist:", p.name);
                 closePlaylistPanel();
             }
         } else {
@@ -327,7 +327,7 @@ export async function handlePlaylistPanelKeydown(e) {
             const context = app.playlists[app.selectedPlaylist];
             if (song && context) {
                 Spicetify.Player.playUri(context.uri, {}, { skipTo: { uri: song.uri } });
-                print(`Playing: ${song.name} from ${context.name}`);
+                dbg("[SpoTUI] playing:", song.name, "from", context.name);
                 closePlaylistPanel();
             }
         }

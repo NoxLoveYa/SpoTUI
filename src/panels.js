@@ -10,7 +10,8 @@ import { closeSearchPanel } from "./search.js";
 import { applyTheme as applySavedTheme, savedThemeDetails } from "./saves.js";
 import { clearBoard, getBoardCounts, refreshBoards } from "./posters.js";
 import { app } from "./state.js";
-import { print, renderCmdGhost } from "./terminal.js";
+import { renderCmdGhost } from "./terminal.js";
+import { pinToast } from "./utils.js";
 import { createAddThemeCard, createThemeCard, loadThemeFeed } from "./themes.js";
 
 const PANE_TARGETS = {
@@ -137,7 +138,7 @@ export async function openPlaylistPanel() {
     try {
         app.playlists = (await getPlaylists()).filter((p) => p.name !== "DJ");
     } catch (err) {
-        print("Playlist error: " + err.message);
+        pinToast("Playlist error: " + err.message);
         return;
     }
 

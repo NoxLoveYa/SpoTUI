@@ -5,11 +5,6 @@ import { initSearchPanel } from "./search.js";
 import { app, isInputBlockingPanelOpen } from "./state.js";
 import { suggestFor } from "./suggest.js";
 
-export function setTuiMode(mode) {
-    app.tuiMode = mode === "cli" ? "cli" : "command";
-    document.body.classList.toggle("spotui-cli-mode", app.tuiMode === "cli");
-    document.body.classList.toggle("spotui-command-mode", app.tuiMode !== "cli");
-}
 // Inline unix-style reverse search over persisted command history.
 // While active the prompt shows `(reverse-i-search)`query': ` and the bar
 // shows the current match: typing filters, Ctrl+R cycles older matches,
@@ -137,7 +132,6 @@ export function createTerminal() {
     } catch (e) {}
     const box = document.createElement("div");
     box.id = "spotui-tui";
-    setTuiMode("command");
     box.innerHTML = `
 <div id="spotui-logo"></div>
 <div id="spotui-top-fade"></div>
@@ -294,7 +288,6 @@ export function createTerminal() {
             app.commandHistoryIndex = -1;
             clearCmdGhost();
             input.value = "";
-            print("> " + cmd);
             await execute(cmd);
             return;
         }
@@ -313,14 +306,6 @@ export function createTerminal() {
             renderCmdGhost(input);
             return;
         }
-        if (e.key === "ArrowDown" && app.results.length) {
-            app.selected = Math.min(app.selected + 1, app.results.length - 1);
-            renderResults();
-        }
-        if (e.key === "ArrowUp" && app.results.length) {
-            app.selected = Math.max(app.selected - 1, 0);
-            renderResults();
-        }
     });
 
     // Ghost suggestion follows typing; manual edits invalidate cycling.
@@ -330,19 +315,5 @@ export function createTerminal() {
     });
     input.addEventListener("blur", () => {
         clearCmdGhost();
-    });
-}
-
-// Placeholder print function (output is handled differently now)
-export function print(text) {}
-
-export function renderResults() {
-    const output = document.getElementById("spotui-output");
-    output.textContent = "";
-    app.results.forEach((item, idx) => {
-        const line = document.createElement("div");
-        line.className = "result" + (idx === app.selected ? " selected" : "");
-        line.textContent = `${idx + 1}. ${item.name}${item.artist ? " - " + item.artist : ""}`;
-        output.appendChild(line);
     });
 }

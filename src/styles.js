@@ -222,38 +222,6 @@ body:has(#spotui-wallpaper) body.spotui-saves-panel #spotui-logo {
     contain: layout style paint;
 }
 
-#spotui-output {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column-reverse;
-    white-space: pre-wrap;
-    line-height: 1.6;
-    user-select: text;
-    overflow-y: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    position: relative;
-    z-index: 1;
-    transition: opacity 260ms ease, transform 260ms ease;
-}
-
-body.spotui-command-mode #spotui-output,
-body.spotui-playlist-panel #spotui-output,
-body.spotui-help-panel #spotui-output,
-body.spotui-about-panel #spotui-output,
-body.spotui-theme-panel #spotui-output,
-body.spotui-boards-panel #spotui-output,
-body.spotui-saves-panel #spotui-output,
-body.spotui-dj-panel #spotui-output,
-body.spotui-lyrics-panel #spotui-output {
-    display: none !important;
-}
-
-body.spotui-cli-mode #spotui-output {
-    display: flex !important;
-}
-
-#spotui-output::-webkit-scrollbar,
 #spotui-help-panel::-webkit-scrollbar,
 #spotui-about-panel::-webkit-scrollbar,
 #spotui-theme-panel::-webkit-scrollbar,
