@@ -38,8 +38,26 @@ function readSaves() {
         const raw = storageGet(SAVES_KEY);
         const obj = raw ? JSON.parse(raw) : {};
         savesCache = obj && typeof obj === "object" ? obj : {};
-    } catch (e) { savesCache = {}; }
+    } catch (e) {
+        savesCache = {};
+        backupCorruptSaves();
+    }
     return savesCache;
+}
+
+// A corrupt blob must never silently evaporate on next save: stash the raw
+// value once (single bounded backup key) so nothing is lost.
+let savesCorruptNote = false;
+
+function backupCorruptSaves() {
+    try {
+        const raw = storageGet(SAVES_KEY);
+        if (!raw || storageGet(SAVES_KEY + ".corrupt")) return;
+        if (storageSet(SAVES_KEY + ".corrupt", raw)) {
+            savesCorruptNote = true;
+        }
+        console.error("[SpoTUI] saved themes unreadable — raw blob backed up, starting fresh.");
+    } catch (e) {}
 }
 
 // External mutations bypass readSaves writers (e.g. tui restore wiping
@@ -152,7 +170,9 @@ export function saveTheme(name) {
         return;
     }
     invalidateSavesCache();
-    pinToast(`${existed ? "theme updated" : "theme saved"}: ${n}\n${describeSnapshot(settings)}${evicted ? `\n(oldest snapshot ${evicted} evicted, cap ${MAX_SAVES})` : ""}`);
+    const corruptNote = savesCorruptNote ? `\n(previous library was corrupt — backed up, starting fresh)` : "";
+    savesCorruptNote = false;
+    pinToast(`${existed ? "theme updated" : "theme saved"}: ${n}\n${describeSnapshot(settings)}${evicted ? `\n(oldest snapshot ${evicted} evicted, cap ${MAX_SAVES})` : ""}${corruptNote}`);
     dbg("[SpoTUI] theme saved:", n);
 }
 
