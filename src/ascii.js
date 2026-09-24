@@ -147,6 +147,15 @@ export function resetGrid() {
     });
 }
 
+// Restore one char after a glitch flash. Animations snapshot entries at
+// start and run for hundreds of ms, so a shade change mid-flight would
+// repaint stale colors — always read the live value refreshLogoColors()
+// keeps current instead of a captured copy.
+function restoreChar(el, original) {
+    el.textContent = original;
+    if (el.dataset && el.dataset.origColor) el.style.color = el.dataset.origColor;
+}
+
 export function initAsciiAnimation() {
     if (app.asciiAnimationInitialized) return;
     app.asciiAnimationInitialized = true;
@@ -213,7 +222,6 @@ export function initAsciiAnimation() {
         const spans = getRowSpans(rowIdx);
         if (!spans.length) return;
         const origs = spans.map((span) => span.dataset.original || " ");
-        const colors = spans.map((span) => span.dataset.origColor || "#ff8c1a");
 
         spans.forEach((span) => {
             span.textContent = randomGlitchChar();
@@ -230,8 +238,7 @@ export function initAsciiAnimation() {
             });
             await sleep(8);
             batch.forEach((idx) => {
-                spans[idx].textContent = origs[idx];
-                spans[idx].style.color = colors[idx];
+                restoreChar(spans[idx], origs[idx]);
             });
             await sleep(6);
         }
@@ -242,7 +249,6 @@ export function initAsciiAnimation() {
         const spans = getRowSpans(rowIdx);
         if (!spans.length) return;
         const origs = spans.map((span) => span.dataset.original || " ");
-        const colors = spans.map((span) => span.dataset.origColor || "#ff8c1a");
         const steps = 8;
         for (let step = 0; step < steps; step += 1) {
             spans.forEach((span) => {
@@ -252,8 +258,7 @@ export function initAsciiAnimation() {
             await sleep(Math.floor(duration / steps));
         }
         spans.forEach((span, i) => {
-            span.textContent = origs[i] || " ";
-            span.style.color = colors[i] || "#ff8c1a";
+            restoreChar(span, origs[i] || " ");
         });
     }
 
@@ -277,7 +282,7 @@ export function initAsciiAnimation() {
         await runGlitchByDist(duration, async (withDist, maxDist) => {
             for (let step = 0; step < steps; step += 1) {
                 const progress = step / steps;
-                withDist.forEach(({ el, original, color, dist }) => {
+                withDist.forEach(({ el, original, dist }) => {
                     const norm = dist / maxDist;
                     const threshold = progress * 1.1;
                     if (norm < threshold + 0.12 && norm > threshold - 0.12) {
@@ -286,8 +291,7 @@ export function initAsciiAnimation() {
                             el.style.color = randomGlitchColor();
                         }
                     } else if (norm < threshold - 0.12) {
-                        el.textContent = original;
-                        el.style.color = color;
+                        restoreChar(el, original);
                     }
                 });
                 await sleep(Math.floor(duration / steps));
@@ -304,7 +308,7 @@ export function initAsciiAnimation() {
                 for (let step = 0; step < stepsPerWave; step += 1) {
                     const progress = step / stepsPerWave;
                     const threshold = progress * 1.0;
-                    withDist.forEach(({ el, original, color, dist }) => {
+                    withDist.forEach(({ el, original, dist }) => {
                         const norm = dist / maxDist;
                         if (norm < threshold + 0.1 && norm > threshold - 0.1) {
                             if (Math.random() < 0.7) {
@@ -312,8 +316,7 @@ export function initAsciiAnimation() {
                                 el.style.color = randomGlitchColor(55, 25);
                             }
                         } else if (norm < threshold - 0.1 && wave === waves - 1) {
-                            el.textContent = original;
-                            el.style.color = color;
+                            restoreChar(el, original);
                         }
                     });
                     await sleep(Math.floor(duration / (waves * stepsPerWave)));
@@ -334,11 +337,10 @@ export function initAsciiAnimation() {
             for (let step = 0; step < steps; step += 1) {
                 const progress = step / steps;
                 const threshold = 1.0 - progress * 1.1;
-                withDist.forEach(({ el, original, color, dist }) => {
+                withDist.forEach(({ el, original, dist }) => {
                     const norm = dist / maxDist;
                     if (norm <= threshold) {
-                        el.textContent = original;
-                        el.style.color = color;
+                        restoreChar(el, original);
                     }
                 });
                 await sleep(Math.floor(duration / steps));
@@ -362,15 +364,14 @@ export function initAsciiAnimation() {
 
         for (let step = 0; step < steps; step += 1) {
             const sweepAngle = (step / steps) * Math.PI * 2 - Math.PI;
-            withAngle.forEach(({ el, original, color, angle, dist }) => {
+            withAngle.forEach(({ el, original, angle, dist }) => {
                 let diff = Math.abs(angle - sweepAngle);
                 if (diff > Math.PI) diff = Math.PI * 2 - diff;
                 if (diff < wedgeWidth && dist > 0.1) {
                     el.textContent = randomGlitchChar();
                     el.style.color = randomGlitchColor(55, 25);
                 } else {
-                    el.textContent = original;
-                    el.style.color = color;
+                    restoreChar(el, original);
                 }
             });
             await sleep(Math.floor(duration / steps));
@@ -386,15 +387,14 @@ export function initAsciiAnimation() {
             for (let step = 0; step < steps; step += 1) {
                 const progress = step / steps;
                 const targetNorm = progress * 1.0;
-                withDist.forEach(({ el, original, color, dist }) => {
+                withDist.forEach(({ el, original, dist }) => {
                     const norm = dist / maxDist;
                     const distanceFromTarget = Math.abs(norm - targetNorm);
                     if (distanceFromTarget < bandWidth && Math.random() < 0.65) {
                         el.textContent = randomGlitchChar();
                         el.style.color = randomGlitchColor();
                     } else if (distanceFromTarget > bandWidth * 1.5) {
-                        el.textContent = original;
-                        el.style.color = color;
+                        restoreChar(el, original);
                     }
                 });
                 await sleep(Math.floor(duration / steps));
