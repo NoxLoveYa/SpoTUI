@@ -310,7 +310,7 @@ export async function handleBoardsKeydown(e) {
         const [b] = rows[app.selectedBoard];
         closeBoardsPanel();
         await refreshBoards(b);
-    } else if (e.key === "Delete" || e.key === "Backspace") {
+    } else if (e.key === "Delete" || e.key === "Backspace" || e.key === "d" || e.key === "D") {
         e.preventDefault();
         const [b] = rows[app.selectedBoard];
         clearBoard(b);
@@ -367,7 +367,7 @@ export async function handleSavesKeydown(e) {
         const name = items[app.selectedSave].name;
         closeSavesPanel();
         applySavedTheme(name);
-    } else if (e.key === "Delete" || e.key === "Backspace") {
+    } else if (e.key === "Delete" || e.key === "Backspace" || e.key === "d" || e.key === "D") {
         // Fill the bar with the delete command for the hovered theme;
         // Enter confirms it and the round-trip reopens this menu.
         e.preventDefault();
