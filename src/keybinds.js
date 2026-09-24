@@ -95,12 +95,21 @@ export function eventToKeyCombo(e) {
 // Global keydown handler for custom keybinds
 export function handleKeybindKeydown(e) {
     if (app.standbyOpen) return;
-    const binds = getKeybinds();
-    if (!Object.keys(binds).length) return;
 
     // Ignore AltGr
     const isAltGr = e.ctrlKey && e.altKey;
     if (isAltGr) return;
+
+    // Built-in: Ctrl+T opens the saved-themes menu, same as `tui -t list`
+    // (Shift excluded so Ctrl+Shift+T keeps its native meaning).
+    if ((e.key === "t" || e.key === "T") && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault();
+        execute("tui -t list");
+        return;
+    }
+
+    const binds = getKeybinds();
+    if (!Object.keys(binds).length) return;
 
     const combo = eventToKeyCombo(e);
     const cmd = binds[combo];
