@@ -48,6 +48,8 @@ export async function fetchSongsForSelectedPlaylist() {
 
     app.playlistSongs = songs;
     app.playlistSongsTotal = songs.length;
+    // The new list can be shorter: clamp before any songs[selectedSong] use.
+    if (app.selectedSong < 0 || app.selectedSong >= songs.length) app.selectedSong = 0;
     renderSongListVirtual();
     if (app.activePane === "song") scrollSongIntoView(app.selectedSong, false);
 }
