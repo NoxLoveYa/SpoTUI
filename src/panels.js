@@ -10,7 +10,7 @@ import { closeSearchPanel } from "./search.js";
 import { applyTheme as applySavedTheme, savedThemeDetails } from "./saves.js";
 import { clearBoard, getBoardCounts, refreshBoards } from "./posters.js";
 import { app } from "./state.js";
-import { print } from "./terminal.js";
+import { print, renderCmdGhost } from "./terminal.js";
 import { createAddThemeCard, createThemeCard, loadThemeFeed } from "./themes.js";
 
 const PANE_TARGETS = {
@@ -247,6 +247,7 @@ function prefillCommand(text, menu, prefix) {
     if (input) {
         input.value = text;
         input.focus();
+        renderCmdGhost(input);
     }
 }
 

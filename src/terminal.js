@@ -55,6 +55,7 @@ export function exitHistorySearch(input, restoreBar) {
     const prompt = searchPromptEl(input);
     if (prompt && s && s.savedPrompt !== undefined) prompt.textContent = s.savedPrompt;
     if (restoreBar && s) input.value = s.savedBar;
+    renderCmdGhost(input);
 }
 
 function updateHistorySearch(input, query) {
@@ -80,8 +81,7 @@ function cmdGhostEl() {
     catch (e) { return null; }
 }
 
-function renderCmdGhost(input) {
-    const ghost = cmdGhostEl();
+export function renderCmdGhost(input) {    const ghost = cmdGhostEl();
     if (!ghost) return;
     const value = input.value;
     const matches = (!value || app.historySearch || isInputBlockingPanelOpen())
@@ -268,6 +268,7 @@ export function createTerminal() {
                 e.preventDefault();
                 input.value = "";
                 app.commandHistoryIndex = -1;
+                renderCmdGhost(input);
             }
             return;
         }
@@ -294,6 +295,7 @@ export function createTerminal() {
                 app.commandHistoryIndex -= 1;
             }
             input.value = app.commandHistoryIndex >= 0 ? app.commandHistory[app.commandHistoryIndex] || "" : "";
+            renderCmdGhost(input);
             return;
         }
         if (e.key === "ArrowDown" && app.results.length) {
