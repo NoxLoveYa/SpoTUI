@@ -56,7 +56,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui actions disable <name>` | Disable an action |
 | `tui actions delete <name>` | Delete an action |
 | `tui -wp off` | Remove wallpaper |
-| `tui -shade <#hex\|off>` | Re-tint orange UI to any color (shades preserved); video + posters stay true; bare `tui -shade` shows current |
+| `tui -shade <#hex\|off>` | Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare `tui -shade` shows current |
 | `tui -debug <on/off>` | Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print) |
 | `tui -posters <on/off>` | Show the wall (pin images first) / hide it, images are kept |
 | `tui -posters <shuffle/clear/settings>` | Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings |
@@ -134,11 +134,14 @@ lines.
 
 ## UI shade
 
-SpoTUI's orange re-tinted to any color — one hue rotation, so every shade
-step survives. Video wallpaper and posters are counter-rotated to true colors.
+SpoTUI's orange accent re-pointed at any hex color — exact hue, saturation,
+and lightness, even gray/white/black. Selected rows flip their text
+(black/white) automatically so they stay readable. Video wallpaper and
+posters never go through the accent path, so they stay true.
 
 ```bash
 tui -shade #7fd4d4   # cyan UI, video + posters untouched
+tui -shade #111111   # near-black UI, selected rows flip to white text
 tui -shade off       # back to orange
 ```
 

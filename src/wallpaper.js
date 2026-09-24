@@ -1,6 +1,5 @@
 import { WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { reassertPosterLayer } from "./posters.js";
-import { shadeCounterFilter } from "./shade.js";
 import { storageSet } from "./storage.js";
 import { dbg } from "./utils.js";
 
@@ -123,8 +122,7 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
     wp.style.backgroundSize = fit === "fill" ? "100% 100%" : fit;
     wp.style.backgroundPosition = pos;
     const richFilter = rich === 0 ? "" : `saturate(${(1 + 0.1 * r).toFixed(3)}) contrast(${(1 + 0.04 * r).toFixed(3)})`;
-    // Shade counter-filter keeps video/photos true-colored under UI hue-rotate.
-    wp.style.filter = [richFilter, shadeCounterFilter()].filter(Boolean).join(" ");
+    wp.style.filter = richFilter;
     dbg("[SpoTUI-dbg] applied:", { fit, pos, rich });
 
     if (isVideo) {

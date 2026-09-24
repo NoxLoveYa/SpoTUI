@@ -21,7 +21,7 @@ const style = `#spotui-tui {
     left: 50%;
     top: 41%;
     transform: translate(-50%, -50%);
-    color: #ff8c42;
+    color: var(--spotui-accent, #ff8c42);
     opacity: 1;
     white-space: pre;
     text-align: center;
@@ -83,7 +83,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 
 .spotui-onboarding-copy h2 {
     margin: 0 0 8px;
-    color: #ff8c42;
+    color: var(--spotui-accent, #ff8c42);
     font-size: 28px;
     line-height: 1.1;
 }
@@ -106,9 +106,9 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 .spotui-onboarding-copy code,
 .spotui-onboarding-primer code,
 .spotui-onboarding-callout code {
-    color: #ff8c42;
-    background: rgba(255, 140, 66, 0.12);
-    border: 1px solid rgba(255, 140, 66, 0.22);
+    color: var(--spotui-accent, #ff8c42);
+    background: rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.12);
+    border: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.22);
     border-radius: 4px;
     padding: 0 4px;
     font-family: "JetBrains Mono", monospace;
@@ -125,7 +125,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 }
 
 .spotui-onboarding-primer {
-    border: 1px solid rgba(255, 140, 66, 0.2);
+    border: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.2);
     border-radius: 6px;
     padding: 16px;
     display: grid;
@@ -147,14 +147,14 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
     margin-top: auto;
     align-self: flex-start;
     max-width: 280px;
-    border: 1px solid rgba(255, 140, 66, 0.28);
+    border: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.28);
     border-radius: 6px;
     padding: 12px 14px;
     background: rgba(0, 0, 0, 0.28);
 }
 
 .spotui-onboarding-callout .arrow {
-    color: #ff8c42;
+    color: var(--spotui-accent, #ff8c42);
     font-size: 24px;
     line-height: 1;
     margin-bottom: 6px;
@@ -166,7 +166,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 }
 
 .spotui-onboarding-theme {
-    border: 1px solid rgba(255, 140, 66, 0.35);
+    border: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.35);
     border-radius: 6px;
     background: rgba(0,0,0,0.35);
     color: #ddd;
@@ -188,7 +188,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 .spotui-onboarding-theme span {
     padding: 10px 12px;
     font-family: "JetBrains Mono", monospace;
-    color: #ff8c42;
+    color: var(--spotui-accent, #ff8c42);
 }
 
 body:has(#spotui-wallpaper) body.spotui-lyrics-panel #spotui-logo,
@@ -292,7 +292,7 @@ body.spotui-cli-mode #spotui-output {
 .prompt { color: var(--input-text-color, #ff8c42); }
 .cl-line, .result { margin-bottom: 8px; user-select: text; }
 .result { padding: 5px; }
-.selected { background: #ff8c42; color: #000; }
+.selected { background: var(--spotui-accent, #ff8c42); color: var(--spotui-on-accent, #000); }
 
 body.spotui-lyrics-panel #spotui-logo,
 body.spotui-dj-panel #spotui-logo {
@@ -391,11 +391,11 @@ body.spotui-dj-mode .dj-button svg {
 .spotui-lyrics-header {
     flex: 0 0 auto;
     padding: 16px 22px 12px;
-    border-bottom: 1px solid rgba(255, 140, 66, 0.18);
+    border-bottom: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18);
 }
 
 .spotui-lyrics-kicker {
-    color: #ff8c42;
+    color: var(--spotui-accent, #ff8c42);
     font-size: 11px;
     letter-spacing: 0.18em;
     text-transform: uppercase;
@@ -685,7 +685,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 }
 
 .help-item.selected .command, .help-item.selected .description {
-    color: #000;
+    color: var(--spotui-on-accent, #000);
 }
 
 #spotui-playlist-list, #spotui-song-list {
@@ -749,7 +749,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 
 .spotui-lyrics-empty strong {
     display: block;
-    color: #ff8c42;
+    color: var(--spotui-accent, #ff8c42);
     font-size: 16px;
     margin-bottom: 8px;
     font-weight: 600;
@@ -873,7 +873,7 @@ body.spotui-tui-hidden #spotui-tui {
     right: 20px;
     background: #000;
     color: #ddd;
-    border: 1px solid #ff8c42;
+    border: 1px solid var(--spotui-accent, #ff8c42);
     border-radius: 6px;
     padding: 20px;
     max-width: 360px;
@@ -900,7 +900,7 @@ body.spotui-tui-hidden #spotui-tui {
 
 #spotui-update-banner h3 {
     margin: 0;
-    color: #ff8c42;
+    color: var(--spotui-accent, #ff8c42);
     font-size: 15px;
 }
 
@@ -944,7 +944,7 @@ body.spotui-tui-hidden #spotui-tui {
 }
 
 .spotui-banner-link-btn:hover {
-    color: #ff8c42;
+    color: var(--spotui-accent, #ff8c42);
     text-decoration: underline;
 }
 
@@ -1063,7 +1063,7 @@ body.spotui-search-panel #spotui-search-panel {
 
 .spotui-search-item.selected {
     background: var(--spotui-accent, #ff8c42);
-    color: #000;
+    color: var(--spotui-on-accent, #000);
 }
 
 .spotui-search-type {
@@ -1076,7 +1076,7 @@ body.spotui-search-panel #spotui-search-panel {
 }
 
 .spotui-search-item.selected .spotui-search-type {
-    color: #000;
+    color: var(--spotui-on-accent, #000);
     opacity: 1;
 }
 

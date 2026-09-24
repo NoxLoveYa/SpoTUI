@@ -2,10 +2,11 @@ import { HEX_COLOR_REGEX, SHADE_KEY } from "./constants.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
 
-// SpoTUI's default accent color (orange #ff8c42). The shade command rotates
-// every orange element in the UI away from this hue by the same delta,
-// so the relative shade steps are preserved exactly.
-const BASE_HEX = "#ff8c42";
+// SpoTUI's default accent color is orange #ff8c42 (the fallback baked into
+// every var(--spotui-accent, ...) rule). The shade command re-points the
+// var at any hex — hue, saturation, lightness, even gray/white/black.
+// Wallpaper and posters never go through the accent path, so they stay
+// true with no counter-filtering involved.
 
 function hexToRgb01(hex) {
     const m = String(hex || "").replace("#", "");
@@ -15,37 +16,26 @@ function hexToRgb01(hex) {
     return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255);
 }
 
-function hexToHsl(hex) {
-    const [r, g, b] = hexToRgb01(hex);
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    const l = (max + min) / 2;
-    const d = max - min;
-    let h = 0, s = 0;
-    if (d !== 0) {
-        s = d / (1 - Math.abs(2 * l - 1));
-        if (max === r) h = 60 * (((g - b) / d) % 6);
-        else if (max === g) h = 60 * ((b - r) / d + 2);
-        else h = 60 * ((r - g) / d + 4);
-        if (h < 0) h += 360;
-    }
-    return { h, s, l };
-}
-
-function shadeDelta() {
-    const target = storageGet(SHADE_KEY);
-    if (!isValidShade(target)) return 0;
-    return (((hexToHsl(target).h - hexToHsl(BASE_HEX).h) % 360) + 360) % 360;
-}
-
-// Counter-filter for wallpaper/poster layers: they sit inside #spotui-tui
-// so they inherit the UI rotation — this cancels it back to true colors.
-export function shadeCounterFilter() {
-    const delta = shadeDelta();
-    return delta < 0.5 ? "" : `hue-rotate(${(-delta).toFixed(1)}deg)`;
-}
-
 function hexToRgb(hex) {
     return hexToRgb01(hex).map((v) => Math.round(v * 255));
+}
+
+// sRGB relative luminance (0-1) for accent/contrast decisions.
+function hexLuminance(hex) {
+    const [r, g, b] = hexToRgb01(hex).map((v) => {
+        const c = Math.max(0, Math.min(1, v));
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// Text color for accent backgrounds: whichever of black/white contrasts
+// more (WCAG ratio). Orange and other light accents keep black text.
+export function onAccentFor(hex) {
+    const l = hexLuminance(hex);
+    const black = (l + 0.05) / 0.05;
+    const white = 1.05 / (l + 0.05);
+    return black >= white ? "#000000" : "#ffffff";
 }
 
 function shadeStyleEl() {
@@ -76,34 +66,17 @@ export function applyShade() {
     const target = isValidShade(rawTarget) ? rawTarget : null;
     const st = shadeStyleEl();
     if (!target) {
-        tui.style.filter = "";
         st.textContent = "";
-        const wp = document.getElementById("spotui-wallpaper");
-        if (wp) wp.style.filter = wp.style.filter.replace(/hue-rotate\([^)]*\)/g, "").trim();
-        const posters = document.getElementById("spotui-posters");
-        if (posters) posters.style.filter = "";
         return true;
     }
-    const delta = shadeDelta();
-    tui.style.filter = delta < 0.5 ? "" : `hue-rotate(${delta.toFixed(1)}deg)`;
-    // Native Spotify chrome follows --spotui-accent (no filter out there).
-    // Overlay bits that also consume the var are pinned to base orange so
-    // the container filter lands them on target instead of double-rotating.
+    // Exact accent: hue, saturation, and lightness all come from the hex.
     const [r, g, b] = hexToRgb(target);
     st.textContent = `
 body.spotui-spotify-enabled, body {
     --spotui-accent: ${target} !important;
     --spotui-accent-rgb: ${r}, ${g}, ${b} !important;
-}
-#spotui-tui .spotui-dj-logo { stroke: ${BASE_HEX} !important; }
-#spotui-tui #spotui-search-bar.focused { border-color: ${BASE_HEX} !important; }
-#spotui-tui #spotui-search-input { caret-color: ${BASE_HEX} !important; }
-#spotui-tui .spotui-search-item.selected { background: ${BASE_HEX} !important; }
-#spotui-tui .spotui-jam-tag { border-color: ${BASE_HEX} !important; }`;
-    const wp = document.getElementById("spotui-wallpaper");
-    if (wp) wp.style.filter = [wp.style.filter.replace(/hue-rotate\([^)]*\)/g, "").trim(), shadeCounterFilter()].filter(Boolean).join(" ");
-    const posters = document.getElementById("spotui-posters");
-    if (posters) posters.style.filter = shadeCounterFilter();
+    --spotui-on-accent: ${onAccentFor(target)} !important;
+}`;
     return true;
 }
 
@@ -121,14 +94,9 @@ export function setShade(arg) {
         console.warn("[SpoTUI-shade] usage: tui -shade <#hex|off>  (e.g. tui -shade #7fd4d4)");
         return;
     }
-    if (hexToHsl(v).s < 0.15) {
-        pinToast("near-gray colors have no hue to rotate to — pick something colorful");
-        console.warn("[SpoTUI-shade] that hex is near-gray (no hue to rotate to) — pick something colorful.");
-        return;
-    }
     storageSet(SHADE_KEY, v);
     applyShade();
-    pinToast(`UI shade ${v} (video + posters untouched)`);
+    pinToast(`UI shade ${v} (any color — video + posters untouched)`);
     dbg("[SpoTUI-shade] applied:", v);
 }
 

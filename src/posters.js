@@ -1,5 +1,4 @@
 import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
-import { shadeCounterFilter } from "./shade.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
 
@@ -193,11 +192,10 @@ export function renderPosters() {
     dbg(`[SpoTUI-pin] rendered ${shown} poster(s) from ${imgs.length} saved.`);
 }
 
-// Shared box setup (opacity + shade filter); returns the frame color.
+// Shared box setup (opacity); returns the frame color.
 function prepBox(box) {
     const opRaw = parseFloat(storageGet(POSTERS_OPACITY) || "1");
     box.style.opacity = String(Math.max(0, Math.min(1, isNaN(opRaw) ? 1 : opRaw)));
-    box.style.filter = shadeCounterFilter();
     return posterFrameColor();
 }
 

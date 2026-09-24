@@ -995,7 +995,7 @@ body.spotui-spotify-enabled .main-card-card .marketplace-installButton {
 
 body.spotui-spotify-enabled .main-card-card .marketplace-installButton:hover {
     background: var(--spotui-accent, #ff8c42) !important;
-    color: #000 !important;
+    color: var(--spotui-on-accent, #000) !important;
 }
 
 body.spotui-spotify-enabled .main-card-card .marketplace-installButton svg {
