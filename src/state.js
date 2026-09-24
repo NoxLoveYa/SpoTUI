@@ -14,6 +14,7 @@ export const app = {
     commandHistory: [],
     commandHistoryIndex: -1,
     historySearch: null,
+    cmdSuggest: null,
     playlistPanelOpen: false,
     playlists: [],
     playlistSongs: [],

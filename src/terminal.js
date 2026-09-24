@@ -3,6 +3,7 @@ import { execute, isKnownCommand } from "./commands.js";
 import { ensureHistoryLoaded, loadHistory, pushHistory, searchHistory } from "./history.js";
 import { initSearchPanel } from "./search.js";
 import { app, isInputBlockingPanelOpen } from "./state.js";
+import { suggestFor } from "./suggest.js";
 
 export function setTuiMode(mode) {
     app.tuiMode = mode === "cli" ? "cli" : "command";
@@ -72,6 +73,49 @@ function cycleHistorySearch(input) {
     renderHistorySearch(input);
 }
 
+// Ghost-text fill suggestion over the command bar (search-ghost pattern:
+// hidden typed echo keeps alignment, visible span shows the remainder).
+function cmdGhostEl() {
+    try { return document.getElementById("spotui-cmd-ghost"); }
+    catch (e) { return null; }
+}
+
+function renderCmdGhost(input) {
+    const ghost = cmdGhostEl();
+    if (!ghost) return;
+    const value = input.value;
+    const matches = (!value || app.historySearch || isInputBlockingPanelOpen())
+        ? [] : suggestFor(value);
+    const first = matches.length ? matches[0] : "";
+    if (!first || first.length <= value.length || !first.toLowerCase().startsWith(value.toLowerCase())) {
+        ghost.hidden = true;
+        ghost.textContent = "";
+        return;
+    }
+    ghost.hidden = false;
+    ghost.style.left = `${input.offsetLeft}px`;
+    ghost.style.top = `${input.offsetTop}px`;
+    ghost.style.width = `${input.offsetWidth}px`;
+    ghost.style.height = `${input.offsetHeight}px`;
+    ghost.innerHTML = "";
+    const typed = document.createElement("span");
+    typed.style.visibility = "hidden";
+    typed.textContent = value;
+    const rest = document.createElement("span");
+    rest.textContent = first.slice(value.length);
+    ghost.appendChild(typed);
+    ghost.appendChild(rest);
+}
+
+function clearCmdGhost() {
+    const ghost = cmdGhostEl();
+    if (ghost) {
+        ghost.hidden = true;
+        ghost.textContent = "";
+    }
+    app.cmdSuggest = null;
+}
+
 // Create main terminal interface
 export function createTerminal() {
     const box = document.createElement("div");
@@ -112,7 +156,8 @@ export function createTerminal() {
 <div id="spotui-onboarding-panel" hidden></div>
 <div id="spotui-footer">
 <span class="prompt">></span>
-<input id="spotui-input" autofocus placeholder="type help for a list of commands">
+<input id="spotui-input" autofocus autocomplete="off" spellcheck="false" placeholder="type help for a list of commands">
+<div id="spotui-cmd-ghost" hidden></div>
 </div>
 `;
     document.body.appendChild(box);
@@ -142,6 +187,7 @@ export function createTerminal() {
         if (isInputBlockingPanelOpen()) {
             // Never trap the bar inside a search that a fresh panel orphaned.
             if (app.historySearch) exitHistorySearch(input, true);
+            clearCmdGhost();
             e.stopImmediatePropagation();
             return;
         }
@@ -149,11 +195,20 @@ export function createTerminal() {
         if (isCtrlR) {
             // Unix reverse search: first press enters, repeats cycle older.
             e.preventDefault();
+            clearCmdGhost();
             if (!app.historySearch) enterHistorySearch(input);
             else cycleHistorySearch(input);
             return;
         }
         if (app.historySearch) {
+            if (e.key === "Tab") {
+                // Tab abandons the search instead of moving focus away.
+                e.preventDefault();
+                exitHistorySearch(input, true);
+                app.commandHistoryIndex = -1;
+                renderCmdGhost(input);
+                return;
+            }
             if (e.key === "Enter") {
                 // Accept the shown match into the bar; a second Enter runs it.
                 e.preventDefault();
@@ -179,6 +234,22 @@ export function createTerminal() {
                 return;
             }
         }
+        if (e.key === "Tab") {
+            // Fill the ghost suggestion; repeat with unchanged text cycles.
+            e.preventDefault();
+            const cur = input.value;
+            const s = app.cmdSuggest;
+            if (!s || !s.matches.length || cur !== s.matches[s.idx]) {
+                const matches = suggestFor(cur);
+                app.cmdSuggest = { matches, idx: 0 };
+            } else if (s.matches.length > 1) {
+                s.idx = (s.idx + 1) % s.matches.length;
+            }
+            const pick = app.cmdSuggest.matches[app.cmdSuggest.idx];
+            if (pick) input.value = pick;
+            renderCmdGhost(input);
+            return;
+        }
         if ((e.key === "c" || e.key === "C") && e.ctrlKey && !e.altKey && !e.metaKey) {
             // Clear the compose box. A text selection is left alone so
             // copying out of the input keeps working.
@@ -194,6 +265,7 @@ export function createTerminal() {
             // Unknown shapes stay session-only (arrows/Ctrl+R this run).
             if (cmd) pushHistory(cmd, { persist: isKnownCommand(cmd) });
             app.commandHistoryIndex = -1;
+            clearCmdGhost();
             input.value = "";
             print("> " + cmd);
             await execute(cmd);
@@ -221,6 +293,15 @@ export function createTerminal() {
             app.selected = Math.max(app.selected - 1, 0);
             renderResults();
         }
+    });
+
+    // Ghost suggestion follows typing; manual edits invalidate cycling.
+    input.addEventListener("input", () => {
+        app.cmdSuggest = null;
+        renderCmdGhost(input);
+    });
+    input.addEventListener("blur", () => {
+        clearCmdGhost();
     });
 }
 

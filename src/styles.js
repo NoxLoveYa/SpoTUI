@@ -1038,6 +1038,20 @@ body.spotui-search-panel #spotui-search-panel {
     color: #777;
 }
 
+// Command-bar fill suggestion: dimmed ghost over the input, deliberately
+// gray (not accent) so it reads as "not yet real".
+#spotui-cmd-ghost {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+    overflow: hidden;
+    white-space: nowrap;
+    font-family: inherit;
+    font-size: inherit;
+    color: #777;
+}
+
 #spotui-search-results {
     flex: 1 1 auto;
     min-height: 0;
