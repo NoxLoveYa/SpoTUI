@@ -161,11 +161,8 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
     }
     wp.style.opacity = opacity;
     tui.style.backgroundColor = "transparent";
-    const children = tui.querySelectorAll(':not(#spotui-wallpaper)');
-    children.forEach(c => {
-        if (window.getComputedStyle(c).position === 'static') c.style.position = 'relative';
-        c.style.zIndex = '1';
-    });
+    // Content stays above the wallpaper via the #spotui-tui > * rule in
+    // styles.js (covers late-created nodes too); posters re-assert below.
     try { reassertPosterLayer(); } catch (e) {}
     if (save) {
         storageSet(WP_URL_KEY, url);

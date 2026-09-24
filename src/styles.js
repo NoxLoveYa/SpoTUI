@@ -16,6 +16,13 @@ const style = `#spotui-tui {
     cursor: text;
 }
 
+/* Keep TUI content above the wallpaper layer (replaces a per-swap DOM crawl
+   that also missed late-created nodes). */
+#spotui-tui > :not(#spotui-wallpaper) {
+    position: relative;
+    z-index: 1;
+}
+
 #spotui-logo {
     position: absolute;
     left: 50%;
