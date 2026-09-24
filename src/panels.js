@@ -230,9 +230,9 @@ function escMenu(s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function renderMenuRows(content, rows, selected, sep) {
+function renderMenuRows(content, rows, selected) {
     content.innerHTML = rows.map((r, i) =>
-        `<div class="help-item${i === selected ? " selected" : ""}"><span class="command">${r[0]}${sep ? ` ${sep} ` : ""}</span><span class="description">${r[1]}</span></div>`
+        `<div class="help-item${i === selected ? " selected" : ""}"><span class="command">${r[0]}</span><span class="description">${r[1]}</span></div>`
     ).join("");
 }
 
@@ -332,7 +332,7 @@ function renderSavesPanel() {
     if (!content) return;
     const items = savedThemeDetails();
     if (app.selectedSave >= items.length) app.selectedSave = 0;
-    renderMenuRows(content, items.map((t) => [escMenu(t.name), t.savedAt ? new Date(t.savedAt).toLocaleDateString() : "saved theme"]), app.selectedSave, "—");
+    renderMenuRows(content, items.map((t) => [escMenu(t.name), t.savedAt ? new Date(t.savedAt).toLocaleDateString() : "saved theme"]), app.selectedSave);
 }
 
 export function openSavesPanel() {
