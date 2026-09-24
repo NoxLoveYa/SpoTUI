@@ -44,7 +44,7 @@ export function createTerminal() {
 </div>
 <div id="spotui-theme-panel" hidden></div>
 <div id="spotui-boards-panel" hidden><fieldset class="spotui-help-fieldset"><legend class="spotui-help-legend">Boards — Enter re-pull · Del forget · A add · Esc</legend><div class="spotui-boards-content"></div></fieldset></div>
-<div id="spotui-saves-panel" hidden><fieldset class="spotui-help-fieldset"><legend class="spotui-help-legend">Themes — Enter apply · Del fill delete · S save · Esc</legend><div class="spotui-saves-content"></div></fieldset></div>
+<div id="spotui-saves-panel" hidden><fieldset class="spotui-help-fieldset"><legend class="spotui-help-legend">Themes — Enter apply · Del delete hovered theme · S save · Esc</legend><div class="spotui-saves-content"></div></fieldset></div>
 <div id="spotui-onboarding-panel" hidden></div>
 <div id="spotui-footer">
 <span class="prompt">></span>

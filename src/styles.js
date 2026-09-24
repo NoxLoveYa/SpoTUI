@@ -594,6 +594,12 @@ body.spotui-saves-panel #spotui-saves-panel {
     padding: 0 5px;
 }
 
+/* Menu rows start below the floated legend: the legend keeps the first
+   line to itself instead of sharing it with the first theme/board. */
+.spotui-boards-content, .spotui-saves-content {
+    clear: both;
+}
+
 .spotui-theme-loading {
     display: flex;
     justify-content: center;
