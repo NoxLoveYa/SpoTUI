@@ -27,7 +27,9 @@ export function jamSay(text) {
     toast.style.bottom = "120px";
     toast.style.transform = "translateX(-50%)";
     toast.style.zIndex = "10000";
-    toast.style.background = "rgba(0,0,0,0.92)";
+    toast.style.background = "rgba(0,0,0,0.45)";
+    toast.style.WebkitBackdropFilter = "blur(14px)";
+    toast.style.backdropFilter = "blur(14px)";
     toast.style.border = `1px solid ${accent}`;
     toast.style.borderRadius = "6px";
     toast.style.padding = "12px 16px";
