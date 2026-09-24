@@ -8,6 +8,7 @@ const RESERVED_NAMES = new Set(["create", "list", "enable", "disable", "delete"]
 const CLAUSE_RE = /^(?:actions:)?spotui@([a-z_]+)(?:>(!?)([a-z0-9_-]+))?$/i;
 
 let runningActions = false;
+const paneCloseQueue = [];
 
 function parseQuotedTokens(text) {
     const tokens = [];
@@ -102,23 +103,33 @@ function paneTarget(target) {
 export function emitPaneClose(target) {
     const closed = paneTarget(target);
     if (!closed || closed === "onboarding") return;
-    queueMicrotask(() => runPaneClose(closed));
+    paneCloseQueue.push(closed);
+    queueMicrotask(pumpPaneCloseQueue);
 }
 
-async function runPaneClose(target) {
+// Serial FIFO: concurrent closes queue up instead of dropping all but the
+// first (the old runningActions drop-guard lost N-1 targets).
+async function pumpPaneCloseQueue() {
     if (runningActions) return;
     runningActions = true;
     try {
-        const actions = getActions();
-        const names = Object.keys(actions);
-        for (let i = 0; i < names.length; i++) {
-            const action = actions[names[i]];
-            if (!action.enabled || !action.listener || !action.command) continue;
-            if (!listenerMatches(action.listener, PANE_CLOSE_EVENT, target)) continue;
-            await execute(action.command);
+        let target;
+        while ((target = paneCloseQueue.shift()) !== undefined) {
+            await runPaneClose(target);
         }
     } finally {
         runningActions = false;
+    }
+}
+
+async function runPaneClose(target) {
+    const actions = getActions();
+    const names = Object.keys(actions);
+    for (let i = 0; i < names.length; i++) {
+        const action = actions[names[i]];
+        if (!action.enabled || !action.listener || !action.command) continue;
+        if (!listenerMatches(action.listener, PANE_CLOSE_EVENT, target)) continue;
+        await execute(action.command);
     }
 }
 
