@@ -56,12 +56,18 @@ export function isKnownCommand(cmd) {
     return true;
 }
 
+// Strip one pair of surrounding double quotes so multi-word names and refs
+// survive the whitespace split above: "my theme" -> my theme.
+function unquote(s) {
+    const t = String(s || "").trim();
+    return t.length >= 2 && t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t;
+}
+
 async function executeInner(cmd, opts = {}) {
     const cleanedCmd = stripCommandPrefix(cmd);
     const [rawCommand, ...args] = cleanedCmd.split(/\s+/);
     const command = (rawCommand || "").toLowerCase();
-    const argText = args.join(" ").trim();
-    if (opts.fromTheme && isRestrictedThemeCommand(cleanedCmd)) return;
+    const argText = args.join(" ").trim();    if (opts.fromTheme && isRestrictedThemeCommand(cleanedCmd)) return;
 
     const allowedOnboardingCommands = opts.bypassOnboarding ? null : getAllowedOnboardingCommands();
     if (allowedOnboardingCommands && !allowedOnboardingCommands.has(command)) return;
@@ -220,7 +226,7 @@ async function executeInner(cmd, opts = {}) {
         }
         if (argsLower[0] === "-pin-clear") {
             if (!args[1]) console.warn("[SpoTUI-pin] usage: tui -pin-clear <board>  (see tui -pin-boards)");
-            else clearBoard(args.slice(1).join(" "));
+            else clearBoard(unquote(args.slice(1).join(" ")));
             return;
         }
         if (argsLower[0] === "-pin-board") {
@@ -248,7 +254,8 @@ async function executeInner(cmd, opts = {}) {
         // other commands (bind strings, search queries) can't hijack them.
         if (argsLower[0] === "-t") {
             const tSub = (args[1] || "").toLowerCase();
-            const tName = args[2];
+            // Quoted multi-word names: tui -t save "my theme".
+            const tName = args[2] && args[2].startsWith('"') ? unquote(args.slice(2).join(" ")) : args[2];
             if (tSub === "save") { saveTheme(tName); return; }
             if (tSub === "list") {
                 if (!savedThemeNames().length) listThemes();
@@ -457,7 +464,7 @@ async function executeInner(cmd, opts = {}) {
                 return;
             }
 
-            const match = app.playlists.filter(p => p.name.toLowerCase().includes(argText.toLowerCase()));
+            const match = app.playlists.filter(p => p.name.toLowerCase().includes(unquote(argText).toLowerCase()));
             if (match.length === 1) {
                 Spicetify.Player.playUri(match[0].uri);
                 return;

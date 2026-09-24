@@ -378,7 +378,8 @@ export async function handleSavesKeydown(e) {
         // Enter confirms it and the round-trip reopens this menu.
         e.preventDefault();
         const name = items[app.selectedSave].name;
-        prefillCommand(`tui -t delete ${name}`, "saves", "tui -t delete ");
+        const quoted = name.includes(" ") ? `"${name}"` : name;
+        prefillCommand(`tui -t delete ${quoted}`, "saves", "tui -t delete ");
     } else if (e.key === "s" || e.key === "S") {
         // Same as above: prefill focuses the bar, so swallow the keystroke.
         e.preventDefault();

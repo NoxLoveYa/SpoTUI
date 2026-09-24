@@ -130,7 +130,7 @@ function restoreWall() {
 export function saveTheme(name) {
     const n = String(name || "").trim();
     if (!n) {
-        console.warn("[SpoTUI] usage: tui -t save <name>  (single word, e.g. tui -t save cozy)");
+        console.warn("[SpoTUI] usage: tui -t save <name>  (quote multi-word names, e.g. tui -t save cozy or tui -t save \"my theme\")");
         return;
     }
     const saves = readSaves();
