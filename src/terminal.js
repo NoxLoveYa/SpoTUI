@@ -1,5 +1,5 @@
 import { initAsciiAnimation } from "./ascii.js";
-import { execute } from "./commands.js";
+import { execute, isKnownCommand } from "./commands.js";
 import { loadHistory, pushHistory, searchHistory } from "./history.js";
 import { initSearchPanel } from "./search.js";
 import { app, isInputBlockingPanelOpen } from "./state.js";
@@ -188,7 +188,8 @@ export function createTerminal() {
         }
         if (e.key === "Enter") {
             const cmd = input.value.trim();
-            if (cmd) pushHistory(cmd);
+            // Unknown shapes stay session-only (arrows/Ctrl+R this run).
+            if (cmd) pushHistory(cmd, { persist: isKnownCommand(cmd) });
             app.commandHistoryIndex = -1;
             input.value = "";
             print("> " + cmd);

@@ -31,6 +31,31 @@ export async function execute(cmd, opts = {}) {
     return out;
 }
 
+// First-token command inventory (mirrors the executeInner branches below).
+// Used by history: unknown shapes stay session-only instead of persisting.
+const KNOWN_COMMANDS = new Set([
+    "tui", "standby", "help", "about", "playlist", "list", "theme",
+    "discord", "search", "seek", "s", "volume", "v", "loop", "superloop",
+    "lyrics", "dj", "echo", "jam",
+    "play", "pause", "p", "skip", "back", "shuffle", "like",
+]);
+const KNOWN_TUI_SUBS = new Set([
+    "-l", "-a", "-debug", "-shade", "-wp", "-t", "bind", "unbind",
+    "actions", "restore", "-posters", "-poster", "-pin-board",
+    "-pin-boards", "-pin-clear", "-pin-feed", "-pin-refresh", "-pin-token",
+    "-ly", "-bar", "-progress", "-panel", "-inputs",
+]);
+const KNOWN_JAM_SUBS = new Set(["create", "join", "leave"]);
+
+export function isKnownCommand(cmd) {
+    const parts = stripCommandPrefix(cmd).split(/\s+/).filter(Boolean);
+    const command = (parts[0] || "").toLowerCase();
+    if (!KNOWN_COMMANDS.has(command)) return false;
+    if (command === "tui") return KNOWN_TUI_SUBS.has((parts[1] || "").toLowerCase());
+    if (command === "jam") return KNOWN_JAM_SUBS.has((parts[1] || "").toLowerCase());
+    return true;
+}
+
 async function executeInner(cmd, opts = {}) {
     const cleanedCmd = stripCommandPrefix(cmd);
     const [rawCommand, ...args] = cleanedCmd.split(/\s+/);

@@ -31,17 +31,20 @@ export function loadHistory() {
     } catch (e) { return []; }
 }
 
-function persistHistory() {
-    try { storageSet(HISTORY_KEY, JSON.stringify(app.commandHistory)); } catch (e) {}
-}
-
-// Newest-first, de-duped, capped. No-op for blanks and secrets.
-export function pushHistory(cmd) {
+// Session list (arrows + Ctrl+R source) always takes the command; the
+// persisted list only takes valid ones — typos stay memory-only.
+// opts.persist === false records session-only.
+export function pushHistory(cmd, opts = {}) {
     const t = String(cmd || "").trim().slice(0, HISTORY_ENTRY_MAX);
-    if (!t || HISTORY_SKIP_REGEX.test(t)) return;
+    if (!t || HISTORY_SKIP_REGEX.test(t)) return false;
     app.commandHistory = [t, ...app.commandHistory.filter((e) => e !== t)].slice(0, HISTORY_LIMIT);
     app.commandHistoryIndex = -1;
-    persistHistory();
+    if (opts.persist === false) return true;
+    try {
+        const stored = sanitizeHistory(JSON.parse(storageGet(HISTORY_KEY) || "[]"));
+        storageSet(HISTORY_KEY, JSON.stringify([t, ...stored.filter((e) => e !== t)].slice(0, HISTORY_LIMIT)));
+    } catch (e) {}
+    return true;
 }
 
 // Newest-first matches for the reverse search: empty query matches the
