@@ -270,7 +270,10 @@ async function executeInner(cmd, opts = {}) {
         }
         if (argsLower[0] === "bind") {
             if (argsLower[1] === "clear" && args.length === 2) {
-                saveKeybinds({});
+                if (!saveKeybinds({})) {
+                    pinToast("binds not cleared: storage full");
+                    console.error("[SpoTUI] bind clear failed: storage full");
+                }
                 return;
             }
             const bindMatch = cleanedCmd.match(/^tui\s+bind\s+"([A-Za-z])"\s+"([^"]+)"\s*$/i);
@@ -278,7 +281,10 @@ async function executeInner(cmd, opts = {}) {
                 const combo = "Alt+" + bindMatch[1].toUpperCase();
                 const binds = getKeybinds();
                 binds[combo] = bindMatch[2];
-                saveKeybinds(binds);
+                if (!saveKeybinds(binds)) {
+                    pinToast("keybind not saved: storage full");
+                    console.error("[SpoTUI] keybind save failed: storage full");
+                }
             }
             return;
         }
@@ -288,9 +294,15 @@ async function executeInner(cmd, opts = {}) {
                 const combo = "Alt+" + unbindMatch[1].toUpperCase();
                 const binds = getKeybinds();
                 delete binds[combo];
-                saveKeybinds(binds);
+                if (!saveKeybinds(binds)) {
+                    pinToast("unbind not saved: storage full");
+                    console.error("[SpoTUI] unbind save failed: storage full");
+                }
             } else if (argsLower[1] === "all") {
-                saveKeybinds({});
+                if (!saveKeybinds({})) {
+                    pinToast("binds not cleared: storage full");
+                    console.error("[SpoTUI] bind clear failed: storage full");
+                }
             }
             return;
         }

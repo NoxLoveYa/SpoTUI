@@ -6,10 +6,13 @@ export function storageGet(key) {
     }
 }
 
+// Returns false when the write fails (e.g. quota exceeded) so callers can
+// surface it instead of toasting false success.
 export function storageSet(key, value) {
     try {
         localStorage.setItem(key, value);
-    } catch (e) {}
+        return true;
+    } catch (e) { return false; }
 }
 
 export function storageRemove(key) {

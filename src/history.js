@@ -1,6 +1,7 @@
 import { HISTORY_ENTRY_MAX, HISTORY_KEY, HISTORY_LIMIT } from "./constants.js";
 import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
+import { pinToast } from "./utils.js";
 
 // Persistent command history (unix-style): what the user typed survives
 // Spotify restarts in localStorage; Ctrl+R reverse-searches it from the
@@ -42,6 +43,8 @@ export function ensureHistoryLoaded() {
 // Session list (arrows + Ctrl+R source) always takes the command; the
 // persisted list only takes valid ones — typos stay memory-only.
 // opts.persist === false records session-only.
+let historyFullWarned = false;
+
 export function pushHistory(cmd, opts = {}) {
     const t = String(cmd || "").trim().slice(0, HISTORY_ENTRY_MAX);
     if (!t || HISTORY_SKIP_REGEX.test(t)) return false;
@@ -50,7 +53,14 @@ export function pushHistory(cmd, opts = {}) {
     if (opts.persist === false) return true;
     try {
         const stored = sanitizeHistory(JSON.parse(storageGet(HISTORY_KEY) || "[]"));
-        storageSet(HISTORY_KEY, JSON.stringify([t, ...stored.filter((e) => e !== t)].slice(0, HISTORY_LIMIT)));
+        if (!storageSet(HISTORY_KEY, JSON.stringify([t, ...stored.filter((e) => e !== t)].slice(0, HISTORY_LIMIT)))) {
+            console.error("[SpoTUI] history persist failed: storage full (session-only from here)");
+            if (!historyFullWarned) {
+                historyFullWarned = true;
+                pinToast("history not saving: storage full (session-only)");
+            }
+            return true;
+        }
     } catch (e) {}
     return true;
 }

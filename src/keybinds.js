@@ -21,7 +21,7 @@ export function getKeybinds() {
 }
 
 export function saveKeybinds(map) {
-    storageSet(KEYBIND_STORAGE_KEY, JSON.stringify(map));
+    return storageSet(KEYBIND_STORAGE_KEY, JSON.stringify(map));
 }
 
 // Remove leading slash or dot from command strings

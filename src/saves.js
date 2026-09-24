@@ -145,7 +145,12 @@ export function saveTheme(name) {
         evicted = names.shift();
         delete saves[evicted];
     }
-    storageSet(SAVES_KEY, JSON.stringify(saves));
+    if (!storageSet(SAVES_KEY, JSON.stringify(saves))) {
+        invalidateSavesCache();
+        pinToast(`theme save failed: storage full (delete a theme or clear posters)`);
+        console.error("[SpoTUI] theme save failed: storage write failed for", n);
+        return;
+    }
     invalidateSavesCache();
     pinToast(`${existed ? "theme updated" : "theme saved"}: ${n}\n${describeSnapshot(settings)}${evicted ? `\n(oldest snapshot ${evicted} evicted, cap ${MAX_SAVES})` : ""}`);
     dbg("[SpoTUI] theme saved:", n);
