@@ -80,17 +80,23 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -inputs -bg <#hex> -bg-hover <#hex> -text <#hex> -border <#hex>` | Set input colors |
 | `tui -inputs -buttons <on/off>` | Toggle bottom right buttons visibility |
 | `tui -inputs off` | Reset input colors |
+| `tui -panel -bg <#hex> -border <#hex> -text <#hex>` | Set panel colors |
+| `tui -panel off` | Reset panel colors |
+| `tui restore [-full]` | Reset all settings to defaults and reload (keeps history, keybinds, actions; `-full` wipes everything) |
 | `playlist` / `list` `<playlist-name>` | Open playlist viewer or play a specific playlist |
 | `play` / `pause` / `p` | Toggle playback |
 | `skip` | Next track |
+| `back` | Previous track |
 | `s` / `seek <mm:ss>` | Jump to a specific time |
 | `v` / `volume <%>` | Set volume (0-100) |
 | `shuffle` | Toggle shuffle |
+| `like` | Like/unlike current song |
 | `loop` / `superloop` | Toggle repeat mode |
 | `lyrics` | Toggle lyrics panel |
 | `dj` | Play the DJ playlist |
 | `echo <text>` | Display a message |
 | `search <query>` | Search Spotify |
+| `about` | Show about panel |
 | `theme` | Browse and apply themes |
 | `discord` | Show the Discord update banner and re-enable it on boot |
 | `standby` | Enter standby mode (any key to exit) |

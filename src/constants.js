@@ -127,6 +127,7 @@ export const COMMAND_LIST = [
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
     { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
     { cmd: "tui bind clear", desc: "Remove all keybinds" },
+    { cmd: "tui restore [-full]", desc: "Reset all settings to defaults and reload (keeps history, keybinds, actions; -full wipes everything)" },
     { cmd: "Ctrl+R", desc: "Reverse-search persistent command history (typing filters, Ctrl+R cycles older matches, Enter fills the bar, Esc aborts; unknown commands stay session-only)" },
     { cmd: "Tab", desc: "Accept the ghost fill suggestion (repeat to cycle matches)" },
     { cmd: "Esc", desc: "Abort history search, or leave the command bar so Spotify gets its keys back" },
