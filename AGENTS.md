@@ -36,3 +36,22 @@
   `Extracted`, or another installed theme.
 - Commit scope: `src/`, `user.css`, `color.ini` (intentional only),
   `manifest.json`, `scripts/`, docs. No secrets, no local paths, no user data.
+  Before commit, `git diff --stat` must show only intended files (revert any
+  debug prints and the rebuilt `theme.js`).
+
+## Hard-won rules (from audits — follow, don't re-learn)
+- CSS: triplet vars take comma alpha only —
+  `rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3)`, never the slash form
+  (invalid, silently drops the declaration). Never define a var in terms of
+  itself (cyclic = guaranteed-invalid). Injected CSS takes `/* */`, never `//`.
+- New `spotui:*` key? Classify it (look vs personal) and handle ALL paths:
+  snapshot, apply-wipe, apply-restore, clear/nuke commands, `tui restore`
+  backup list. Personal keys (history, keybinds, actions) are excluded everywhere.
+- New command or `tui` sub? Mirror it in `KNOWN_COMMANDS`/`KNOWN_TUI_SUBS`
+  (history validity) and in all three docs: `help` list, README table, README
+  examples.
+- Keys: Chromium swallows `Ctrl+Letter` before the page — only `Alt+Letter`
+  (via `tui bind`) and bare keys are bindable. Capture-phase listeners run
+  first: open menus own bare keys, modifiers stay global.
+- Reverts remove code + docs + tests traces; prove it with grep. Stub-test
+  failures need a stack trace before any app code is blamed.
