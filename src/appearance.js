@@ -100,31 +100,44 @@ export function renderProgressBar(progress, styleId, width) {
     return filledStr + emptyStr;
 }
 
-// Recalculate custom bar progress width on window resize
+// Recalculate custom bar progress width on window resize (cached; the
+// per-second tick reads the cache instead of forcing layout each time).
 export function updateCustomBarWidth() {
     if (!document.body.classList.contains("spotui-custom-bar-on")) return;
     const bar = document.getElementById("spotui-custom-bar");
     if (!bar) return;
-    const progressEl = bar.querySelector(".spotui-custom-bar-progress");
-    if (!progressEl) return;
     const rect = bar.getBoundingClientRect();
     const availableWidth = rect.width - 400;
-    const width = Math.max(40, Math.floor(availableWidth / 16));
-    const progress = Spicetify.Player.getProgress();
-    const duration = Spicetify.Player.getDuration();
-    const progressPct = duration > 0 ? progress / duration : 0;
-    const styleId = storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block";
-    progressEl.textContent = renderProgressBar(progressPct, styleId, width);
+    customBarLive.width = Math.max(40, Math.floor(availableWidth / 16));
 }
 
-// Draw left section of custom bar: heart button, track title, artist
-export function drawCustomBarLeft(track, artist, liked) {
-    const left = document.createElement("div");
+// Custom bar live values read by the once-attached handlers below.
+const customBarLive = { duration: 0, progress: 0, width: 120, uri: null, heartTick: 0 };
+let customBarUpdating = false;
+
+function setTextIfChanged(el, text) {
+    if (el && el.textContent !== text) el.textContent = text;
+}
+
+// Build the bar skeleton once (listeners attached once); per-tick updates
+// only touch textContent. Rebuilt from scratch every 300ms before.
+function ensureCustomBarSkeleton(bar) {
+    let left = bar.querySelector(".spotui-custom-bar-left");
+    if (left) {
+        return {
+            heart: left.querySelector(".spotui-custom-bar-heart"),
+            title: left.querySelector(".spotui-custom-bar-title"),
+            artist: left.querySelector(".spotui-custom-bar-artist"),
+            progressEl: bar.querySelector(".spotui-custom-bar-progress"),
+            timeEl: bar.querySelector(".spotui-custom-bar-time"),
+            volEl: bar.querySelector(".spotui-custom-bar-vol"),
+        };
+    }
+    left = document.createElement("div");
     left.className = "spotui-custom-bar-left";
     const heart = document.createElement("button");
     heart.className = "spotui-custom-bar-heart";
-    heart.textContent = liked ? "X" : "♥";
-    heart.setAttribute("aria-label", liked ? "Unlike track" : "Like track");
+    heart.setAttribute("aria-label", "Like/unlike track");
     heart.addEventListener("click", async () => {
         try { await Spicetify.Player.toggleHeart(); } catch {}
     });
@@ -136,82 +149,100 @@ export function drawCustomBarLeft(track, artist, liked) {
     });
     const title = document.createElement("span");
     title.className = "spotui-custom-bar-title";
-    title.textContent = track;
     const artistSpan = document.createElement("span");
     artistSpan.className = "spotui-custom-bar-artist";
-    artistSpan.textContent = artist;
     left.appendChild(heart);
     left.appendChild(title);
     left.appendChild(artistSpan);
-    return left;
+    const progressEl = document.createElement("button");
+    progressEl.className = "spotui-custom-bar-progress";
+    progressEl.setAttribute("aria-label", "Playback progress");
+    progressEl.addEventListener("click", (e) => {
+        const rect = progressEl.getBoundingClientRect();
+        const offsetX = e.clientX - rect.left;
+        const pct = Math.max(0, Math.min(1, offsetX / rect.width));
+        try { Spicetify.Player.seek(pct * customBarLive.duration); } catch {}
+    });
+    progressEl.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            const step = (e.key === "ArrowLeft" ? -5000 : 5000);
+            const targetMs = Math.max(0, Math.min(customBarLive.duration, customBarLive.progress + step));
+            try { Spicetify.Player.seek(targetMs); } catch {}
+        }
+    });
+    const timeEl = document.createElement("div");
+    timeEl.className = "spotui-custom-bar-time";
+    const volEl = document.createElement("div");
+    volEl.className = "spotui-custom-bar-vol";
+    volEl.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const cur = Spicetify.Player.getVolume();
+        const delta = e.deltaY < 0 ? 0.05 : -0.05;
+        Spicetify.Player.setVolume(Math.max(0, Math.min(1, cur + delta)));
+    }, { passive: false });
+    const right = document.createElement("div");
+    right.className = "spotui-custom-bar-right";
+    right.appendChild(volEl);
+    const center = document.createElement("div");
+    center.className = "spotui-custom-bar-center";
+    center.appendChild(progressEl);
+    center.appendChild(timeEl);
+    bar.innerHTML = "";
+    bar.appendChild(left);
+    bar.appendChild(center);
+    bar.appendChild(right);
+    return { heart, title, artist: artistSpan, progressEl, timeEl, volEl };
 }
 
-// Update custom player bar
+// Update custom player bar (in place: skeleton built once above)
 export async function updateCustomBar() {
+    if (customBarUpdating) return;
+    customBarUpdating = true;
     try {
         const bar = document.getElementById("spotui-custom-bar");
         if (!bar) return;
         const track = Spicetify.Player.data.item;
         if (!track) {
-            bar.innerHTML = "<div class='spotui-custom-bar-empty'>Nothing playing</div>";
+            if (!bar.querySelector(".spotui-custom-bar-empty")) {
+                bar.innerHTML = "<div class='spotui-custom-bar-empty'>Nothing playing</div>";
+            }
             return;
         }
-        const progress = Spicetify.Player.getProgress();
-        const duration = Spicetify.Player.getDuration();
-        const volume = Spicetify.Player.getVolume();
-        const liked = Spicetify.Player.getHeart ? await Spicetify.Player.getHeart() : false;
+        const skel = ensureCustomBarSkeleton(bar);
         const meta = track.metadata || {};
         const title = track.name || meta.title || "Unknown";
         const artist = track.artist || meta.artist_name || "Unknown";
+        const uri = track.uri || `${title} - ${artist}`;
+        const progress = Spicetify.Player.getProgress();
+        const duration = Spicetify.Player.getDuration();
+        const volume = Spicetify.Player.getVolume();
+        customBarLive.duration = duration;
+        customBarLive.progress = progress;
+        // Heart state is IPC: refresh on track change, else every 5th tick
+        // (covers likes made outside the bar).
+        customBarLive.heartTick = (customBarLive.heartTick + 1) % 5;
+        let liked = skel.heart.textContent === "X";
+        if (uri !== customBarLive.uri || customBarLive.heartTick === 0) {
+            customBarLive.uri = uri;
+            try {
+                liked = Spicetify.Player.getHeart ? await Spicetify.Player.getHeart() : false;
+            } catch { liked = false; }
+        }
         const progressPct = duration > 0 ? progress / duration : 0;
         const styleId = storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block";
-        const left = drawCustomBarLeft(title, artist, liked);
-        const progressEl = document.createElement("button");
-        progressEl.className = "spotui-custom-bar-progress";
-        progressEl.setAttribute("aria-label", "Playback progress");
-        const availableWidth = bar.getBoundingClientRect().width - 400;
-        const width = Math.max(40, Math.floor(availableWidth / 16));
-        progressEl.textContent = renderProgressBar(progressPct, styleId, width);
-        progressEl.addEventListener("click", (e) => {
-            const rect = progressEl.getBoundingClientRect();
-            const offsetX = e.clientX - rect.left;
-            const pct = Math.max(0, Math.min(1, offsetX / rect.width));
-            const seekMs = pct * duration;
-            try { Spicetify.Player.seek(seekMs); } catch {}
-        });
-        progressEl.addEventListener("keydown", (e) => {
-            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                e.preventDefault();
-                const step = (e.key === "ArrowLeft" ? -5000 : 5000);
-                const targetMs = Math.max(0, Math.min(duration, progress + step));
-                try { Spicetify.Player.seek(targetMs); } catch {}
-            }
-        });
-        const timeEl = document.createElement("div");
-        timeEl.className = "spotui-custom-bar-time";
-        timeEl.textContent = `${Math.floor(progress / 1000 / 60)}:${String(Math.floor(progress / 1000) % 60).padStart(2, "0")} / ${Math.floor(duration / 1000 / 60)}:${String(Math.floor(duration / 1000) % 60).padStart(2, "0")}`;
-        const volEl = document.createElement("div");
-        volEl.className = "spotui-custom-bar-vol";
-        volEl.textContent = `Vol: ${Math.round(volume * 100)}%`;
-        volEl.addEventListener("wheel", (e) => {
-            e.preventDefault();
-            const cur = Spicetify.Player.getVolume();
-            const delta = e.deltaY < 0 ? 0.05 : -0.05;
-            Spicetify.Player.setVolume(Math.max(0, Math.min(1, cur + delta)));
-        }, { passive: false });
-        const right = document.createElement("div");
-        right.className = "spotui-custom-bar-right";
-        right.appendChild(volEl);
-        const center = document.createElement("div");
-        center.className = "spotui-custom-bar-center";
-        center.appendChild(progressEl);
-        center.appendChild(timeEl);
-        bar.innerHTML = "";
-        bar.appendChild(left);
-        bar.appendChild(center);
-        bar.appendChild(right);
+        setTextIfChanged(skel.title, title);
+        setTextIfChanged(skel.artist, artist);
+        const heartText = liked ? "X" : "♥";
+        setTextIfChanged(skel.heart, heartText);
+        skel.heart.setAttribute("aria-label", liked ? "Unlike track" : "Like track");
+        setTextIfChanged(skel.progressEl, renderProgressBar(progressPct, styleId, customBarLive.width));
+        setTextIfChanged(skel.timeEl, `${Math.floor(progress / 1000 / 60)}:${String(Math.floor(progress / 1000) % 60).padStart(2, "0")} / ${Math.floor(duration / 1000 / 60)}:${String(Math.floor(duration / 1000) % 60).padStart(2, "0")}`);
+        setTextIfChanged(skel.volEl, `Vol: ${Math.round(volume * 100)}%`);
     } catch {
         console.error("SpoTUI: Failed to update custom bar");
+    } finally {
+        customBarUpdating = false;
     }
 }
 
@@ -234,7 +265,8 @@ export function applyCustomBarState() {
             document.body.appendChild(bar);
         }
         updateCustomBar();
-        const interval = setInterval(updateCustomBar, 300);
+        updateCustomBarWidth();
+        const interval = setInterval(updateCustomBar, 1000);
         window.spotuiCustomBarInterval = interval;
         window.addEventListener("resize", updateCustomBarWidth);
     } else {
