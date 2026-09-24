@@ -11,6 +11,9 @@ import { dbg } from "./utils.js";
 const WS_URL = "ws://localhost:8765";
 const HEARTBEAT_MS = 1000;
 const RECONNECT_MS = 3000;
+const RECONNECT_MAX_MS = 30000;
+
+let reconnectDelay = RECONNECT_MS;
 
 let socket = null;
 let reconnectTimer = null;
@@ -48,6 +51,21 @@ function getColors() {
     };
 }
 
+// 9 forced style reads per call — cache for 5s (worst case the relay sees
+// a recolor a few seconds late).
+let colorsCache = null;
+let colorsCacheAt = 0;
+const COLORS_CACHE_MS = 5000;
+
+function getCachedColors() {
+    const now = Date.now();
+    if (!colorsCache || now - colorsCacheAt > COLORS_CACHE_MS) {
+        colorsCache = getColors();
+        colorsCacheAt = now;
+    }
+    return colorsCache;
+}
+
 function isPlayingNow() {
     try {
         if (typeof Spicetify.Player.isPlaying === "function") return Spicetify.Player.isPlaying();
@@ -76,7 +94,7 @@ function getTrackPayload() {
         position_ms: Spicetify.Player.getProgress() || 0,
         is_playing: isPlayingNow(),
         timestamp: Date.now(),
-        colors: getColors(),
+        colors: getCachedColors(),
         lyrics: lyricsCache,
         progress_style: storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block",
         progress_chars: PROGRESS_STYLES[storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block"] || PROGRESS_STYLES["classic-block"],
@@ -175,7 +193,9 @@ function playUri(uri, context) {
 
 function scheduleReconnect() {
     clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(connect, RECONNECT_MS);
+    // Back off while the relay is down: 3s -> 30s cap, reset on open.
+    reconnectTimer = setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
 }
 
 function connect() {
@@ -188,6 +208,7 @@ function connect() {
         return;
     }
     socket.onopen = () => {
+        reconnectDelay = RECONNECT_MS;
         send();
         refreshLyrics();
     };
@@ -248,7 +269,15 @@ export function initSync() {
         refreshLyrics();
     });
     Spicetify.Player.addEventListener("onplaypause", send);
-    Spicetify.Player.addEventListener("onprogress", send);
+    // onprogress fires many times per second; the 1s heartbeat already
+    // covers steady state, so throttle progress sends to 1s.
+    let lastProgressSend = 0;
+    Spicetify.Player.addEventListener("onprogress", () => {
+        const now = Date.now();
+        if (now - lastProgressSend < 1000) return;
+        lastProgressSend = now;
+        send();
+    });
     if (!heartbeatTimer) heartbeatTimer = setInterval(send, HEARTBEAT_MS);
     connect();
 }
