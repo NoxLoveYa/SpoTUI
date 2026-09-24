@@ -17,7 +17,7 @@ const SAVES_KEY = "spotui:theme-saves";
 
 // Cap: every save duplicates the whole poster library + layout, so the blob
 // would otherwise grow without bound (and readSaves re-parses all of it).
-const MAX_SAVES = 20;
+const MAX_SAVES = 100;
 
 // Parsed-blob memo: menus call savedThemeDetails() per keypress, so cache
 // until the next local mutation (save/delete are the only writers).

@@ -51,6 +51,7 @@ export function refreshLogoColors() {
         entry.el.style.color = color;
         if (entry.el.dataset) entry.el.dataset.origColor = color;
     }
+    pokeAsciiPaint();
 }
 
 const asciiDraw = {
@@ -65,6 +66,8 @@ const asciiDraw = {
     dpr: 1,
     raf: 0,
 };
+
+let visibilityHooked = false;
 
 function getAsciiFontSize() {
     const vw = window.innerWidth;
@@ -130,13 +133,43 @@ function paintAsciiCanvas() {
     }
 }
 
-function startAsciiPaintLoop() {
+export function startAsciiPaintLoop() {
     if (asciiDraw.raf) return;
+    if (!animationWanted()) return;
     const tick = () => {
+        // Stop the moment nothing can see the canvas; restart hooks
+        // (visibility, logo toggle, TUI re-show, animation on) bring it back.
+        if (!animationWanted()) { asciiDraw.raf = 0; return; }
         paintAsciiCanvas();
         asciiDraw.raf = requestAnimationFrame(tick);
     };
     asciiDraw.raf = requestAnimationFrame(tick);
+}
+
+// Logo paint is only worth running while visible and enabled.
+function animationWanted() {
+    if (!app.asciiEnabled) return false;
+    try {
+        if (storageGet(ANIMATION_KEY) === "off") return false;
+    } catch (e) {}
+    return logoVisible();
+}
+
+function logoVisible() {
+    try {
+        if (document.hidden) return false;
+        const cls = document.body.classList;
+        if (cls.contains("logo-off")) return false;
+        if (cls.contains("spotui-tui-hidden")) return false;
+    } catch (e) {}
+    return true;
+}
+
+// Single frame for settled states (shade switch, resize, re-show) when the
+// loop is stopped. No-op while the loop runs.
+export function pokeAsciiPaint() {
+    if (asciiDraw.raf) return;
+    try { paintAsciiCanvas(); } catch (e) {}
 }
 
 // Reset ASCII logo animation to original state
@@ -210,7 +243,22 @@ export function initAsciiAnimation() {
     app.asciiCharData = charData;
     layoutAsciiCanvas();
     startAsciiPaintLoop();
+    pokeAsciiPaint();
     window.addEventListener("resize", layoutAsciiCanvas);
+    if (!visibilityHooked) {
+        visibilityHooked = true;
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+                if (asciiDraw.raf) {
+                    cancelAnimationFrame(asciiDraw.raf);
+                    asciiDraw.raf = 0;
+                }
+            } else {
+                startAsciiPaintLoop();
+                pokeAsciiPaint();
+            }
+        });
+    }
     if (document.fonts?.ready) document.fonts.ready.then(layoutAsciiCanvas);
 
     function getRowSpans(rowIdx) {
