@@ -284,8 +284,8 @@ export function handleSearchPanelKeydown(e) {
         return;
     }
     if (e.key === "ArrowUp") {
-        if (app.searchFocus !== "results") return;
         e.preventDefault();
+        if (app.searchFocus !== "results") return;
         if (app.searchSelected <= 0) {
             setSearchFocus("input");
         } else {
@@ -295,8 +295,13 @@ export function handleSearchPanelKeydown(e) {
         scrollSearchSelectedIntoView();
         return;
     }
-    if (e.key === "Enter" && app.searchFocus === "results") {
+    if (e.key === "Enter") {
         e.preventDefault();
+        if (!app.searchResults.length) return;
+        if (app.searchFocus === "input") {
+            // Enter on a fresh query plays the top hit instead of nothing.
+            app.searchSelected = Math.min(Math.max(0, app.searchSelected), app.searchResults.length - 1);
+        }
         playSearchResult(app.searchSelected);
     }
 }
