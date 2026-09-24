@@ -17,8 +17,9 @@ const style = `#spotui-tui {
 }
 
 /* Keep TUI content above the wallpaper layer (replaces a per-swap DOM crawl
-   that also missed late-created nodes). */
-#spotui-tui > :not(#spotui-wallpaper) {
+   that also missed late-created nodes). The absolute overlays are excluded:
+   like the old crawl's static-only check, this must not relativize them. */
+#spotui-tui > :not(#spotui-wallpaper):not(#spotui-logo):not(#spotui-top-fade) {
     position: relative;
     z-index: 1;
 }
