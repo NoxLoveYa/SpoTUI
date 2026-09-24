@@ -19,7 +19,7 @@ function hexToRgb01(hex) {
     return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255);
 }
 
-function hexToRgb(hex) {
+export function parseHexToRgb255(hex) {
     return hexToRgb01(hex).map((v) => Math.round(v * 255));
 }
 
@@ -133,7 +133,7 @@ export function applyShade() {
         return true;
     }
     // Exact accent: hue, saturation, and lightness all come from the hex.
-    const [r, g, b] = hexToRgb(target);
+    const [r, g, b] = parseHexToRgb255(target);
     st.textContent = `
 body.spotui-spotify-enabled, body {
     --spotui-accent: ${target} !important;

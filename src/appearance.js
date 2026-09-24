@@ -1,7 +1,7 @@
-import { ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, HEX_COLOR_REGEX, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { startAsciiPaintLoop } from "./ascii.js";
 import { resetPosterPrefs, setPostersEnabled } from "./posters.js";
-import { applyShade } from "./shade.js";
+import { applyShade, isValidShade, parseHexToRgb255 } from "./shade.js";
 import { handleLyricsCommand, syncLyricsState } from "./lyrics.js";
 import { enterStandby } from "./standby.js";
 import { app } from "./state.js";
@@ -15,11 +15,6 @@ export function applyCssVar(key, cssVar) {
     else root.style.removeProperty(cssVar);
 }
 
-// Validate hex color format
-export function isValidHexColor(value) {
-    return typeof value === "string" && HEX_COLOR_REGEX.test(value);
-}
-
 // Parse color flag arguments and save valid hex colors to storage
 export function handleColorArgs(args, flagToKey) {
     const argsLower = args.map((a) => a.toLowerCase());
@@ -31,7 +26,7 @@ export function handleColorArgs(args, flagToKey) {
         const idx = argsLower.indexOf(flag);
         if (idx === -1) return;
         const value = args[idx + 1];
-        if (isValidHexColor(value)) storageSet(flagToKey[flag], value);
+        if (isValidShade(value)) storageSet(flagToKey[flag], value);
     });
 }
 // Apply stored lyric color preferences from localStorage
@@ -54,7 +49,7 @@ export function applyPlayerBarColors() {
         if (border) {
             root.style.setProperty("--player-bar-border-color", border);
             root.style.setProperty("--spotui-accent", border);
-            const rgb = border.replace("#", "").match(/.{1,2}/g)?.map((part) => parseInt(part, 16)).join(", ");
+            const rgb = parseHexToRgb255(border).join(", ");
             if (rgb) root.style.setProperty("--spotui-accent-rgb", rgb);
         } else {
             root.style.removeProperty("--player-bar-border-color");
@@ -303,19 +298,12 @@ export function applyInputColors() {
     }
 }
 
-// Darken hex color by multiplying RGB values
+// Darken hex color by multiplying RGB values (alpha preserved)
 export function darkenHexColor(hex, factor) {
-    const clean = hex.replace("#", "");
-    const expand = clean.length === 3 || clean.length === 4
-        ? clean.split("").map((c) => c + c).join("")
-        : clean;
-    const r = parseInt(expand.slice(0, 2), 16);
-    const g = parseInt(expand.slice(2, 4), 16);
-    const b = parseInt(expand.slice(4, 6), 16);
-    const alpha = expand.length === 8 ? expand.slice(6, 8) : "";
-    const nr = Math.max(0, Math.round(r * factor));
-    const ng = Math.max(0, Math.round(g * factor));
-    const nb = Math.max(0, Math.round(b * factor));
+    const m = String(hex || "").replace("#", "");
+    const alpha = m.length === 4 ? m[3] + m[3] : (m.length === 8 ? m.slice(6, 8) : "");
+    const [r, g, b] = parseHexToRgb255(hex);
+    const [nr, ng, nb] = [r, g, b].map((v) => Math.max(0, Math.round(v * factor)));
     return `#${[nr, ng, nb].map((v) => v.toString(16).padStart(2, "0")).join("")}${alpha}`;
 }
 
@@ -327,7 +315,7 @@ export function applyPanelColors() {
         applyCssVar(PANEL_TEXT, "--panel-text-color");
         const root = document.documentElement;
         const text = storageGet(PANEL_TEXT);
-        if (text && isValidHexColor(text)) {
+        if (text && isValidShade(text)) {
             root.style.setProperty("--panel-text-hover-color", darkenHexColor(text, 0.7));
         } else {
             root.style.removeProperty("--panel-text-hover-color");
