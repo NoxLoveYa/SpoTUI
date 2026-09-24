@@ -16,6 +16,10 @@ const POSTERS_THEME = "spotui:posters-theme";
 const POSTERS_OPACITY = "spotui:posters-opacity";
 const POSTERS_AUTOSHUFFLE = "spotui:posters-autoshuffle";
 const POSTERS_SYMMETRIC = "spotui:posters-symmetric";
+// Exact wall arrangement captured on every render: [{u:url, b:board,
+// slot:{x,y,w,r}, mult}]. Snapshots pick it up automatically (spotui:*),
+// so theme apply re-pins each poster to its saved slot — no seed re-roll.
+export const POSTERS_LAYOUT = "spotui:posters-layout";
 const PIN_TOKEN = "spotui:pin-token";
 
 const MAX_STORED = 40;
@@ -159,13 +163,11 @@ export function renderPosters() {
     const box = ensureContainer();
     if (!box) return;
     box.innerHTML = "";
-    const opRaw = parseFloat(storageGet(POSTERS_OPACITY) || "1");
-    box.style.opacity = String(Math.max(0, Math.min(1, isNaN(opRaw) ? 1 : opRaw)));
-    box.style.filter = shadeCounterFilter();
-    const frame = posterFrameColor();
-    if (!isPostersEnabled()) return;
+    const frame = prepBox(box);
+    if (!isPostersEnabled()) { storageRemove(POSTERS_LAYOUT); return; }
     const imgs = getPosterImages();
     if (!imgs.length) {
+        storageRemove(POSTERS_LAYOUT);
         dbg("[SpoTUI-pin] posters on but no images yet. Add: tui -posters add <url> or tui -pin-board <board-url>");
         return;
     }
@@ -174,21 +176,79 @@ export function renderPosters() {
     const [cLo, cHi] = parseCountRange();
     const count = Math.min(cLo + Math.floor(rnd() * (cHi - cLo + 1)), SLOTS.length, imgs.length);
     const [dLo, dHi] = parseDensity();
+    const placed = [];
     let shown = count;
     if (storageGet(POSTERS_SYMMETRIC) === "1") {
-        shown = renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs);
+        shown = renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs, placed);
     } else {
         const slotIdx = shuffleSeeded(SLOTS.map((_, i) => i), rnd);
         const imgIdx = shuffleSeeded(imgs.map((_, i) => i), rnd);
         for (let k = 0; k < count; k++) {
             const mult = (dLo + rnd() * (dHi - dLo)) / 5;
-            placePoster(box, frame, SLOTS[slotIdx[k]], mult, imgs[imgIdx[k]].u);
+            placePoster(box, frame, SLOTS[slotIdx[k]], mult, imgs[imgIdx[k]], placed);
         }
     }
+    savePosterLayout(placed);
     dbg(`[SpoTUI-pin] rendered ${shown} poster(s) from ${imgs.length} saved.`);
 }
 
-function placePoster(box, frame, slot, mult, imgUrl) {
+// Shared box setup (opacity + shade filter); returns the frame color.
+function prepBox(box) {
+    const opRaw = parseFloat(storageGet(POSTERS_OPACITY) || "1");
+    box.style.opacity = String(Math.max(0, Math.min(1, isNaN(opRaw) ? 1 : opRaw)));
+    box.style.filter = shadeCounterFilter();
+    return posterFrameColor();
+}
+
+function validLayoutEntry(e) {
+    if (!e || typeof e.u !== "string" || !e.u.length) return false;
+    if (!e.slot) return false;
+    if (![e.slot.x, e.slot.y, e.slot.w, e.slot.r].every((n) => typeof n === "number" && isFinite(n))) return false;
+    if (e.mult !== undefined && (typeof e.mult !== "number" || !isFinite(e.mult))) return false;
+    return true;
+}
+
+function savePosterLayout(placed) {
+    try {
+        const clean = (placed || []).filter(validLayoutEntry).slice(0, SLOTS.length);
+        if (!clean.length) { storageRemove(POSTERS_LAYOUT); return; }
+        storageSet(POSTERS_LAYOUT, JSON.stringify(clean));
+    } catch (e) {}
+}
+
+export function readPosterLayout() {
+    try {
+        const raw = storageGet(POSTERS_LAYOUT);
+        const arr = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(arr)) return [];
+        return arr.filter(validLayoutEntry);
+    } catch (e) { return []; }
+}
+
+// Re-pin each poster to its saved slot (theme apply / wall re-enable).
+// Entries whose url left the library are skipped. Returns false when
+// there is nothing exact to restore so callers fall back to a seed roll.
+export function renderSavedLayout() {
+    const box = ensureContainer();
+    if (!box) return false;
+    if (!isPostersEnabled()) return false;
+    const layout = readPosterLayout();
+    if (!layout.length) return false;
+    const known = new Set(getPosterImages().map((e) => e.u));
+    const valid = layout.filter((e) => known.has(e.u)).slice(0, SLOTS.length);
+    if (!valid.length) return false;
+    box.innerHTML = "";
+    const frame = prepBox(box);
+    const placed = [];
+    for (const e of valid) {
+        placePoster(box, frame, e.slot, typeof e.mult === "number" ? e.mult : 1, { u: e.u, b: e.b }, placed);
+    }
+    savePosterLayout(placed);
+    dbg(`[SpoTUI-pin] restored ${placed.length} poster(s) to saved slots.`);
+    return true;
+}
+
+function placePoster(box, frame, slot, mult, entry, record) {
     const fig = document.createElement("figure");
     fig.style.margin = "0";
     fig.style.position = "absolute";
@@ -201,11 +261,12 @@ function placePoster(box, frame, slot, mult, imgUrl) {
     fig.style.background = frame;
     fig.style.padding = "6px 6px 20px 6px";
     fig.style.boxShadow = "0 6px 18px rgba(0,0,0,.55)";
-    fig.appendChild(posterImg(imgUrl, fig));
+    fig.appendChild(posterImg(entry.u, fig));
     box.appendChild(fig);
+    if (record) record.push({ u: entry.u, b: entry.b || "?", slot: { x: slot.x, y: slot.y, w: slot.w, r: slot.r }, mult });
 }
 
-function renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs) {
+function renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs, record) {
     const order = shuffleSeeded(SLOT_PAIRS.map((_, i) => i), rnd);
     const picks = shuffleSeeded(imgs.map((_, i) => i), rnd);
     let shown = 0, ip = 0;
@@ -214,7 +275,7 @@ function renderPostersSymmetric(box, frame, count, dLo, dHi, rnd, imgs) {
         const mult = (dLo + rnd() * (dHi - dLo)) / 5;
         for (const s of SLOT_PAIRS[pi]) {
             if (shown >= count || ip >= picks.length) break;
-            placePoster(box, frame, s, mult, imgs[picks[ip++]].u);
+            placePoster(box, frame, s, mult, imgs[picks[ip++]], record);
             shown++;
         }
     }
@@ -239,7 +300,7 @@ function posterImg(src, fig) {
 export function setPostersEnabled(on) {
     if (on) {
         storageSet(POSTERS_ON, "1");
-        renderPosters();
+        if (!renderSavedLayout()) renderPosters();
         startRotateTimer();
         dbg("[SpoTUI-pin] posters ON. Shuffle: tui -posters shuffle");
     } else {

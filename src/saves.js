@@ -1,7 +1,7 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, toggleLogo } from "./appearance.js";
 import { resetGrid } from "./ascii.js";
 import { ANIMATION_KEY, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
-import { POSTERS_IMGS, renderPosters, startRotateTimer } from "./posters.js";
+import { POSTERS_IMGS, POSTERS_LAYOUT, renderPosters, renderSavedLayout, startRotateTimer } from "./posters.js";
 import { applyShade, isValidShade } from "./shade.js";
 import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
@@ -53,7 +53,7 @@ function describeSnapshot(settings) {
         }
     } catch (e) {}
     const names = Object.keys(boards);
-    parts.push(`${posters} posters${names.length ? ` (${names.map((b) => `${b}:${boards[b]}`).join(", ")})` : ""}`);
+    parts.push(`${posters} poster${posters === 1 ? "" : "s"}${names.length ? ` (${names.map((b) => `${b}:${boards[b]}`).join(", ")})` : ""}${settings[POSTERS_LAYOUT] ? " +layout" : ""}`);
     parts.push(settings[SHADE_KEY] && isValidShade(settings[SHADE_KEY])
         ? `shade ${settings[SHADE_KEY]}`
         : (settings[SHADE_KEY] ? `shade ${settings[SHADE_KEY]} invalid, ignored` : "orange"));
@@ -90,7 +90,13 @@ function refreshLook() {
         const wp = document.getElementById("spotui-wallpaper");
         if (wp) wp.remove();
     }
-    renderPosters();
+    restoreWall();
+}
+
+// Theme apply restores the snapshot's exact wall: each poster back to its
+// saved slot. Falls back to a seed roll when the snapshot has no layout.
+function restoreWall() {
+    if (!renderSavedLayout()) renderPosters();
     startRotateTimer();
 }
 
