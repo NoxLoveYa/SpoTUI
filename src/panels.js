@@ -307,6 +307,15 @@ export async function handleBoardsKeydown(e) {
         closeBoardsPanel();
         return;
     }
+    if (e.key === "a" || e.key === "A") {
+        // Before the empty check: A is exactly how an empty library gains
+        // its first board. preventDefault first so focusing the input below
+        // must not let this same keystroke type itself into the composer
+        // after the prefill.
+        e.preventDefault();
+        prefillCommand("tui -pin-board ", "boards", "tui -pin-board ");
+        return;
+    }
     if (!rows.length) { closeBoardsPanel(); return; }
     // The library can shrink under an open menu (keybind delete, re-pull):
     // clamp before any rows[selectedBoard] dereference.
@@ -326,11 +335,6 @@ export async function handleBoardsKeydown(e) {
         clearBoard(b);
         if (!boardRows().length) closeBoardsPanel();
         else renderBoardsPanel();
-    } else if (e.key === "a" || e.key === "A") {
-        // preventDefault first: focusing the input below must not let this
-        // same keystroke type itself into the composer after the prefill.
-        e.preventDefault();
-        prefillCommand("tui -pin-board ", "boards", "tui -pin-board ");
     }
 }
 
@@ -367,6 +371,13 @@ export async function handleSavesKeydown(e) {
         closeSavesPanel();
         return;
     }
+    if (e.key === "s" || e.key === "S") {
+        // Before the empty check: S is exactly how an empty library gains
+        // its first snapshot. Swallow like the boards menu does for A.
+        e.preventDefault();
+        prefillCommand("tui -t save ", "saves", "tui -t save ");
+        return;
+    }
     if (!items.length) { closeSavesPanel(); return; }
     // Same staleness guard as the boards menu (see above).
     if (app.selectedSave < 0 || app.selectedSave >= items.length) app.selectedSave = 0;
@@ -386,9 +397,5 @@ export async function handleSavesKeydown(e) {
         const name = items[app.selectedSave].name;
         const quoted = name.includes(" ") ? `"${name}"` : name;
         prefillCommand(`tui -t delete ${quoted}`, "saves", "tui -t delete ");
-    } else if (e.key === "s" || e.key === "S") {
-        // Same as above: prefill focuses the bar, so swallow the keystroke.
-        e.preventDefault();
-        prefillCommand("tui -t save ", "saves", "tui -t save ");
     }
 }
