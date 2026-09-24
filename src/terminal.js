@@ -1,6 +1,6 @@
 import { initAsciiAnimation } from "./ascii.js";
 import { execute, isKnownCommand } from "./commands.js";
-import { loadHistory, pushHistory, searchHistory } from "./history.js";
+import { ensureHistoryLoaded, loadHistory, pushHistory, searchHistory } from "./history.js";
 import { initSearchPanel } from "./search.js";
 import { app, isInputBlockingPanelOpen } from "./state.js";
 
@@ -37,7 +37,7 @@ export function renderHistorySearch(input) {
 
 export function enterHistorySearch(input) {
     // Lazy load: whatever the boot path left behind, search sees storage.
-    if (!app.commandHistory.length) app.commandHistory = loadHistory();
+    ensureHistoryLoaded();
     app.historySearch = {
         query: "",
         matches: searchHistory(""),
@@ -202,7 +202,7 @@ export function createTerminal() {
         if (e.key === "ArrowUp" || e.key === "ArrowDown") {
             // Same lazy load as the reverse search: arrows browse storage
             // even if the session list started empty.
-            if (!app.commandHistory.length) app.commandHistory = loadHistory();
+            ensureHistoryLoaded();
             if (!app.commandHistory.length) return;
             e.preventDefault();
             if (e.key === "ArrowUp") {

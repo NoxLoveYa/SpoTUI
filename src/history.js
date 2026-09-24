@@ -32,6 +32,12 @@ export function loadHistory() {
     } catch (e) { return []; }
 }
 
+// Lazy load for arrows / reverse search: browse storage even if the
+// session list started empty (missed boot load, restore, wipe).
+export function ensureHistoryLoaded() {
+    if (!app.commandHistory.length) app.commandHistory = loadHistory();
+}
+
 // Session list (arrows + Ctrl+R source) always takes the command; the
 // persisted list only takes valid ones — typos stay memory-only.
 // opts.persist === false records session-only.
