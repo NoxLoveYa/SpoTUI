@@ -302,6 +302,9 @@ export async function handleBoardsKeydown(e) {
         return;
     }
     if (!rows.length) { closeBoardsPanel(); return; }
+    // The library can shrink under an open menu (keybind delete, re-pull):
+    // clamp before any rows[selectedBoard] dereference.
+    if (app.selectedBoard < 0 || app.selectedBoard >= rows.length) app.selectedBoard = 0;
     if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         e.preventDefault();
         app.selectedBoard = (app.selectedBoard + (e.key === "ArrowUp" ? -1 : 1) + rows.length) % rows.length;
@@ -359,6 +362,8 @@ export async function handleSavesKeydown(e) {
         return;
     }
     if (!items.length) { closeSavesPanel(); return; }
+    // Same staleness guard as the boards menu (see above).
+    if (app.selectedSave < 0 || app.selectedSave >= items.length) app.selectedSave = 0;
     if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         e.preventDefault();
         app.selectedSave = (app.selectedSave + (e.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
