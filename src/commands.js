@@ -511,7 +511,10 @@ async function executeInner(cmd, opts = {}) {
         try {
             if (!argText) return;
             const parts = argText.split(':').map(Number);
-            if (parts.length !== 2 || parts.some(isNaN)) return;
+            if (parts.length !== 2 || parts.some(isNaN)) {
+                jamSay("Usage: seek <mm:ss>  (e.g. seek 1:23)");
+                return;
+            }
             Spicetify.Player.seek((parts[0] * 60 + parts[1]) * 1000);
         } catch {}
         return;
@@ -520,8 +523,12 @@ async function executeInner(cmd, opts = {}) {
     if (command === "volume" || command === "v") {
         try {
             if (!argText) return;
-            const percent = Number(argText);
-            if (!Number.isFinite(percent) || percent < 0 || percent > 100) return;
+            const cleaned = argText.endsWith("%") ? argText.slice(0, -1) : argText;
+            const percent = Number(cleaned);
+            if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+                jamSay("Usage: volume <0-100>  (e.g. volume 50)");
+                return;
+            }
             Spicetify.Player.setVolume(percent / 100);
         } catch {}
         return;
@@ -569,7 +576,10 @@ export function handleRepeatCommand(kind, arg) {
         if (normalizedArg === "on") nextMode = targetMode;
         else if (normalizedArg === "off") nextMode = 0;
         else if (normalizedArg === "") nextMode = current === targetMode ? 0 : targetMode;
-        else return;
+        else {
+            jamSay(`Usage: ${kind} [on|off]`);
+            return;
+        }
 
         Spicetify.Player.setRepeat(nextMode);
     } catch (err) {}
