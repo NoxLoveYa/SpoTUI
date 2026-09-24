@@ -292,6 +292,8 @@ async function executeInner(cmd, opts = {}) {
                     pinToast("keybind not saved: storage full");
                     console.error("[SpoTUI] keybind save failed: storage full");
                 }
+            } else {
+                jamSay('Usage: tui bind "<Letter>" "<command>"');
             }
             return;
         }
@@ -305,11 +307,13 @@ async function executeInner(cmd, opts = {}) {
                     pinToast("unbind not saved: storage full");
                     console.error("[SpoTUI] unbind save failed: storage full");
                 }
-            } else if (argsLower[1] === "all") {
+            } else if (argsLower[1] === "all" && args.length === 2) {
                 if (!saveKeybinds({})) {
                     pinToast("binds not cleared: storage full");
                     console.error("[SpoTUI] bind clear failed: storage full");
                 }
+            } else {
+                jamSay('Usage: tui unbind "<Letter>" | tui unbind all');
             }
             return;
         }
