@@ -36,6 +36,8 @@ export function renderHistorySearch(input) {
 }
 
 export function enterHistorySearch(input) {
+    // Lazy load: whatever the boot path left behind, search sees storage.
+    if (!app.commandHistory.length) app.commandHistory = loadHistory();
     app.historySearch = {
         query: "",
         matches: searchHistory(""),
@@ -198,6 +200,9 @@ export function createTerminal() {
             return;
         }
         if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            // Same lazy load as the reverse search: arrows browse storage
+            // even if the session list started empty.
+            if (!app.commandHistory.length) app.commandHistory = loadHistory();
             if (!app.commandHistory.length) return;
             e.preventDefault();
             if (e.key === "ArrowUp") {
