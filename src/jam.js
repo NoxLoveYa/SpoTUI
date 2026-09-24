@@ -230,7 +230,7 @@ export function resumeJamFromStorage() {
         app.jamRole = saved.role;
         app.jamPin = saved.pin;
         app.jamToken = saved.token;
-        app.jamBarPrevHidden = typeof saved.barPrevHiddesn === "boolean" ? saved.barPrevHidden : null;
+        app.jamBarPrevHidden = typeof saved.barPrevHidden === "boolean" ? saved.barPrevHidden : null;
         showJamTags(app.jamPin, app.jamRole);
         if (app.jamRole === "guest") {
             document.body.classList.add("spotui-bar-off");
