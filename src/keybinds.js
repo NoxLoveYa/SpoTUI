@@ -1,6 +1,6 @@
 import { execute } from "./commands.js";
 import { BIND_CMD_REGEX, F_KEY_REGEX, KEYBIND_STORAGE_KEY, THEME_SKIP_CMD_REGEX } from "./constants.js";
-import { app } from "./state.js";
+import { app, isInputBlockingPanelOpen } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
 
 // Retrieve stored keyboard shortcuts
@@ -106,6 +106,16 @@ export function handleKeybindKeydown(e) {
     const cmd = binds[combo];
     if (!cmd) return;
 
+    const hasModifier = e.ctrlKey || e.altKey || e.metaKey;
+    // An open interactive menu (saves/boards/playlists/search/...) owns
+    // bare keys: this handler runs in the capture phase, so without this
+    // a bare-key bind (e.g. Del -> "tui -t list") would stopPropagation the
+    // event and toggle the menu shut before its own bubble-phase handler
+    // ever sees Enter/Del/arrows. Modifier combos stay global.
+    // (Shift alone is not treated as a modifier here: Shift+Del still reads
+    // as a bare Delete to the open menu.)
+    if (!hasModifier && isInputBlockingPanelOpen()) return;
+
     const activeEl = document.activeElement;
     const isTypingField = activeEl && (
         activeEl.id === "spotui-input" ||
@@ -113,7 +123,6 @@ export function handleKeybindKeydown(e) {
         activeEl.tagName === "TEXTAREA" ||
         (activeEl.tagName === "INPUT" && activeEl.type !== "button")
     );
-    const hasModifier = e.ctrlKey || e.altKey || e.metaKey;
     if (isTypingField && !hasModifier) return;
 
     e.preventDefault();
