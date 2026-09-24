@@ -371,15 +371,14 @@ export function syncLyricsHighlight(force = false) {
     loaders.forEach((loader, loaderIdx) => {
         const gapStart = Number(loader.dataset.gapStart);
         const gapEnd = Number(loader.dataset.gapEnd);
-        const isInGap = progress > gapStart && progress < gapEnd;
-        if (isInGap && animationEnabled) {
-            loader.style.display = "block";
-            loader.classList.add("active");
-            activeLoaderIndex = loaderIdx;
-        } else {
-            loader.style.display = "none";
-            loader.classList.remove("active");
+        const show = progress > gapStart && progress < gapEnd && animationEnabled;
+        if (loader.style.display !== (show ? "block" : "none")) {
+            loader.style.display = show ? "block" : "none";
         }
+        if (loader.classList.contains("active") !== show) {
+            loader.classList.toggle("active", show);
+        }
+        if (show) activeLoaderIndex = loaderIdx;
     });
 
     const useLoader = activeLoaderIndex !== -1 && animationEnabled;
@@ -387,31 +386,45 @@ export function syncLyricsHighlight(force = false) {
     if (!force && next === app.lyricsActiveIndex && !useLoader && !loaderStateChanged) return;
 
     const rows = app.cachedLyricsRows;
-    const allElements = Array.from(els.lines.children);
+    const prevIndex = app.lyricsActiveIndex;
 
     if (useLoader) {
         const activeLoader = loaders[activeLoaderIndex];
-        const loaderPosition = allElements.indexOf(activeLoader);
-
-        rows.forEach((row) => {
-            const rowPosition = allElements.indexOf(row);
-            const distance = Math.abs(rowPosition - loaderPosition);
-            row.classList.remove("active");
-            row.classList.toggle("near", distance === 1);
-        });
+        // Single DOM-order pass; rows only pay for real changes.
+        const allElements = Array.from(els.lines.children);
+        const pos = new Map();
+        let p = 0;
+        for (const child of allElements) pos.set(child, p++);
+        const loaderPosition = pos.get(activeLoader);
+        for (const row of rows) {
+            const distance = Math.abs((pos.get(row) ?? -99) - loaderPosition);
+            if (row.classList.contains("active")) row.classList.remove("active");
+            const near = distance === 1;
+            if (row.classList.contains("near") !== near) row.classList.toggle("near", near);
+        }
     } else {
-        rows.forEach((row, idx) => {
-            const distance = next < 0 ? 99 : Math.abs(idx - next);
-            row.classList.toggle("active", idx === next);
-            row.classList.toggle("near", distance === 1);
-        });
+        // Common path: only the old and new neighborhoods can change.
+        const prev = prevIndex;
+        for (const i of [prev - 1, prev, prev + 1, next - 1, next, next + 1]) {
+            const row = rows[i];
+            if (!row) continue;
+            if (row.classList.contains("active") !== (i === next)) {
+                row.classList.toggle("active", i === next);
+            }
+            const near = i === next - 1 || i === next + 1;
+            if (row.classList.contains("near") !== near) {
+                row.classList.toggle("near", near);
+            }
+        }
     }
 
     app.lyricsActiveIndex = useLoader ? -1 : next;
     app.lyricsActiveLoaderIndex = useLoader ? activeLoaderIndex : -1;
 
     if (!useLoader && next >= 0) {
-        rows[next]?.scrollIntoView({ block: "center", behavior: force ? "auto" : "smooth" });
+        // Step-by-step scrolls smooth; jumps (seek/track change) snap.
+        const jumped = force || prevIndex < 0 || Math.abs(next - prevIndex) > 3;
+        rows[next]?.scrollIntoView({ block: "center", behavior: jumped ? "auto" : "smooth" });
     } else if (useLoader && (loaderStateChanged || force)) {
         loaders[activeLoaderIndex]?.scrollIntoView({ block: "center", behavior: force ? "auto" : "smooth" });
     }
