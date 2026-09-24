@@ -1,6 +1,6 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, toggleLogo } from "./appearance.js";
 import { resetGrid } from "./ascii.js";
-import { ANIMATION_KEY, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ANIMATION_KEY, HISTORY_KEY, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { POSTERS_IMGS, POSTERS_LAYOUT, renderPosters, renderSavedLayout, startRotateTimer } from "./posters.js";
 import { applyShade, isValidShade } from "./shade.js";
 import { app } from "./state.js";
@@ -9,7 +9,8 @@ import { dbg, pinToast } from "./utils.js";
 import { setWallpaper } from "./wallpaper.js";
 
 // Local theme snapshots: everything a Spotify restart preserves, saved
-// under one name. storage.js has no key enumeration, so this module touches
+// under one name — except the command history, which is personal, not a
+// look. storage.js has no key enumeration, so this module touches
 // localStorage directly (guarded) for the snapshot/restore loops only.
 const SAVES_KEY = "spotui:theme-saves";
 
@@ -26,7 +27,7 @@ function snapshotSettings() {
     try {
         for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
-            if (k && k.startsWith("spotui:") && k !== SAVES_KEY) out[k] = localStorage.getItem(k);
+            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && k !== HISTORY_KEY) out[k] = localStorage.getItem(k);
         }
     } catch (e) {}
     return out;
@@ -164,7 +165,7 @@ export function applyTheme(name) {
         for (const [k, v] of Object.entries(snap.settings)) localStorage.setItem(k, v);
         for (let i = localStorage.length - 1; i >= 0; i--) {
             const k = localStorage.key(i);
-            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !keep.has(k)) localStorage.removeItem(k);
+            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && k !== HISTORY_KEY && !keep.has(k)) localStorage.removeItem(k);
         }
     } catch (e) {
         console.error("[SpoTUI] theme apply failed:", e.message);

@@ -1,5 +1,6 @@
 import { initAsciiAnimation } from "./ascii.js";
 import { execute } from "./commands.js";
+import { loadHistory, pushHistory, searchHistory } from "./history.js";
 import { initSearchPanel } from "./search.js";
 import { app, isInputBlockingPanelOpen } from "./state.js";
 
@@ -7,6 +8,66 @@ export function setTuiMode(mode) {
     app.tuiMode = mode === "cli" ? "cli" : "command";
     document.body.classList.toggle("spotui-cli-mode", app.tuiMode === "cli");
     document.body.classList.toggle("spotui-command-mode", app.tuiMode !== "cli");
+}
+// Inline unix-style reverse search over persisted command history.
+// While active the prompt shows `(reverse-i-search)`query': ` and the bar
+// shows the current match: typing filters, Ctrl+R cycles older matches,
+// Enter accepts into the bar (no execute), Esc/Ctrl+C aborts, arrows leave
+// search mode and fall back to normal history browsing.
+function searchPromptEl(input) {
+    try {
+        return (input.parentElement && input.parentElement.querySelector(".prompt")) || null;
+    } catch (e) { return null; }
+}
+
+export function isHistorySearching() {
+    return !!app.historySearch;
+}
+
+export function renderHistorySearch(input) {
+    const s = app.historySearch;
+    if (!s) return;
+    const prompt = searchPromptEl(input);
+    if (prompt) {
+        if (s.savedPrompt === undefined) s.savedPrompt = prompt.textContent;
+        prompt.textContent = `(reverse-i-search)\`${s.query}': `;
+    }
+    input.value = s.matches.length ? (s.matches[s.matchIdx] || "") : "";
+}
+
+export function enterHistorySearch(input) {
+    app.historySearch = {
+        query: "",
+        matches: searchHistory(""),
+        matchIdx: 0,
+        savedBar: input.value,
+        savedPrompt: undefined,
+    };
+    renderHistorySearch(input);
+}
+
+export function exitHistorySearch(input, restoreBar) {
+    const s = app.historySearch;
+    app.historySearch = null;
+    const prompt = searchPromptEl(input);
+    if (prompt && s && s.savedPrompt !== undefined) prompt.textContent = s.savedPrompt;
+    if (restoreBar && s) input.value = s.savedBar;
+}
+
+function updateHistorySearch(input, query) {
+    const s = app.historySearch;
+    if (!s) return;
+    s.query = query;
+    s.matches = searchHistory(query);
+    s.matchIdx = 0;
+    renderHistorySearch(input);
+}
+
+function cycleHistorySearch(input) {
+    const s = app.historySearch;
+    if (!s || !s.matches.length) return;
+    s.matchIdx = (s.matchIdx + 1) % s.matches.length;
+    renderHistorySearch(input);
 }
 // Create main terminal interface
 export function createTerminal() {
@@ -57,6 +118,10 @@ export function createTerminal() {
 
     const input = document.getElementById("spotui-input");
 
+    // Command history survives restarts (localStorage, capped + deduped).
+    app.commandHistory = loadHistory();
+    app.commandHistoryIndex = -1;
+
     // Focus the command input when user starts typing.
     // Read-only panels (help/about) don't steal the bar; panels with their
     // own inputs or key handling (playlist/search/theme/...) keep it.
@@ -72,8 +137,44 @@ export function createTerminal() {
 
     input.addEventListener("keydown", async (e) => {
         if (isInputBlockingPanelOpen()) {
+            // Never trap the bar inside a search that a fresh panel orphaned.
+            if (app.historySearch) exitHistorySearch(input, true);
             e.stopImmediatePropagation();
             return;
+        }
+        const isCtrlR = (e.key === "r" || e.key === "R") && e.ctrlKey && !e.altKey && !e.metaKey;
+        if (isCtrlR) {
+            // Unix reverse search: first press enters, repeats cycle older.
+            e.preventDefault();
+            if (!app.historySearch) enterHistorySearch(input);
+            else cycleHistorySearch(input);
+            return;
+        }
+        if (app.historySearch) {
+            if (e.key === "Enter") {
+                // Accept the shown match into the bar; a second Enter runs it.
+                e.preventDefault();
+                exitHistorySearch(input, false);
+                return;
+            }
+            if (e.key === "Escape" || ((e.key === "c" || e.key === "C") && e.ctrlKey && !e.altKey && !e.metaKey)) {
+                e.preventDefault();
+                exitHistorySearch(input, true);
+                app.commandHistoryIndex = -1;
+                return;
+            }
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                // Leave search mode, then browse normal history below.
+                exitHistorySearch(input, true);
+            } else if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault();
+                updateHistorySearch(input, app.historySearch.query.slice(0, -1));
+                return;
+            } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault();
+                updateHistorySearch(input, app.historySearch.query + e.key);
+                return;
+            }
         }
         if ((e.key === "c" || e.key === "C") && e.ctrlKey && !e.altKey && !e.metaKey) {
             // Clear the compose box. A text selection is left alone so
@@ -87,9 +188,7 @@ export function createTerminal() {
         }
         if (e.key === "Enter") {
             const cmd = input.value.trim();
-            if (cmd) {
-                app.commandHistory = [cmd, ...app.commandHistory.filter((entry) => entry !== cmd)].slice(0, 50);
-            }
+            if (cmd) pushHistory(cmd);
             app.commandHistoryIndex = -1;
             input.value = "";
             print("> " + cmd);

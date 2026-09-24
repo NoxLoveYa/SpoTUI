@@ -48,6 +48,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui bind "<Letter>" "<command>"` | Binds Alt+`<Letter>` to run a TUI command |
 | `tui unbind "<Letter>"` | Remove the Alt+<Letter> keybind |
 | `tui bind clear` | Remove all keybinds |
+| `Ctrl+R` | Reverse-search persistent command history (typing filters, `Ctrl+R` cycles older matches, `Enter` fills the bar, `Esc` aborts) |
 | `tui actions create <name>` | Create a named action |
 | `tui actions "<name>" "<listener>" "<command>"` | Bind an action to a listener |
 | `tui actions list` | List saved actions |

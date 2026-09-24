@@ -13,6 +13,7 @@ export const app = {
     djPrevPane: null,
     commandHistory: [],
     commandHistoryIndex: -1,
+    historySearch: null,
     playlistPanelOpen: false,
     playlists: [],
     playlistSongs: [],
