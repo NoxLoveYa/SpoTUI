@@ -314,8 +314,12 @@ export function applyInputButtonsVisibility() {
         console.error("SpoTUI: Failed to apply input buttons visibility", e);
     }
 }
-// Create control buttons - Lyrics, Enable Spotify, Back
+// Create control buttons - Lyrics, Enable Spotify, Back (idempotent: same
+// double-boot path as createTerminal must not duplicate ids/listeners).
 export function createControlButtons() {
+    try {
+        if (document.getElementById("spotui-controls")) return;
+    } catch (e) {}
     const controls = document.createElement("div");
     controls.id = "spotui-controls";
     const state = storageGet(INPUT_BUTTONS) || "on";

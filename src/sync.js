@@ -179,6 +179,8 @@ function scheduleReconnect() {
 }
 
 function connect() {
+    // Never strand a live socket: close before replacing.
+    try { if (socket) socket.close(); } catch {}
     try {
         socket = new WebSocket(WS_URL);
     } catch {
@@ -227,10 +229,19 @@ function connect() {
 }
 
 export function initSync() {
+    // Once-guard on window (not module state): a re-evaluated bundle must
+    // not double-register Player listeners or strand a second socket.
+    // Set only after Player exists so boot retries keep working.
+    try {
+        if (window.__spotuiSyncStarted) return;
+    } catch (e) {}
     if (!Spicetify?.Player || !Spicetify?.Platform) {
         setTimeout(initSync, 300);
         return;
     }
+    try {
+        window.__spotuiSyncStarted = true;
+    } catch (e) {}
     Spicetify.Player.addEventListener("songchange", () => {
         lyricsCache = { uri: "", lines: [], synced: false, instrumental: false, error: "", loading: true };
         send();

@@ -128,8 +128,13 @@ function clearCmdGhost() {
     app.cmdSuggest = null;
 }
 
-// Create main terminal interface
+// Create main terminal interface (idempotent: a re-evaluated bundle or a
+// late Platform appearing after the retry timer must not duplicate the TUI,
+// its ids, or its document/input listeners).
 export function createTerminal() {
+    try {
+        if (document.getElementById("spotui-tui")) return;
+    } catch (e) {}
     const box = document.createElement("div");
     box.id = "spotui-tui";
     setTuiMode("command");
