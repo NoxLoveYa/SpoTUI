@@ -1,9 +1,12 @@
 import { execute } from "./commands.js";
 import { CUSTOM_BAR_PROGRESS_STYLE, PROGRESS_STYLES } from "./constants.js";
+import { getAllowedJamGuestCommands } from "./jam.js";
+import { isSensitiveCommand } from "./keybinds.js";
 import { getCurrentTrackLyricsInfo, resolveTrackLyrics } from "./lyrics.js";
 import { getPlaylists, normalizeTrackItem } from "./playlists.js";
 import { searchSpotify } from "./search.js";
 import { storageGet } from "./storage.js";
+import { dbg } from "./utils.js";
 
 const WS_URL = "ws://localhost:8765";
 const HEARTBEAT_MS = 1000;
@@ -193,7 +196,12 @@ function connect() {
     socket.onmessage = (event) => {
         let data;
         try { data = JSON.parse(event.data); } catch { return; }
+        // The relay is an unauthenticated localhost socket: playback stays,
+        // but guests keep their restrictions and sensitive commands
+        // (binds, secrets, destructive/theme-defacing ops) never run remote.
+        const guestAllowed = getAllowedJamGuestCommands();
         if (data?.type === "play") {
+            if (guestAllowed) return;
             playUri(data.uri, data.context);
             return;
         }
@@ -206,8 +214,13 @@ function connect() {
             const [raw, ...rest] = cleaned.split(/\s+/);
             const command = (raw || "").toLowerCase();
             const argText = rest.join(" ").trim();
+            if (guestAllowed && !guestAllowed.has(command)) return;
             if (command === "search") { handleTuiSearch(argText); return; }
             if (command === "playlist" || command === "list") { handleTuiPlaylist(argText); return; }
+            if (isSensitiveCommand(cleaned)) {
+                dbg("[SpoTUI-sync] refused remote sensitive command.");
+                return;
+            }
             execute(cleaned);
         }
     };

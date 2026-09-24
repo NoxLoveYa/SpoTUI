@@ -29,9 +29,12 @@ export function getActions() {
         Object.keys(parsed).forEach((key) => {
             const item = parsed[key];
             if (!item || typeof item !== "object") return;
+            // Re-validate stored listeners: a plant or hand-edit with a
+            // non-pane_close grammar must never arm.
+            if (typeof item.listener !== "string" || !parseListener(item.listener)) return;
             clean[key] = {
                 enabled: item.enabled !== false,
-                listener: typeof item.listener === "string" ? item.listener : "",
+                listener: item.listener,
                 command: typeof item.command === "string" ? item.command : "",
             };
         });

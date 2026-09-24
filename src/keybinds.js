@@ -43,6 +43,15 @@ export function isRestrictedThemeCommand(cmd) {
     return THEME_SKIP_CMD_REGEX.test(cleaned);
 }
 
+// Too powerful for remote/store-and-fire paths: meta commands, secrets,
+// destructive theme ops, and tracking/defacement URLs. Local bar authoring
+// stays unrestricted — this gates the relay ingress (sync.js) only.
+const SENSITIVE_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b|tui\s+-(?:pin-token|pin-board|pin-feed|pin-refresh)\b|tui\s+-t\b|tui\s+-wp\b|tui\s+-posters\s+(?:add|clear)\b)/i;
+
+export function isSensitiveCommand(cmd) {
+    return SENSITIVE_CMD_REGEX.test(stripCommandPrefix(cmd).trim());
+}
+
 // Normalize keyboard shortcuts to canonical format
 export function normalizeKeyCombo(comboStr) {
     const parts = String(comboStr).split("+").map((p) => p.trim()).filter(Boolean);
