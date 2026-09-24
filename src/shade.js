@@ -1,6 +1,9 @@
 import { HEX_COLOR_REGEX, SHADE_KEY } from "./constants.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
+// Static cycle with ascii.js (it imports the palette helpers below); safe
+// because both sides only call across at event time, never during eval.
+import { refreshLogoColors } from "./ascii.js";
 
 // SpoTUI's default accent color is orange #ff8c42 (the fallback baked into
 // every var(--spotui-accent, ...) rule). The shade command re-points the
@@ -38,6 +41,65 @@ export function onAccentFor(hex) {
     return black >= white ? "#000000" : "#ffffff";
 }
 
+function rgbToHsl01(r, g, b) {
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    const d = max - min;
+    let h = 0, s = 0;
+    if (d !== 0) {
+        s = d / (1 - Math.abs(2 * l - 1));
+        if (max === r) h = 60 * (((g - b) / d) % 6);
+        else if (max === g) h = 60 * ((b - r) / d + 2);
+        else h = 60 * ((r - g) / d + 4);
+        if (h < 0) h += 360;
+    }
+    return { h, s, l };
+}
+
+export function hexToHsl01(hex) {
+    const [r, g, b] = hexToRgb01(hex);
+    return rgbToHsl01(r, g, b);
+}
+
+function hslToRgb255(h, s, l) {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+    if (h < 60) { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    return [r, g, b].map((v) => Math.round((v + m) * 255));
+}
+
+// Accent hue for effects that can't read the CSS var (canvas logo,
+// glitch flashes). Null when no shade is set.
+export function accentHue() {
+    try {
+        const target = storageGet(SHADE_KEY);
+        if (!isValidShade(target)) return null;
+        return hexToHsl01(target).h;
+    } catch (e) { return null; }
+}
+
+// Logo gradient re-tinted: each palette step keeps its lightness, but takes
+// the accent's hue and saturation (grays stay gray, pastels stay pastel).
+// Returns null when no shade is set so callers keep the orange palette.
+export function accentLogoPalette(base) {
+    const hue = accentHue();
+    if (hue === null) return null;
+    try {
+        const { s } = hexToHsl01(storageGet(SHADE_KEY));
+        return base.map(([r, g, b]) => {
+            const { l } = rgbToHsl01(r / 255, g / 255, b / 255);
+            return hslToRgb255(hue, s, l);
+        });
+    } catch (e) { return null; }
+}
+
 function shadeStyleEl() {
     let s = document.getElementById("spotui-shade-vars");
     if (!s) {
@@ -67,6 +129,7 @@ export function applyShade() {
     const st = shadeStyleEl();
     if (!target) {
         st.textContent = "";
+        try { refreshLogoColors(); } catch (e) {}
         return true;
     }
     // Exact accent: hue, saturation, and lightness all come from the hex.
@@ -77,6 +140,7 @@ body.spotui-spotify-enabled, body {
     --spotui-accent-rgb: ${r}, ${g}, ${b} !important;
     --spotui-on-accent: ${onAccentFor(target)} !important;
 }`;
+    try { refreshLogoColors(); } catch (e) {}
     return true;
 }
 

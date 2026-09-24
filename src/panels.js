@@ -177,7 +177,7 @@ export async function openThemePanel() {
             const themes = window.spotuiThemes || [];
                 panel.innerHTML = `
                 <div style="margin-bottom: 20px; display: flex;">
-                    <input id="spotui-theme-search" placeholder="Search themes..." style="width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--panel-border-color, #ff8c42); border-radius: 4px; color: #ddd; padding: 8px 12px; font-family: 'JetBrains Mono', monospace; font-size: 14px;">
+                    <input id="spotui-theme-search" placeholder="Search themes..." style="width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42)); border-radius: 4px; color: #ddd; padding: 8px 12px; font-family: 'JetBrains Mono', monospace; font-size: 14px;">
                 </div>
                 <div class="theme-grid"></div>
             `;
@@ -213,7 +213,7 @@ export async function openThemePanel() {
         () => {
                 panel.innerHTML = `
                 <div style="margin-bottom: 20px; display: flex;">
-                     <input id="spotui-theme-search" placeholder="Search themes..." style="width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--panel-border-color, #ff8c42); border-radius: 4px; color: #ddd; padding: 8px 12px; font-family: 'JetBrains Mono', monospace; font-size: 14px;" disabled>
+                     <input id="spotui-theme-search" placeholder="Search themes..." style="width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42)); border-radius: 4px; color: #ddd; padding: 8px 12px; font-family: 'JetBrains Mono', monospace; font-size: 14px;" disabled>
                 </div>
                 <p>¯\\_(ツ)_/¯</p><p>Error loading themes. The server may be down or you are rate-limited. Please wait and try again.</p>
             `;

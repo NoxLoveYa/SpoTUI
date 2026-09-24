@@ -1,4 +1,5 @@
 import { ANIMATION_KEY, GLITCH_CHARS, ORANGE_PALETTE_RGB, SPOTUI_ASCII_ART } from "./constants.js";
+import { accentHue, accentLogoPalette } from "./shade.js";
 import { app } from "./state.js";
 import { storageGet } from "./storage.js";
 import { shuffleArray, sleep } from "./utils.js";
@@ -9,22 +10,47 @@ export function randomGlitchChar() {
 }
 
 export function randomGlitchColor(minLightness = 50, lightnessRange = 30) {
-    return `hsl(${20 + Math.random() * 35}, 100%, ${minLightness + Math.random() * lightnessRange}%)`;
+    const base = accentHue() ?? 20;
+    return `hsl(${base + Math.random() * 35}, 100%, ${minLightness + Math.random() * lightnessRange}%)`;
+}
+
+// Logo gradient: orange by default, re-tinted to the shade accent.
+function activePalette() {
+    try {
+        return accentLogoPalette(ORANGE_PALETTE_RGB) || ORANGE_PALETTE_RGB;
+    } catch (e) { return ORANGE_PALETTE_RGB; }
 }
 export function getCharColor(row, col, totalRows, totalCols) {
+    const palette = activePalette();
     const normRow = row / Math.max(totalRows - 1, 1);
     const normCol = col / Math.max(totalCols - 1, 1);
     const mix = normRow * 0.55 + normCol * 0.45; // Weighted blend favoring vertical
-    const len = ORANGE_PALETTE_RGB.length;
+    const len = palette.length;
     const idx = Math.floor(mix * (len - 1));
     const frac = mix * (len - 1) - idx; // Fractional position for interpolation
     const i = Math.min(idx, len - 2);
-    const [r1, g1, b1] = ORANGE_PALETTE_RGB[i];
-    const [r2, g2, b2] = ORANGE_PALETTE_RGB[i + 1] || ORANGE_PALETTE_RGB[i];
+    const [r1, g1, b1] = palette[i];
+    const [r2, g2, b2] = palette[i + 1] || palette[i];
     const r = Math.round(r1 + (r2 - r1) * frac);
     const g = Math.round(g1 + (g2 - g1) * frac);
     const b = Math.round(b1 + (b2 - b1) * frac);
     return `rgb(${r},${g},${b})`;
+}
+
+// Re-tint the logo after a shade change: recompute every stored color
+// (live spans, restore points, and the canvas paint source). Totals come
+// from the data itself so this works even before layout ran.
+export function refreshLogoColors() {
+    const data = app.asciiCharData;
+    if (!data.length) return;
+    const rows = Math.max(...data.map((e) => e.row)) + 1;
+    const cols = Math.max(...data.map((e) => e.col)) + 1;
+    for (const entry of data) {
+        const color = getCharColor(entry.row, entry.col, rows, cols);
+        entry.color = color;
+        entry.el.style.color = color;
+        if (entry.el.dataset) entry.el.dataset.origColor = color;
+    }
 }
 
 const asciiDraw = {

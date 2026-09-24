@@ -65,7 +65,7 @@ body.spotui-onboarding-panel #spotui-logo {
     -ms-overflow-style: none;
     margin: 33vh 5vw 8px;
     height: 60vh;
-    border: 1px solid var(--panel-border-color, rgba(255, 140, 66, 0.3));
+    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
     border-radius: 6px;
     background: var(--panel-bg-color, transparent);
 }
@@ -272,7 +272,7 @@ body.spotui-cli-mode #spotui-output {
     gap: 12px;
     padding-top: 12px;
     margin-top: auto;
-    border-top: 1px solid var(--input-border-color, rgba(255, 140, 66, 0.18));
+    border-top: 1px solid var(--input-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18));
     position: relative;
     z-index: 1;
     transition: opacity 260ms ease, transform 260ms ease;
@@ -282,14 +282,14 @@ body.spotui-cli-mode #spotui-output {
     background: transparent;
     border: none;
     outline: none;
-    color: var(--input-text-color, #ff8c42);
+    color: var(--input-text-color, var(--spotui-accent, #ff8c42));
     font-family: inherit;
     font-size: inherit;
     flex: 1 1 auto;
     min-width: 0;
 }
 
-.prompt { color: var(--input-text-color, #ff8c42); }
+.prompt { color: var(--input-text-color, var(--spotui-accent, #ff8c42)); }
 .cl-line, .result { margin-bottom: 8px; user-select: text; }
 .result { padding: 5px; }
 .selected { background: var(--spotui-accent, #ff8c42); color: var(--spotui-on-accent, #000); }
@@ -474,7 +474,7 @@ body.spotui-dj-mode .dj-button svg {
 }
 
 .spotui-lyrics-line.active {
-    color: var(--lyrics-color-active, #ff8c42);
+    color: var(--lyrics-color-active, var(--spotui-accent, #ff8c42));
     opacity: 1;
     transform: scale(1.06);
     font-weight: 600;
@@ -506,7 +506,7 @@ body.spotui-lyrics-animation-on .spotui-lyrics-loader {
 }
 
 .spotui-lyrics-loader.active {
-    --c: var(--lyrics-color-active, #ff8c42) 90deg, #0000 0;
+    --c: var(--lyrics-color-active, var(--spotui-accent, #ff8c42)) 90deg, #0000 0;
     opacity: 1;
     transform: scale(1);
 }
@@ -553,7 +553,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     -ms-overflow-style: none;
     margin: 33vh 5vw 8px;
     height: 60vh;
-    border: 1px solid var(--panel-border-color, rgba(255, 140, 66, 0.3));
+    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
     border-radius: 6px;
     background: var(--panel-bg-color, transparent);
 }
@@ -570,7 +570,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
 }
 
 .spotui-help-fieldset {
-    border: 1px solid var(--panel-border-color, rgba(255, 140, 66, 0.3));
+    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
     border-radius: 6px;
     padding: 30px;
     height: 100%;
@@ -590,7 +590,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 
 .spotui-help-legend {
     float: right;
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     padding: 0 5px;
 }
 
@@ -622,7 +622,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 }
 
 .theme-card {
-    border: 1px solid var(--panel-border-color, #ff8c42);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
     border-radius: 4px;
     padding: 10px;
     background: rgba(0,0,0,0.5);
@@ -646,12 +646,12 @@ body.spotui-saves-panel #spotui-saves-panel {
 
 .theme-card h3 {
     margin: 10px 0 10px;
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     font-weight: 600;
 }
 
 .theme-card button {
-    background: var(--panel-text-color, #ff8c42);
+    background: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     color: #000;
     border: none;
     padding: 8px 12px;
@@ -666,7 +666,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 }
 
 .theme-card button:hover {
-    background-color: var(--panel-text-hover-color, #e07b39);
+    background-color: var(--panel-text-hover-color, color-mix(in srgb, var(--spotui-accent, #ff8c42) 88%, black));
 }
 .help-item {
     padding: 4px 0;
@@ -675,7 +675,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 }
 
 .help-item .command {
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     flex-basis: 30%;
 }
 
@@ -695,13 +695,13 @@ body.spotui-saves-panel #spotui-saves-panel {
     scrollbar-width: none;
     -ms-overflow-style: none;
     padding: 10px;
-    border: 1px solid var(--panel-border-color, #ff8c42);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
     border-radius: 4px;
     background: var(--panel-bg-color, transparent);
 }
 
 #spotui-playlist-list legend, #spotui-song-list legend {
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     padding: 0 5px;
 }
 
@@ -723,7 +723,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 }
 
 .playlist-item.selected, .song-item.selected {
-    background: var(--panel-text-color, #ff8c42);
+    background: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     color: #000;
 }
 
@@ -782,7 +782,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 }
 
 .spotui-lyrics-fetch-loader {
-    --color-1: var(--lyrics-color-active, #ff8c42);
+    --color-1: var(--lyrics-color-active, var(--spotui-accent, #ff8c42));
     --size: 1px;
     width: calc(8 * var(--size));
     height: calc(40 * var(--size));
@@ -829,7 +829,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 }
 
 .spotui-control-btn {
-    background: var(--input-bg-color, #ff8c42);
+    background: var(--input-bg-color, var(--spotui-accent, #ff8c42));
     color: var(--input-text-color, #000);
     border: none;
     padding: 6px 12px;
@@ -840,7 +840,7 @@ body.spotui-saves-panel #spotui-saves-panel {
 }
 
 .spotui-control-btn:hover {
-    background: var(--input-bg-hover-color, #e07b39);
+    background: var(--input-bg-hover-color, color-mix(in srgb, var(--spotui-accent, #ff8c42) 88%, black));
 }
 
 .spotui-standby-btn {
@@ -980,7 +980,7 @@ body.spotui-tui-hidden #spotui-tui {
     height: 60vh;
     padding: 20px;
     box-sizing: border-box;
-    border: 1px solid var(--panel-border-color, rgba(255, 140, 66, 0.3));
+    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
     border-radius: 6px;
     background: var(--panel-bg-color, transparent);
     overflow: hidden;
@@ -997,7 +997,7 @@ body.spotui-search-panel #spotui-search-panel {
     flex: 0 0 auto;
     position: relative;
     padding: 8px 12px;
-    border: 1px solid var(--panel-border-color, rgba(255, 140, 66, 0.3));
+    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
     border-radius: 4px;
     background: rgba(0,0,0,0.5);
 }
@@ -1007,7 +1007,7 @@ body.spotui-search-panel #spotui-search-panel {
 }
 
 .spotui-search-prompt {
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
 }
 
 #spotui-search-input {
@@ -1016,7 +1016,7 @@ body.spotui-search-panel #spotui-search-panel {
     background: transparent;
     border: none;
     outline: none;
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     font-family: inherit;
     font-size: 15px;
     caret-color: var(--spotui-accent, #ff8c42);
@@ -1072,7 +1072,7 @@ body.spotui-search-panel #spotui-search-panel {
     font-size: 11px;
     text-transform: uppercase;
     opacity: 0.7;
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
 }
 
 .spotui-search-item.selected .spotui-search-type {
