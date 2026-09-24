@@ -1,6 +1,6 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, toggleLogo } from "./appearance.js";
 import { resetGrid } from "./ascii.js";
-import { ANIMATION_KEY, HISTORY_KEY, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, HISTORY_KEY, KEYBIND_STORAGE_KEY, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { POSTERS_IMGS, POSTERS_LAYOUT, renderPosters, renderSavedLayout, startRotateTimer } from "./posters.js";
 import { applyShade, isValidShade } from "./shade.js";
 import { app } from "./state.js";
@@ -9,10 +9,15 @@ import { dbg, pinToast } from "./utils.js";
 import { setWallpaper } from "./wallpaper.js";
 
 // Local theme snapshots: everything a Spotify restart preserves, saved
-// under one name — except the command history, which is personal, not a
-// look. storage.js has no key enumeration, so this module touches
-// localStorage directly (guarded) for the snapshot/restore loops only.
+// under one name — except personal config (history, keybinds, actions),
+// which is yours, not a look. storage.js has no key enumeration, so this
+// module touches localStorage directly (guarded) for the snapshot/restore
+// loops only.
 const SAVES_KEY = "spotui:theme-saves";
+
+// Personal config, not a look: never snapshotted, never wiped, and never
+// restored over live values (old snapshots may still carry these keys).
+const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY]);
 
 function readSaves() {
     try {
@@ -27,7 +32,7 @@ function snapshotSettings() {
     try {
         for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
-            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && k !== HISTORY_KEY) out[k] = localStorage.getItem(k);
+            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !PERSONAL_KEYS.has(k)) out[k] = localStorage.getItem(k);
         }
     } catch (e) {}
     return out;
@@ -162,10 +167,13 @@ export function applyTheme(name) {
     }
     try {
         const keep = new Set(Object.keys(snap.settings));
-        for (const [k, v] of Object.entries(snap.settings)) localStorage.setItem(k, v);
+        for (const [k, v] of Object.entries(snap.settings)) {
+            if (PERSONAL_KEYS.has(k)) continue;
+            localStorage.setItem(k, v);
+        }
         for (let i = localStorage.length - 1; i >= 0; i--) {
             const k = localStorage.key(i);
-            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && k !== HISTORY_KEY && !keep.has(k)) localStorage.removeItem(k);
+            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !PERSONAL_KEYS.has(k) && !keep.has(k)) localStorage.removeItem(k);
         }
     } catch (e) {
         console.error("[SpoTUI] theme apply failed:", e.message);
