@@ -9,8 +9,9 @@ import { storageGet, storageSet } from "./storage.js";
 // Secrets never persist: pin tokens and jam join lines stay session-only.
 
 // Commands matching this are kept out of persisted history (a PIN grants
-// jam guests volume/lyrics control while the jam lives).
-const HISTORY_SKIP_REGEX = /^\s*tui\s+-pin-token\b|^\s*jam\s+join\b/i;
+// jam guests volume/lyrics control while the jam lives; a pin subcommand
+// may carry the API token inline as its second positional arg).
+const HISTORY_SKIP_REGEX = /^\s*tui\s+-(pin-token|pin-board|pin-feed|pin-refresh)\b|^\s*jam\s+join\b/i;
 
 export function sanitizeHistory(raw) {
     if (!Array.isArray(raw)) return [];
