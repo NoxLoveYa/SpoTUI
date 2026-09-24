@@ -1,6 +1,6 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, toggleLogo } from "./appearance.js";
 import { resetGrid } from "./ascii.js";
-import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, HISTORY_KEY, KEYBIND_STORAGE_KEY, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, HISTORY_KEY, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, SHADE_KEY, UPDATE_BANNER_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { POSTERS_IMGS, POSTERS_LAYOUT, renderPosters, renderSavedLayout, startRotateTimer } from "./posters.js";
 import { applyShade, isValidShade } from "./shade.js";
 import { app } from "./state.js";
@@ -26,6 +26,11 @@ let savesCache = null;
 // Personal config, not a look: never snapshotted, never wiped, and never
 // restored over live values (old snapshots may still carry these keys).
 const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY]);
+
+// App state, not a look either: applying an old snapshot must never delete
+// these (wiping launched re-triggers onboarding, wiping the banner flag
+// resurrects a dismissed banner).
+const NEVER_WIPE_KEYS = new Set([LAUNCHED_KEY, UPDATE_BANNER_KEY]);
 
 function readSaves() {
     if (savesCache) return savesCache;
@@ -199,7 +204,7 @@ export function applyTheme(name) {
         }
         for (let i = localStorage.length - 1; i >= 0; i--) {
             const k = localStorage.key(i);
-            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !PERSONAL_KEYS.has(k) && !keep.has(k)) localStorage.removeItem(k);
+            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !PERSONAL_KEYS.has(k) && !NEVER_WIPE_KEYS.has(k) && !keep.has(k)) localStorage.removeItem(k);
         }
     } catch (e) {
         console.error("[SpoTUI] theme apply failed:", e.message);

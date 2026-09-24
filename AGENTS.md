@@ -44,7 +44,8 @@
   `rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3)`, never the slash form
   (invalid, silently drops the declaration). Never define a var in terms of
   itself (cyclic = guaranteed-invalid). Injected CSS takes `/* */`, never `//`.
-- New `spotui:*` key? Classify it (look vs personal) and handle ALL paths:
+- New `spotui:*` key? Classify it (look vs personal vs app-state like
+  launched/banner) and handle ALL paths:
   snapshot, apply-wipe, apply-restore, clear/nuke commands, `tui restore`
   backup list. Personal keys (history, keybinds, actions) are excluded everywhere.
 - New command or `tui` sub? Mirror it in `KNOWN_COMMANDS`/`KNOWN_TUI_SUBS`
