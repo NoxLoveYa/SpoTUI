@@ -65,7 +65,7 @@ body.spotui-onboarding-panel #spotui-logo {
     -ms-overflow-style: none;
     margin: 33vh 5vw 8px;
     height: 60vh;
-    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
+    border: 1px solid var(--panel-border-color, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3));
     border-radius: 6px;
     background: var(--panel-bg-color, transparent);
 }
@@ -107,8 +107,8 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 .spotui-onboarding-primer code,
 .spotui-onboarding-callout code {
     color: var(--spotui-accent, #ff8c42);
-    background: rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.12);
-    border: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.22);
+    background: rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.12);
+    border: 1px solid rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.22);
     border-radius: 4px;
     padding: 0 4px;
     font-family: "JetBrains Mono", monospace;
@@ -125,7 +125,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 }
 
 .spotui-onboarding-primer {
-    border: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.2);
+    border: 1px solid rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.2);
     border-radius: 6px;
     padding: 16px;
     display: grid;
@@ -147,7 +147,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
     margin-top: auto;
     align-self: flex-start;
     max-width: 280px;
-    border: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.28);
+    border: 1px solid rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.28);
     border-radius: 6px;
     padding: 12px 14px;
     background: rgba(0, 0, 0, 0.28);
@@ -166,7 +166,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 }
 
 .spotui-onboarding-theme {
-    border: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.35);
+    border: 1px solid rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.35);
     border-radius: 6px;
     background: rgba(0,0,0,0.35);
     color: #ddd;
@@ -272,7 +272,7 @@ body.spotui-cli-mode #spotui-output {
     gap: 12px;
     padding-top: 12px;
     margin-top: auto;
-    border-top: 1px solid var(--input-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18));
+    border-top: 1px solid var(--input-border-color, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18));
     position: relative;
     z-index: 1;
     transition: opacity 260ms ease, transform 260ms ease;
@@ -391,7 +391,7 @@ body.spotui-dj-mode .dj-button svg {
 .spotui-lyrics-header {
     flex: 0 0 auto;
     padding: 16px 22px 12px;
-    border-bottom: 1px solid rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18);
+    border-bottom: 1px solid rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18);
 }
 
 .spotui-lyrics-kicker {
@@ -553,7 +553,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     -ms-overflow-style: none;
     margin: 33vh 5vw 8px;
     height: 60vh;
-    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
+    border: 1px solid var(--panel-border-color, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3));
     border-radius: 6px;
     background: var(--panel-bg-color, transparent);
 }
@@ -570,7 +570,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
 }
 
 .spotui-help-fieldset {
-    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
+    border: 1px solid var(--panel-border-color, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3));
     border-radius: 6px;
     padding: 30px;
     height: 100%;
@@ -980,7 +980,7 @@ body.spotui-tui-hidden #spotui-tui {
     height: 60vh;
     padding: 20px;
     box-sizing: border-box;
-    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
+    border: 1px solid var(--panel-border-color, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3));
     border-radius: 6px;
     background: var(--panel-bg-color, transparent);
     overflow: hidden;
@@ -997,7 +997,7 @@ body.spotui-search-panel #spotui-search-panel {
     flex: 0 0 auto;
     position: relative;
     padding: 8px 12px;
-    border: 1px solid var(--panel-border-color, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.3));
+    border: 1px solid var(--panel-border-color, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3));
     border-radius: 4px;
     background: rgba(0,0,0,0.5);
 }

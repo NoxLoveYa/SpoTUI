@@ -55,7 +55,7 @@ body.spotui-spotify-enabled {
 body.spotui-spotify-enabled .Root__globalNav {
     background: #000 !important;
     border-bottom: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 -1px 0 rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    box-shadow: inset 0 -1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18) !important;
     color: #ddd !important;
     font-family: "JetBrains Mono", "Fira Code", monospace !important;
 }
@@ -104,7 +104,7 @@ body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputContaine
     background: #000 !important;
     border: 1px solid var(--spotui-accent, #ff8c42) !important;
     border-radius: 0 !important;
-    box-shadow: inset 0 1px 0 rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.15) !important;
+    box-shadow: inset 0 1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.15) !important;
 }
 
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputText,
@@ -160,7 +160,7 @@ body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputTextWrap
     justify-content: space-between !important;
     background: var(--player-bar-background, #000) !important;
     border-top: 1px solid var(--player-bar-border-color, var(--spotui-accent, #ff8c42));
-    box-shadow: inset 0 1px 0 rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18);
+    box-shadow: inset 0 1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18);
     color: var(--player-bar-text-color, #ddd) !important;
     font-family: "JetBrains Mono", "Fira Code", monospace !important;
 }
@@ -265,7 +265,7 @@ body.spotui-lyrics-open .lyrics-lyricsContainer-LyricsContainer {
     color: #ddd !important;
     font-family: "JetBrains Mono", "Fira Code", monospace !important;
     border-top: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 1px 0 rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    box-shadow: inset 0 1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18) !important;
 }
 
 body.spotui-lyrics-open .main-nowPlayingView-lyricsContent,
@@ -362,7 +362,7 @@ body.spotui-lyrics-open .lyrics-lyricsContainer-LyricsLine-past {
 body.spotui-lyrics-open .main-nowPlayingView-lyricsGradient,
 body.spotui-lyrics-open .lyrics-lyrics-background,
 body.spotui-lyrics-open .lyrics-lyricsContainer-LyricsBackground {
-    background: linear-gradient(180deg, rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.12), rgba(0, 0, 0, 0)) !important;
+    background: linear-gradient(180deg, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.12), rgba(0, 0, 0, 0)) !important;
 }
 
 body.spotui-lyrics-open .main-nowPlayingView-lyricsControls button,
@@ -397,7 +397,7 @@ body.logo-on.spotui-lyrics-open .Root__right-sidebar {
 .Root__right-sidebar {
     background: #000 !important;
     border: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 0 0 1px rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    box-shadow: inset 0 0 0 1px rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18) !important;
     color: #ddd !important;
     font-family: "JetBrains Mono", "Fira Code", monospace !important;
     border-radius: 0 !important;
@@ -473,7 +473,7 @@ body.spotui-spotify-enabled .collection-searchBar-searchBar {
     background: #000 !important;
     border: 1px solid var(--spotui-accent, #ff8c42) !important;
     border-radius: 0 !important;
-    box-shadow: inset 0 1px 0 rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.15) !important;
+    box-shadow: inset 0 1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.15) !important;
 }
 
 body.spotui-spotify-enabled .main-globalNav-searchInputContainer,
@@ -655,19 +655,19 @@ body.spotui-spotify-enabled .Root__right-sidebar,
 body.spotui-spotify-enabled .main-buddy-list,
 body.spotui-spotify-enabled .main-yourLibraryX-libraryContainer {
     border: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 0 0 1px rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    box-shadow: inset 0 0 0 1px rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18) !important;
     box-sizing: border-box !important;
 }
 
 body.spotui-spotify-enabled .Root__globalNav {
     border-bottom: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 -1px 0 rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    box-shadow: inset 0 -1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18) !important;
     box-sizing: border-box !important;
 }
 
 body.spotui-spotify-enabled .Root__now-playing-bar {
     border-top: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 1px 0 rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    box-shadow: inset 0 1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18) !important;
     box-sizing: border-box !important;
 }
 
@@ -707,7 +707,7 @@ body.spotui-search-mode .Root__globalNav .main-globalNav-searchContainer {
     width: 100% !important;
     background: #000 !important;
     border: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 1px 0 rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.15) !important;
+    box-shadow: inset 0 1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.15) !important;
 }
 
 body.spotui-search-mode #spotui-back-btn {
@@ -909,7 +909,7 @@ body.spotui-spotify-enabled .main-gridContainer-gridContainer [data-encore-id="b
     background: #000 !important;
     background-color: #000 !important;
     border: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 0 0 1px rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    box-shadow: inset 0 0 0 1px rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18) !important;
     border-radius: 0 !important;
     padding: 0 !important;
     transition: none !important;
@@ -928,7 +928,7 @@ body.spotui-spotify-enabled .main-shelf-shelfGrid [data-encore-id="text"] {
 }
 
 body.spotui-spotify-enabled .main-shelf-shelfGrid [data-encore-id="box"]:hover {
-    background: rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.08) !important;
+    background: rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.08) !important;
 }
 
 body.spotui-spotify-enabled .main-card-card .main-card-draggable {
@@ -938,7 +938,7 @@ body.spotui-spotify-enabled .main-card-card .main-card-draggable {
 }
 
 body.spotui-spotify-enabled .main-card-card:hover {
-    background: rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.08) !important;
+    background: rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.08) !important;
 }
 
 body.spotui-spotify-enabled .main-card-card .main-cardImage-imageWrapper,
