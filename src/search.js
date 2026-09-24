@@ -261,6 +261,12 @@ export function handleSearchPanelKeydown(e) {
         input.setSelectionRange(completion.length, completion.length);
         app.searchAutocomplete = "";
         renderSearchAutocomplete();
+        // Kill the pending debounce: it would re-search the pre-Tab query
+        // and overwrite these results when it fires.
+        if (app.searchDebounce != null) {
+            clearTimeout(app.searchDebounce);
+            app.searchDebounce = null;
+        }
         runSearch(completion);
         return;
     }
@@ -323,6 +329,11 @@ export function openSearchPanel(query = "") {
     app.searchSelected = 0;
     app.searchAutocomplete = "";
     app.searchFetchToken += 1;
+    // A debounce from a prior instance must not fire into the fresh panel.
+    if (app.searchDebounce != null) {
+        clearTimeout(app.searchDebounce);
+        app.searchDebounce = null;
+    }
     document.body.classList.add("spotui-search-panel");
     const panel = document.getElementById("spotui-search-panel");
     if (panel) panel.hidden = false;
