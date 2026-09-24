@@ -296,8 +296,20 @@ function posterImg(src, fig) {
     return img;
 }
 
-export function setPostersEnabled(on) {
-    if (on) {
+// Reset wall preferences to defaults (used by theme reset). The pinned
+// library, its layout, and the API token are personal, not a look: kept.
+export function resetPosterPrefs() {
+    storageRemove(POSTERS_COUNT);
+    storageRemove(POSTERS_DENSITY);
+    storageRemove(POSTERS_THEME);
+    storageRemove(POSTERS_OPACITY);
+    storageRemove(POSTERS_ROTATE);
+    storageRemove(POSTERS_SEED);
+    storageRemove(POSTERS_AUTOSHUFFLE);
+    storageRemove(POSTERS_SYMMETRIC);
+}
+
+export function setPostersEnabled(on) {    if (on) {
         storageSet(POSTERS_ON, "1");
         if (!renderSavedLayout()) renderPosters();
         startRotateTimer();
