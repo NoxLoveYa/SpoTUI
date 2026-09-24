@@ -14,7 +14,7 @@ import { app } from "./state.js";
 import { storageClear, storageGet, storageRemove, storageSet } from "./storage.js";
 import { applyThemeByName } from "./themes.js";
 import { enterStandby } from "./standby.js";
-import { applyTheme as applySavedTheme, deleteTheme, listThemes, saveTheme, savedThemeNames } from "./saves.js";
+import { applyTheme as applySavedTheme, deleteTheme, invalidateSavesCache, listThemes, saveTheme, savedThemeNames } from "./saves.js";
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
 import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, getBoardCounts, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
@@ -417,6 +417,7 @@ async function executeInner(cmd, opts = {}) {
             const actionsValue = storageGet(ACTIONS_STORAGE_KEY);
             const historyValue = storageGet(HISTORY_KEY);
             storageClear();
+            invalidateSavesCache();
             if (!fullRestore) {
                 if (launchedValue !== null) storageSet(LAUNCHED_KEY, launchedValue);
                 if (bannerValue !== null) storageSet(UPDATE_BANNER_KEY, bannerValue);

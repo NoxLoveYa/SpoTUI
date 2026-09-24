@@ -15,16 +15,32 @@ import { setWallpaper } from "./wallpaper.js";
 // loops only.
 const SAVES_KEY = "spotui:theme-saves";
 
+// Cap: every save duplicates the whole poster library + layout, so the blob
+// would otherwise grow without bound (and readSaves re-parses all of it).
+const MAX_SAVES = 20;
+
+// Parsed-blob memo: menus call savedThemeDetails() per keypress, so cache
+// until the next local mutation (save/delete are the only writers).
+let savesCache = null;
+
 // Personal config, not a look: never snapshotted, never wiped, and never
 // restored over live values (old snapshots may still carry these keys).
 const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY]);
 
 function readSaves() {
+    if (savesCache) return savesCache;
     try {
         const raw = storageGet(SAVES_KEY);
         const obj = raw ? JSON.parse(raw) : {};
-        return obj && typeof obj === "object" ? obj : {};
-    } catch (e) { return {}; }
+        savesCache = obj && typeof obj === "object" ? obj : {};
+    } catch (e) { savesCache = {}; }
+    return savesCache;
+}
+
+// External mutations bypass readSaves writers (e.g. tui restore wiping
+// storage): callers must invalidate so menus never show ghost themes.
+export function invalidateSavesCache() {
+    savesCache = null;
 }
 
 function snapshotSettings() {
@@ -116,8 +132,17 @@ export function saveTheme(name) {
     const existed = !!saves[n];
     const settings = snapshotSettings();
     saves[n] = { savedAt: Date.now(), settings };
+    // Evict oldest snapshots past the cap (never the one just saved).
+    const names = Object.keys(saves).filter((k) => k !== n)
+        .sort((a, b) => ((saves[a] && saves[a].savedAt) || 0) - ((saves[b] && saves[b].savedAt) || 0));
+    let evicted = null;
+    while (Object.keys(saves).length > MAX_SAVES && names.length) {
+        evicted = names.shift();
+        delete saves[evicted];
+    }
     storageSet(SAVES_KEY, JSON.stringify(saves));
-    pinToast(`${existed ? "theme updated" : "theme saved"}: ${n}\n${describeSnapshot(settings)}`);
+    invalidateSavesCache();
+    pinToast(`${existed ? "theme updated" : "theme saved"}: ${n}\n${describeSnapshot(settings)}${evicted ? `\n(oldest snapshot ${evicted} evicted, cap ${MAX_SAVES})` : ""}`);
     dbg("[SpoTUI] theme saved:", n);
 }
 
@@ -150,6 +175,7 @@ export function deleteTheme(name) {
     }
     delete saves[n];
     storageSet(SAVES_KEY, JSON.stringify(saves));
+    invalidateSavesCache();
     pinToast(`theme deleted: ${n}`);
     dbg("[SpoTUI] theme deleted:", n);
 }
