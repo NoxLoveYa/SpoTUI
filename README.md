@@ -44,7 +44,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -l -a <on/off>` | Toggle ASCII animation |
 | `tui -wp <url> [-o <0-1>] [-fit <cover/contain/fill/none>] [-pos <center/top/bottom/left/right>] [-rich <0-200>]` | Set wallpaper — bare `tui -wp` shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off) |
 | `tui -t pull <theme_id>` | Apply a theme by its ID (you can find the id on our website) |
-| `tui -t <save <name>\|list\|apply <name>\|delete <name>>` | Snapshot the current look locally; list opens the themes menu (Enter applies, Del deletes); restore/delete snapshots |
+| `tui -t <save <name>\|list\|apply <name>\|delete <name>>` | Snapshot the current look locally; list opens the themes menu (Enter applies, Del fills in the delete command); restore/delete snapshots |
 | `tui bind "<Letter>" "<command>"` | Binds Alt+`<Letter>` to run a TUI command |
 | `tui unbind "<Letter>"` | Remove the Alt+<Letter> keybind |
 | `tui bind clear` | Remove all keybinds |
@@ -149,7 +149,7 @@ appearance comes back live, no relaunch needed.
 
 ```bash
 tui -t save cozy      # snapshot current look as cozy
-tui -t list           # browse saved themes (Enter applies, Del deletes)
+tui -t list           # browse saved themes (Enter applies, Del fills in the delete command)
 tui -t apply cozy     # restore it, live
 tui -t delete cozy    # forget it
 ```

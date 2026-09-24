@@ -7,7 +7,7 @@ import { closeLyricsPanel } from "./lyrics.js";
 import { closeOnboardingPanel } from "./onboarding.js";
 import { getPlaylists, handlePlaylistPanelKeydown, renderPlaylistPanel } from "./playlists.js";
 import { closeSearchPanel } from "./search.js";
-import { applyTheme as applySavedTheme, deleteTheme, savedThemeDetails, savedThemeNames } from "./saves.js";
+import { applyTheme as applySavedTheme, savedThemeDetails } from "./saves.js";
 import { clearBoard, getBoardCounts, refreshBoards } from "./posters.js";
 import { app } from "./state.js";
 import { print } from "./terminal.js";
@@ -368,10 +368,11 @@ export async function handleSavesKeydown(e) {
         closeSavesPanel();
         applySavedTheme(name);
     } else if (e.key === "Delete" || e.key === "Backspace") {
+        // Fill the bar with the delete command for the hovered theme;
+        // Enter confirms it and the round-trip reopens this menu.
         e.preventDefault();
-        deleteTheme(items[app.selectedSave].name);
-        if (!savedThemeNames().length) closeSavesPanel();
-        else renderSavesPanel();
+        const name = items[app.selectedSave].name;
+        prefillCommand(`tui -t delete ${name}`, "saves", "tui -t delete ");
     } else if (e.key === "s" || e.key === "S") {
         // Same as above: prefill focuses the bar, so swallow the keystroke.
         e.preventDefault();
