@@ -507,28 +507,30 @@ export function hasPlayableTrackItem() {
 }
 
 // Wait for player to load a track, then execute callback
-// Polls up to 40 times (10 seconds) before giving up
-export function waitForPlayerReadyThen(callback, attempt = 0) {
+// Polls up to 40 times (10 seconds) before giving up. The token aborts
+// chains orphaned by a panel close (or a newer load) at every step.
+export function waitForPlayerReadyThen(callback, attempt = 0, token = app.lyricsLoadToken) {
+    if (token !== app.lyricsLoadToken) return;
     if (hasPlayableTrackItem()) {
         callback();
         return;
     }
     if (attempt >= 40) {
         callback();
-        pollForTrackThenReload();
+        pollForTrackThenReload(token);
         return;
     }
-    setTimeout(() => waitForPlayerReadyThen(callback, attempt + 1), 250);
+    setTimeout(() => waitForPlayerReadyThen(callback, attempt + 1, token), 250);
 }
 
 // Poll for track availability and reload lyrics when found
-export function pollForTrackThenReload() {
-    if (!app.lyricsPanelOpen) return;
+export function pollForTrackThenReload(token = app.lyricsLoadToken) {
+    if (token !== app.lyricsLoadToken || !app.lyricsPanelOpen) return;
     if (hasPlayableTrackItem()) {
         loadLyricsForCurrentTrack();
         return;
     }
-    setTimeout(pollForTrackThenReload, 1000);
+    setTimeout(() => pollForTrackThenReload(token), 1000);
 }
 
 // Open lyrics panel and start syncing with playback
