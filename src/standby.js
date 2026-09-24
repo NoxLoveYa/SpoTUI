@@ -40,9 +40,10 @@ function onStandbyKey(e) {
         return;
     }
     if (e.type === "keyup") {
+        // Key listeners are already detached by exitStandby; here just clear
+        // the swallow flag and hand focus back.
         swallowKeys = false;
         if (!app.standbyOpen) {
-            detachKeyListeners();
             const input = document.getElementById("spotui-input");
             if (input) input.focus();
         }
@@ -84,7 +85,11 @@ export function exitStandby() {
     if (!app.standbyOpen) return;
     standbyToken += 1;
     app.standbyOpen = false;
-    if (!swallowKeys) detachKeyListeners();
+    // Always detach: the in-flight exit keystroke was already swallowed
+    // before this ran, so only future events are affected. Deferring the
+    // detach to keyup stranded all six listeners whenever the key was
+    // released off-window.
+    detachKeyListeners();
     window.removeEventListener("blur", onStandbyBlur, true);
     document.removeEventListener("focusin", onStandbyBlur, true);
     removeOverlay();
