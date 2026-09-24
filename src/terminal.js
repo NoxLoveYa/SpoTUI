@@ -93,9 +93,20 @@ function renderCmdGhost(input) {
         return;
     }
     ghost.hidden = false;
-    ghost.style.left = `${input.offsetLeft}px`;
+    // Mirror the input's text metrics exactly: same font, spacing, and
+    // text origin (offset + padding), otherwise the ghost drifts.
+    let padLeft = 0;
+    try {
+        const cs = getComputedStyle(input);
+        ghost.style.font = cs.font;
+        ghost.style.letterSpacing = cs.letterSpacing;
+        ghost.style.wordSpacing = cs.wordSpacing;
+        ghost.style.lineHeight = cs.lineHeight;
+        padLeft = parseFloat(cs.paddingLeft) || 0;
+    } catch (e) {}
+    ghost.style.left = `${input.offsetLeft + padLeft}px`;
     ghost.style.top = `${input.offsetTop}px`;
-    ghost.style.width = `${input.offsetWidth}px`;
+    ghost.style.width = `${Math.max(0, input.offsetWidth - padLeft)}px`;
     ghost.style.height = `${input.offsetHeight}px`;
     ghost.innerHTML = "";
     const typed = document.createElement("span");
