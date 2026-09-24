@@ -204,6 +204,9 @@ export function createTerminal() {
         }
         const isCtrlR = (e.key === "r" || e.key === "R") && e.ctrlKey && !e.altKey && !e.metaKey;
         if (isCtrlR) {
+            // Scoped strictly to the composer: anywhere else the keystroke
+            // belongs to Spotify (e.g. loop), so never claim it there.
+            if (document.activeElement !== input) return;
             // Unix reverse search: first press enters, repeats cycle older.
             e.preventDefault();
             clearCmdGhost();
@@ -259,6 +262,12 @@ export function createTerminal() {
             const pick = app.cmdSuggest.matches[app.cmdSuggest.idx];
             if (pick) input.value = pick;
             renderCmdGhost(input);
+            return;
+        }
+        if (e.key === "Escape") {
+            // Leave the composer entirely so Spotify gets its keys back
+            // (e.g. Ctrl+R for loop) instead of us.
+            input.blur();
             return;
         }
         if ((e.key === "c" || e.key === "C") && e.ctrlKey && !e.altKey && !e.metaKey) {
