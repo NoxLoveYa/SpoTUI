@@ -1,6 +1,6 @@
 import { HISTORY_ENTRY_MAX, HISTORY_KEY, HISTORY_LIMIT } from "./constants.js";
 import { app } from "./state.js";
-import { storageGet, storageSet } from "./storage.js";
+import { readJsonArray, storageSet } from "./storage.js";
 import { pinToast } from "./utils.js";
 
 // Persistent command history (unix-style): what the user typed survives
@@ -27,11 +27,7 @@ export function sanitizeHistory(raw) {
 }
 
 export function loadHistory() {
-    try {
-        const raw = storageGet(HISTORY_KEY);
-        if (!raw) return [];
-        return sanitizeHistory(JSON.parse(raw));
-    } catch (e) { return []; }
+    return sanitizeHistory(readJsonArray(HISTORY_KEY));
 }
 
 // Lazy load for arrows / reverse search: browse storage even if the
@@ -51,17 +47,14 @@ export function pushHistory(cmd, opts = {}) {
     app.commandHistory = [t, ...app.commandHistory.filter((e) => e !== t)].slice(0, HISTORY_LIMIT);
     app.commandHistoryIndex = -1;
     if (opts.persist === false) return true;
-    try {
-        const stored = sanitizeHistory(JSON.parse(storageGet(HISTORY_KEY) || "[]"));
-        if (!storageSet(HISTORY_KEY, JSON.stringify([t, ...stored.filter((e) => e !== t)].slice(0, HISTORY_LIMIT)))) {
-            console.error("[SpoTUI] history persist failed: storage full (session-only from here)");
-            if (!historyFullWarned) {
-                historyFullWarned = true;
-                pinToast("history not saving: storage full (session-only)");
-            }
-            return true;
+    const stored = sanitizeHistory(readJsonArray(HISTORY_KEY));
+    if (!storageSet(HISTORY_KEY, JSON.stringify([t, ...stored.filter((e) => e !== t)].slice(0, HISTORY_LIMIT)))) {
+        console.error("[SpoTUI] history persist failed: storage full (session-only from here)");
+        if (!historyFullWarned) {
+            historyFullWarned = true;
+            pinToast("history not saving: storage full (session-only)");
         }
-    } catch (e) {}
+    }
     return true;
 }
 

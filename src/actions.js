@@ -1,7 +1,7 @@
 import { execute } from "./commands.js";
 import { ACTIONS_STORAGE_KEY } from "./constants.js";
 import { jamSay } from "./jam.js";
-import { storageGet, storageSet } from "./storage.js";
+import { readJsonObject, storageSet } from "./storage.js";
 
 const PANE_CLOSE_EVENT = "pane_close";
 const RESERVED_NAMES = new Set(["create", "list", "enable", "disable", "delete"]);
@@ -21,28 +21,21 @@ function parseQuotedTokens(text) {
 }
 
 export function getActions() {
-    try {
-        const raw = storageGet(ACTIONS_STORAGE_KEY);
-        if (!raw) return {};
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-        const clean = {};
-        Object.keys(parsed).forEach((key) => {
-            const item = parsed[key];
-            if (!item || typeof item !== "object") return;
-            // Re-validate stored listeners: a plant or hand-edit with a
-            // non-pane_close grammar must never arm.
-            if (typeof item.listener !== "string" || !parseListener(item.listener)) return;
-            clean[key] = {
-                enabled: item.enabled !== false,
-                listener: item.listener,
-                command: typeof item.command === "string" ? item.command : "",
-            };
-        });
-        return clean;
-    } catch (e) {
-        return {};
-    }
+    const parsed = readJsonObject(ACTIONS_STORAGE_KEY);
+    const clean = {};
+    Object.keys(parsed).forEach((key) => {
+        const item = parsed[key];
+        if (!item || typeof item !== "object") return;
+        // Re-validate stored listeners: a plant or hand-edit with a
+        // non-pane_close grammar must never arm.
+        if (typeof item.listener !== "string" || !parseListener(item.listener)) return;
+        clean[key] = {
+            enabled: item.enabled !== false,
+            listener: item.listener,
+            command: typeof item.command === "string" ? item.command : "",
+        };
+    });
+    return clean;
 }
 
 export function saveActions(map) {

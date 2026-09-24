@@ -1,23 +1,16 @@
 import { execute } from "./commands.js";
 import { BIND_CMD_REGEX, F_KEY_REGEX, KEYBIND_STORAGE_KEY, THEME_SKIP_CMD_REGEX } from "./constants.js";
 import { app, isInputBlockingPanelOpen } from "./state.js";
-import { storageGet, storageSet } from "./storage.js";
+import { readJsonObject, storageSet } from "./storage.js";
 
 // Retrieve stored keyboard shortcuts
 export function getKeybinds() {
-    try {
-        const raw = storageGet(KEYBIND_STORAGE_KEY);
-        if (!raw) return {};
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-        const clean = {};
-        Object.keys(parsed).forEach((key) => {
-            if (typeof parsed[key] === "string") clean[key] = parsed[key];
-        });
-        return clean;
-    } catch (e) {
-        return {};
-    }
+    const parsed = readJsonObject(KEYBIND_STORAGE_KEY);
+    const clean = {};
+    Object.keys(parsed).forEach((key) => {
+        if (typeof parsed[key] === "string") clean[key] = parsed[key];
+    });
+    return clean;
 }
 
 export function saveKeybinds(map) {
