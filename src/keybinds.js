@@ -100,14 +100,6 @@ export function handleKeybindKeydown(e) {
     const isAltGr = e.ctrlKey && e.altKey;
     if (isAltGr) return;
 
-    // Built-in: Ctrl+T opens the saved-themes menu, same as `tui -t list`
-    // (Shift excluded so Ctrl+Shift+T keeps its native meaning).
-    if ((e.key === "t" || e.key === "T") && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-        e.preventDefault();
-        execute("tui -t list");
-        return;
-    }
-
     const binds = getKeybinds();
     if (!Object.keys(binds).length) return;
 

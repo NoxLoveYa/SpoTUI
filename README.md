@@ -45,11 +45,10 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -wp <url> [-o <0-1>] [-fit <cover/contain/fill/none>] [-pos <center/top/bottom/left/right>] [-rich <0-200>]` | Set wallpaper — bare `tui -wp` shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off) |
 | `tui -t pull <theme_id>` | Apply a theme by its ID (you can find the id on our website) |
 | `tui -t <save <name>\|list\|apply <name>\|delete <name>>` | Snapshot the current look locally (incl. poster wall layout); list opens the themes menu (Enter applies, Del fills in the delete command); restore/delete snapshots |
-| `tui bind "<Letter>" "<command>"` | Binds Alt+`<Letter>` to run a TUI command |
+| `tui bind "<Letter>" "<command>"` | Binds Alt+`<Letter>` to run a TUI command (e.g. `tui bind "T" "tui -t list"` opens the themes menu on `Alt+T`; `Ctrl` combos never reach the page) |
 | `tui unbind "<Letter>"` | Remove the Alt+<Letter> keybind |
 | `tui bind clear` | Remove all keybinds |
 | `Ctrl+R` | Reverse-search persistent command history (typing filters, `Ctrl+R` cycles older matches, `Enter` fills the bar, `Esc` aborts; unknown commands stay session-only) |
-| `Ctrl+T` | Open the saved-themes menu (same as `tui -t list`) |
 | `tui actions create <name>` | Create a named action |
 | `tui actions "<name>" "<listener>" "<command>"` | Bind an action to a listener |
 | `tui actions list` | List saved actions |
