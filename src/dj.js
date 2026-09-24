@@ -1,6 +1,7 @@
 import { openLyricsPanel } from "./lyrics.js";
 import { closeActivePanel, openAboutPanel, openHelpPanel, openPlaylistPanel, openThemePanel } from "./panels.js";
 import { app } from "./state.js";
+import { setStatusTag } from "./utils.js";
 
 const PREV_OPENERS = {
     lyrics: openLyricsPanel,
@@ -30,19 +31,11 @@ function currentPane() {
 }
 
 function showDjTag() {
-    if (document.getElementById("spotui-dj-tags")) return;
-    const wrap = document.createElement("div");
-    wrap.id = "spotui-dj-tags";
-    const tag = document.createElement("div");
-    tag.className = "spotui-jam-tag";
-    tag.textContent = "This client is being controlled by Spotify DJ";
-    wrap.appendChild(tag);
-    document.body.appendChild(wrap);
+    setStatusTag("spotui-dj-tags", ["This client is being controlled by Spotify DJ"]);
 }
 
 function hideDjTag() {
-    const el = document.getElementById("spotui-dj-tags");
-    if (el) el.remove();
+    setStatusTag("spotui-dj-tags", []);
 }
 
 function openDjPanel() {

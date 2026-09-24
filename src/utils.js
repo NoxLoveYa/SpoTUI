@@ -32,19 +32,46 @@ export function dbg(tag, ...args) {
     if (isDebug()) console.log(tag, ...args);
 }
 
-// Small non-blocking toast (console.log alone is invisible without DevTools).
-export function pinToast(text, ms = 7000) {
+// Shared toast skeleton: fixed bottom-center single instance, auto-remove
+// after ms (null = sticky). Callers pass their exact visuals as cssText so
+// unifying here changes no pixels.
+export function toastBase(id, text, ms, cssText) {
     try {
-        const old = document.getElementById("spotui-pin-toast");
+        const old = document.getElementById(id);
         if (old) old.remove();
         const t = document.createElement("div");
-        t.id = "spotui-pin-toast";
+        t.id = id;
         t.textContent = text;
-        // Border follows --spotui-accent (what -shade re-points) with the panel
-        // border as fallback. The toast lives on document.body, outside the
-        // TUI container, so the var reads as the exact target color.
-        t.style.cssText = "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(10,14,18,.45);background:color-mix(in srgb, var(--panel-bg-color,#0a0e12) 45%, transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--spotui-accent,var(--panel-border-color,var(--essential-base,#7fd4d4)));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;";
+        t.style.cssText = cssText;
         document.body.appendChild(t);
-        setTimeout(() => t.remove(), ms);
+        if (ms !== null && ms !== undefined) setTimeout(() => t.remove(), ms);
     } catch (e) {}
+}
+
+// Status tag cluster (jam/dj tags): one .spotui-jam-tag div per line,
+// wrap removed when lines is empty.
+export function setStatusTag(id, lines) {
+    try {
+        const old = document.getElementById(id);
+        if (old) old.remove();
+        const items = (lines || []).filter((t) => typeof t === "string" && t);
+        if (!items.length) return;
+        const wrap = document.createElement("div");
+        wrap.id = id;
+        for (const text of items) {
+            const tag = document.createElement("div");
+            tag.className = "spotui-jam-tag";
+            tag.textContent = text;
+            wrap.appendChild(tag);
+        }
+        document.body.appendChild(wrap);
+    } catch (e) {}
+}
+
+// Small non-blocking toast (console.log alone is invisible without DevTools).
+export function pinToast(text, ms = 7000) {
+    // Border follows --spotui-accent (what -shade re-points) with the panel
+    // border as fallback. The toast lives on document.body, outside the
+    // TUI container, so the var reads as the exact target color.
+    toastBase("spotui-pin-toast", text, ms, "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(10,14,18,.45);background:color-mix(in srgb, var(--panel-bg-color,#0a0e12) 45%, transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--spotui-accent,var(--panel-border-color,var(--essential-base,#7fd4d4)));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;");
 }

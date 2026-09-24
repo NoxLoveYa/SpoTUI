@@ -1,29 +1,12 @@
 import { DISCORD_INVITE_URL, UPDATE_BANNER_KEY } from "./constants.js";
 import { storageGet, storageSet } from "./storage.js";
+import { toastBase } from "./utils.js";
 
 // Display restart notification popup
-// persistSession - to survive the reload after all settings get reset
+// persistSession - to survive the reload after all settings get reset.
+// Sticky (no auto-remove): it must survive until the reload happens.
 export function showRestartPopup(message = "Wait 5 seconds and relaunch Spotify", persistSession = false) {
-    const existing = document.getElementById("spotui-restart-popup");
-    if (existing) existing.remove();
-
-    const popup = document.createElement("div");
-    popup.id = "spotui-restart-popup";
-    popup.textContent = message;
-    popup.style.position = "fixed";
-    popup.style.left = "50%";
-    popup.style.bottom = "120px";
-    popup.style.transform = "translateX(-50%)";
-    popup.style.zIndex = "10000";
-    popup.style.background = "rgba(0,0,0,0.92)";
-    popup.style.border = "1px solid var(--spotui-accent,#ff8c42)";
-    popup.style.borderRadius = "6px";
-    popup.style.padding = "12px 16px";
-    popup.style.color = "var(--spotui-accent,#ff8c42)";
-    popup.style.fontFamily = "\"JetBrains Mono\", monospace";
-    popup.style.fontSize = "14px";
-    popup.style.boxShadow = "0 8px 24px rgba(0,0,0,0.35)";
-    document.body.appendChild(popup);
+    toastBase("spotui-restart-popup", message, null, "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(0,0,0,0.92);border:1px solid var(--spotui-accent,#ff8c42);border-radius:6px;padding:12px 16px;color:var(--spotui-accent,#ff8c42);font-family:\"JetBrains Mono\",monospace;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,0.35);");
     if (persistSession) {
         try { sessionStorage.setItem("spotui:restart-popup", message); } catch (e) {}
     }

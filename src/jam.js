@@ -2,6 +2,7 @@ import { applyPlayerBarVisibility } from "./appearance.js";
 import { JAM_POLL_MS, JAM_SEEK_DRIFT_MS, JAM_SERVER_URL, JAM_STATE_KEY } from "./constants.js";
 import { app } from "./state.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
+import { setStatusTag, toastBase } from "./utils.js";
 
 // Get current theme accent color from CSS variables
 export function getSpotuiAccentColor() {
@@ -16,56 +17,22 @@ export function getSpotuiAccentColor() {
 // Show temporary toast notification for jam-related messages
 export function jamSay(text) {
     const accent = getSpotuiAccentColor();
-    const existing = document.getElementById("spotui-jam-toast");
-    if (existing) existing.remove();
-
-    const toast = document.createElement("div");
-    toast.id = "spotui-jam-toast";
-    toast.textContent = text;
-    toast.style.position = "fixed";
-    toast.style.left = "50%";
-    toast.style.bottom = "120px";
-    toast.style.transform = "translateX(-50%)";
-    toast.style.zIndex = "10000";
-    toast.style.background = "rgba(0,0,0,0.45)";
-    toast.style.WebkitBackdropFilter = "blur(14px)";
-    toast.style.backdropFilter = "blur(14px)";
-    toast.style.border = `1px solid ${accent}`;
-    toast.style.borderRadius = "6px";
-    toast.style.padding = "12px 16px";
-    toast.style.color = accent;
-    toast.style.fontFamily = "\"JetBrains Mono\", monospace";
-    toast.style.fontSize = "14px";
-    toast.style.boxShadow = "0 8px 24px rgba(0,0,0,0.35)";
-    document.body.appendChild(toast);
-
-    setTimeout(() => {
-        if (toast.parentNode) toast.remove();
-    }, 4000);
+    toastBase("spotui-jam-toast", text, 4000, `position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(0,0,0,0.45);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid ${accent};border-radius:6px;padding:12px 16px;color:${accent};font-family:"JetBrains Mono",monospace;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,0.35);`);
 }
 
 // Display jam session status tags (role and PIN)
 export function showJamTags(pin, role) {
-    hideJamTags();
-    const wrap = document.createElement("div");
-    wrap.id = "spotui-jam-tags";
-    const relayTag = document.createElement("div");
-    relayTag.className = "spotui-jam-tag";
-    relayTag.textContent = role === "host"
-        ? "This client is connected to the server."
-        : "This client is controlled by an autonomous relay server.";
-    const pinTag = document.createElement("div");
-    pinTag.className = "spotui-jam-tag";
-    pinTag.textContent = `Room pin: ${pin}`;
-    wrap.appendChild(relayTag);
-    wrap.appendChild(pinTag);
-    document.body.appendChild(wrap);
+    setStatusTag("spotui-jam-tags", [
+        role === "host"
+            ? "This client is connected to the server."
+            : "This client is controlled by an autonomous relay server.",
+        `Room pin: ${pin}`,
+    ]);
 }
 
 // Remove jam status tags from display
 export function hideJamTags() {
-    const el = document.getElementById("spotui-jam-tags");
-    if (el) el.remove();
+    setStatusTag("spotui-jam-tags", []);
 }
 
 // Save current jam state to localStorage for session persistence
