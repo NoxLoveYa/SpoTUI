@@ -10,6 +10,8 @@ const PREV_OPENERS = {
     theme: openThemePanel,
 };
 
+let djSyncRaf = 0;
+
 function detectDjMode() {
     return Boolean(document.querySelector(".XTtlZOmdtscvhPLr, .dj-button"));
 }
@@ -98,7 +100,15 @@ export function initDjBridge() {
     }
     syncDjState();
     if (!app.djObserver) {
-        app.djObserver = new MutationObserver(syncDjState);
+        // Mutation bursts coalesce into one sync per frame; syncDjState
+        // itself no-ops when mode/cover are unchanged.
+        app.djObserver = new MutationObserver(() => {
+            if (djSyncRaf) return;
+            djSyncRaf = requestAnimationFrame(() => {
+                djSyncRaf = 0;
+                syncDjState();
+            });
+        });
         app.djObserver.observe(document.body, {
             childList: true,
             subtree: true,

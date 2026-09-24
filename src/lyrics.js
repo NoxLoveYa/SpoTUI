@@ -17,9 +17,10 @@ export function detectLyricsSurface() {
 }
 
 export function syncLyricsState() {
-    if (document.body) {
-        document.body.classList.toggle("spotui-lyrics-open", detectLyricsSurface());
-    }
+    if (!document.body) return;
+    const open = detectLyricsSurface();
+    if (document.body.classList.contains("spotui-lyrics-open") === open) return;
+    document.body.classList.toggle("spotui-lyrics-open", open);
 }
 
 // Hook into Spotifys native lyrics button to track panel state changes
@@ -39,14 +40,21 @@ export function hookLyricsButton() {
 }
 
 // Track Spotifys lyrics panel visibility
+let lyricsRefreshRaf = 0;
+
 export function initLyricsBridge() {
     if (!document.body) {
         setTimeout(initLyricsBridge, 250);
         return;
     }
+    // Mutation bursts (progress, lists) coalesce into one refresh per frame.
     const refresh = () => {
-        hookLyricsButton();
-        syncLyricsState();
+        if (lyricsRefreshRaf) return;
+        lyricsRefreshRaf = requestAnimationFrame(() => {
+            lyricsRefreshRaf = 0;
+            hookLyricsButton();
+            syncLyricsState();
+        });
     };
     refresh();
     if (!app.lyricsObserver) {
