@@ -129,6 +129,7 @@ export const COMMAND_LIST = [
     { cmd: "tui bind clear", desc: "Remove all keybinds" },
     { cmd: "Ctrl+R", desc: "Reverse-search persistent command history (typing filters, Ctrl+R cycles older matches, Enter fills the bar, Esc aborts; unknown commands stay session-only)" },
     { cmd: "Tab", desc: "Accept the ghost fill suggestion (repeat to cycle matches)" },
+    { cmd: "Esc", desc: "Abort history search, or leave the command bar so Spotify gets its keys back" },
     { cmd: "tui actions create &lt;name&gt;", desc: "Create a named action" },
     { cmd: "tui actions &lt;name&gt; &lt;listener&gt; &lt;command&gt;", desc: "Bind an action to a listener" },
     { cmd: "tui actions list", desc: "List saved actions" },

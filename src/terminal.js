@@ -81,7 +81,8 @@ function cmdGhostEl() {
     catch (e) { return null; }
 }
 
-export function renderCmdGhost(input) {    const ghost = cmdGhostEl();
+export function renderCmdGhost(input) {
+    const ghost = cmdGhostEl();
     if (!ghost) return;
     const value = input.value;
     const matches = (!value || app.historySearch || isInputBlockingPanelOpen())

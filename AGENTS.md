@@ -48,8 +48,8 @@
   snapshot, apply-wipe, apply-restore, clear/nuke commands, `tui restore`
   backup list. Personal keys (history, keybinds, actions) are excluded everywhere.
 - New command or `tui` sub? Mirror it in `KNOWN_COMMANDS`/`KNOWN_TUI_SUBS`
-  (history validity) and in all three docs: `help` list, README table, README
-  examples.
+  (history validity), `STATIC_SUGGESTIONS` in `suggest.js` (ghost fill), and
+  in all three docs: `help` list, README table, README examples.
 - Keys: Chromium swallows `Ctrl+Letter` before the page — only `Alt+Letter`
   (via `tui bind`) and bare keys are bindable. Capture-phase listeners run
   first: open menus own bare keys, modifiers stay global.

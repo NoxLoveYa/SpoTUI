@@ -50,6 +50,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui bind clear` | Remove all keybinds |
 | `Ctrl+R` | Reverse-search persistent command history (typing filters, `Ctrl+R` cycles older matches, `Enter` fills the bar, `Esc` aborts; unknown commands stay session-only) |
 | `Tab` | Accept the ghost fill suggestion in the command bar (repeat to cycle matches) |
+| `Esc` | Abort history search, or leave the command bar so Spotify gets its keys back |
 | `tui actions create <name>` | Create a named action |
 | `tui actions "<name>" "<listener>" "<command>"` | Bind an action to a listener |
 | `tui actions list` | List saved actions |
