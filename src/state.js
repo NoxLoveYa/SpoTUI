@@ -16,6 +16,7 @@ export const app = {
     commandHistory: [],
     commandHistoryIndex: -1,
     playlistPanelOpen: false,
+    add2listPanelOpen: false,
     playlists: [],
     playlistSongs: [],
     playlistSongsTotal: 0,
@@ -61,7 +62,14 @@ export const app = {
     songScrollAnimRaf: null,
     navRafPending: false,
     playlistNavLastAt: 0,
-    playlistNavFast: false
+    playlistNavFast: false,
+    playlistSortOpen: false,
+    playlistSortIndex: 0,
+    playlistsDefault: [],
+    playlistSongsDefault: [],
+    playlistFindOpen: false,
+    playlistFindQuery: "",
+    playlistFindSource: []
 };
 
 // Returns true if any panel except lyrics or standby is open
