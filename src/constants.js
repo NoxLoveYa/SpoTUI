@@ -20,6 +20,9 @@ export const WP_OPACITY_KEY = "spotui:wp-opacity";
 export const LYRICS_COLOR_ACTIVE = "spotui:lyrics-color-active";
 export const LYRICS_COLOR_INACTIVE = "spotui:lyrics-color-inactive";
 export const LYRICS_COLOR_LIGHT_INACTIVE = "spotui:lyrics-color-light-inactive";
+export const LYRICS_LINE_SPACING = "spotui:lyrics-line-spacing";
+export const VISUALIZER_STORAGE_KEY = "spotui:visualizer-open";
+export const VISUALIZER_COLOR = "spotui:visualizer-color";
 export const PLAYER_BAR_BG = "spotui:player-bar-bg";
 export const PLAYER_BAR_BORDER = "spotui:player-bar-border";
 export const PLAYER_BAR_TEXT = "spotui:player-bar-text";
@@ -140,6 +143,10 @@ export const COMMAND_LIST = [
     { cmd: "tui -ly -cp -active &lt;#hex&gt; -inactive &lt;#hex&gt; -near &lt;#hex&gt;", desc: "Set lyrics colors" },
     { cmd: "tui -ly -cp off", desc: "Reset lyrics colors" },
     { cmd: "tui -ly -animation &lt;on/off&gt;", desc: "Toggle lyrics loader animation" },
+    { cmd: "tui -ly -spacing &lt;value&gt;", desc: "Controls vertical spacing between lines in lyrics" },
+    { cmd: "tui -ly -spacing off", desc: "Resets line spacing in lyrics" },
+    { cmd: "tui -viz -color &lt;#hex&gt;", desc: "Set visualizer bar color" },
+    { cmd: "tui -viz off", desc: "Reset visualizer bar color" },
     { cmd: "tui -bar -bg &lt;#hex&gt; -border &lt;#hex&gt; -text &lt;#hex&gt;", desc: "Set player bar colors" },
     { cmd: "tui -bar -v &lt;on/off&gt;", desc: "Toggle play bar visibility" },
     { cmd: "tui -bar -c &lt;on/off&gt;", desc: "Toggle custom TUI play bar" },
@@ -153,6 +160,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -panel -bg &lt;#hex&gt; -border &lt;#hex&gt; -text &lt;#hex&gt;", desc: "Set help/playlist/theme/about panel colors" },
     { cmd: "tui -panel off", desc: "Reset panel colors" },
     { cmd: "playlist / list &lt;playlist-name&gt;", desc: "Open playlist viewer or play a specific playlist" },
+    { cmd: "add2list", desc: "Add the current song to a playlist" },
     { cmd: "play / pause / p", desc: "Toggle playback" },
     { cmd: "skip", desc: "Next track" },
     { cmd: "back", desc: "Previous track" },
@@ -162,6 +170,7 @@ export const COMMAND_LIST = [
     { cmd: "loop / superloop", desc: "Toggle repeat mode" },
     { cmd: "like", desc: "Like/unlike current song" },
     { cmd: "lyrics", desc: "Toggle lyrics panel" },
+    { cmd: "visualizer", desc: "Toggle audio visualizer" },
     { cmd: "dj", desc: "Play the DJ playlist" },
     { cmd: "echo &lt;text&gt;", desc: "Display a message" },
     { cmd: "search &lt;query&gt;", desc: "Search Spotify" },

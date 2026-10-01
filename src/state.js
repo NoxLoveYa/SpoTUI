@@ -4,6 +4,8 @@ export const app = {
     asciiEnabled: true,
     standbyOpen: false,
     lyricsObserver: null,
+    syncIconTimer: null,
+    sposyncConnected: false,
     djObserver: null,
     djMode: false,
     djPanelOpen: false,
@@ -13,6 +15,7 @@ export const app = {
     historySearch: null,
     cmdSuggest: null,
     playlistPanelOpen: false,
+    add2listPanelOpen: false,
     playlists: [],
     playlistSongs: [],
     playlistSongsTotal: 0,
@@ -33,6 +36,7 @@ export const app = {
     onboardingStage: "commands",
     onboardingShowAllThemes: false,
     lyricsPanelOpen: false,
+    visualizerOpen: false,
     lyricsLoadToken: 0,
     lyricsActiveIndex: -1,
     lyricsActiveLoaderIndex: -1,
@@ -62,7 +66,14 @@ export const app = {
     songScrollAnimRaf: null,
     navRafPending: false,
     playlistNavLastAt: 0,
-    playlistNavFast: false
+    playlistNavFast: false,
+    playlistSortOpen: false,
+    playlistSortIndex: 0,
+    playlistsDefault: [],
+    playlistSongsDefault: [],
+    playlistFindOpen: false,
+    playlistFindQuery: "",
+    playlistFindSource: []
 };
 
 // Returns true if any panel except lyrics or standby is open
@@ -73,7 +84,7 @@ export function isAnyPanelOpen() {
 // Panels with their own inputs or key handling: the command bar yields to them.
 // Read-only panels (help, about) leave the command input usable.
 export function isInputBlockingPanelOpen() {
-    return app.standbyOpen || app.playlistPanelOpen || app.searchPanelOpen ||
+    return app.standbyOpen || app.playlistPanelOpen || app.add2listPanelOpen || app.searchPanelOpen ||
         app.themePanelOpen || app.boardsPanelOpen || app.savesPanelOpen ||
         app.onboardingPanelOpen || app.djPanelOpen;
 }

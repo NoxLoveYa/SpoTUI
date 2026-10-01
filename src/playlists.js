@@ -1,4 +1,5 @@
-import { closePlaylistPanel } from "./panels.js";
+import { jamSay } from "./jam.js";
+import { closeAdd2listPanel, closePlaylistPanel } from "./panels.js";
 import { app } from "./state.js";
 import { dbg } from "./utils.js";
 
@@ -48,6 +49,7 @@ export async function fetchSongsForSelectedPlaylist() {
     if (!app.playlistPanelOpen) return;
 
     app.playlistSongs = songs;
+    app.playlistSongsDefault = songs.slice();
     app.playlistSongsTotal = songs.length;
     // The new list can be shorter: clamp before any songs[selectedSong] use.
     if (app.selectedSong < 0 || app.selectedSong >= songs.length) app.selectedSong = 0;
@@ -74,12 +76,76 @@ export async function renderPlaylistPanel() {
 // Virtual scrolling constants for performance with large playlists
 export const SONG_ROW_HEIGHT = 26; // px
 export const PLAYLIST_ROW_HEIGHT = 26; // px
+const PLAYLIST_SORT_OPTS = ["Default", "Alphabetical", "Z-A"];
+
+export function renderPlaylistSortMenu() {
+    const el = document.getElementById("spotui-playlist-sort");
+    if (!el) return;
+    el.hidden = !app.playlistSortOpen;
+    el.classList.toggle("songs", app.activePane === "song");
+    if (!app.playlistSortOpen) return;
+    el.innerHTML = PLAYLIST_SORT_OPTS.map((label, i) => `<div class="playlist-item${i === app.playlistSortIndex ? " selected" : ""}">${label}</div>`).join("");
+}
+
+export function closePlaylistFind() {
+    app.playlistFindOpen = false;
+    app.playlistFindQuery = "";
+    const el = document.getElementById("spotui-playlist-find");
+    if (el) { el.hidden = true; el.value = ""; el.blur(); }
+}
+
+export function applyPlaylistFind() {
+    const q = app.playlistFindQuery.trim().toLowerCase();
+    const source = app.playlistFindSource || [];
+    const filtered = q ? source.filter((item) => (item.name || "").toLowerCase().includes(q) || (item.artist || "").toLowerCase().includes(q)) : source.slice();
+    if (app.activePane === "song") {
+        app.playlistSongs = filtered;
+        app.playlistSongsTotal = filtered.length;
+        app.selectedSong = 0;
+        renderSongListVirtual();
+        scrollSongIntoView(0, false);
+    } else {
+        app.playlists = filtered;
+        app.selectedPlaylist = 0;
+        renderPlaylistListVirtual();
+        scrollPlaylistIntoView(0, false);
+        if (!app.add2listPanelOpen) scheduleSongsFetchForSelectedPlaylist();
+    }
+}
+
+export function openPlaylistFind() {
+    closePlaylistFind();
+    app.playlistFindOpen = true;
+    app.playlistFindQuery = "";
+    app.playlistFindSource = app.activePane === "song" ? (app.playlistSongs || []).slice() : (app.playlists || []).slice();
+    const el = document.getElementById("spotui-playlist-find");
+    if (!el) return;
+    el.hidden = false;
+    el.classList.toggle("songs", app.activePane === "song");
+    el.value = "";
+    el.focus();
+    if (!el.dataset.bound) {
+        el.dataset.bound = "1";
+        el.addEventListener("input", () => {
+            app.playlistFindQuery = el.value;
+            applyPlaylistFind();
+        });
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" || e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                closePlaylistFind();
+            }
+        });
+    }
+}
 
 
 export function ensurePlaylistListScaffold() {
-    const container = document.getElementById("spotui-playlist-list");
-    if (!container || document.getElementById("spotui-playlist-list-spacer")) return;
-    container.innerHTML = '<legend>Playlists</legend><div id="spotui-playlist-list-spacer" style="position:relative;"><div id="spotui-playlist-list-viewport" style="position:absolute;top:0;left:0;right:0;"></div></div>';
+    const id = app.add2listPanelOpen ? "spotui-add2list-list" : "spotui-playlist-list";
+    const container = document.getElementById(id);
+    if (!container || document.getElementById(id + "-spacer")) return;
+    container.innerHTML = '<legend>Playlists</legend><div id="' + id + '-spacer" style="position:relative;"><div id="' + id + '-viewport" style="position:absolute;top:0;left:0;right:0;"></div></div>';
     container.addEventListener("scroll", () => {
         if (app.playlistListScrollRaf) return;
         app.playlistListScrollRaf = requestAnimationFrame(() => {
@@ -91,11 +157,12 @@ export function ensurePlaylistListScaffold() {
 
 // Render visible playlist items using virtual scrolling
 export function renderPlaylistListVirtual() {
-    const container = document.getElementById("spotui-playlist-list");
+    const id = app.add2listPanelOpen ? "spotui-add2list-list" : "spotui-playlist-list";
+    const container = document.getElementById(id);
     if (!container) return;
     ensurePlaylistListScaffold();
-    const spacer = document.getElementById("spotui-playlist-list-spacer");
-    const viewport = document.getElementById("spotui-playlist-list-viewport");
+    const spacer = document.getElementById(id + "-spacer");
+    const viewport = document.getElementById(id + "-viewport");
     if (!spacer || !viewport) return;
 
     const total = app.playlists.length;
@@ -115,7 +182,7 @@ export function renderPlaylistListVirtual() {
         const idx = startIdx + i;
         const p = app.playlists[idx];
         const item = viewport.childNodes[i];
-        const className = "playlist-item" + (idx === app.selectedPlaylist && app.activePane === "playlist" ? " selected" : "");
+        const className = "playlist-item" + (idx === app.selectedPlaylist && (app.activePane === "playlist" || app.add2listPanelOpen) ? " selected" : "");
         const text = p.name;
         if (item.className !== className) item.className = className;
         if (item.textContent !== text) item.textContent = text;
@@ -123,7 +190,7 @@ export function renderPlaylistListVirtual() {
 }
 
 export function scrollPlaylistIntoView(idx, smooth = true) {
-    const container = document.getElementById("spotui-playlist-list");
+    const container = document.getElementById(app.add2listPanelOpen ? "spotui-add2list-list" : "spotui-playlist-list");
     if (!container) return;
     const itemTop = idx * PLAYLIST_ROW_HEIGHT;
     const itemCenter = itemTop + PLAYLIST_ROW_HEIGHT / 2;
@@ -251,9 +318,64 @@ export function commitSongNav(smooth) {
 
 // Handle keyboard navigation in playlist panel
 export async function handlePlaylistPanelKeydown(e) {
+    if (app.playlistSortOpen) {
+        if (e.key === "Escape" || e.key === "o" || e.key === "O") {
+            e.preventDefault();
+            app.playlistSortOpen = false;
+            renderPlaylistSortMenu();
+            return;
+        }
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            const dir = e.key === "ArrowDown" ? 1 : -1;
+            app.playlistSortIndex = (app.playlistSortIndex + dir + PLAYLIST_SORT_OPTS.length) % PLAYLIST_SORT_OPTS.length;
+            renderPlaylistSortMenu();
+            return;
+        }
+        if (e.key === "Enter") {
+            e.preventDefault();
+            const sortSongs = app.activePane === "song";
+            const list = (sortSongs ? app.playlistSongsDefault || app.playlistSongs : app.playlistsDefault || app.playlists).slice();
+            if (app.playlistSortIndex === 1) list.sort((a, b) => a.name.localeCompare(b.name));
+            else if (app.playlistSortIndex === 2) list.sort((a, b) => b.name.localeCompare(a.name));
+            app.playlistSortOpen = false;
+            renderPlaylistSortMenu();
+            if (sortSongs) {
+                app.playlistSongs = list;
+                app.playlistSongsTotal = list.length;
+                if (app.selectedSong >= list.length) app.selectedSong = Math.max(0, list.length - 1);
+                renderSongListVirtual();
+                scrollSongIntoView(app.selectedSong, false);
+            } else {
+                app.playlists = list;
+                if (app.selectedPlaylist >= list.length) app.selectedPlaylist = Math.max(0, list.length - 1);
+                renderPlaylistListVirtual();
+                scrollPlaylistIntoView(app.selectedPlaylist, false);
+                scheduleSongsFetchForSelectedPlaylist();
+            }
+            return;
+        }
+        return;
+    }
+
+    if (!app.add2listPanelOpen && !app.playlistFindOpen && (e.key === "o" || e.key === "O") && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        app.playlistSortOpen = true;
+        app.playlistSortIndex = 0;
+        renderPlaylistSortMenu();
+        return;
+    }
+
+    if (!app.add2listPanelOpen && !app.playlistFindOpen && (e.key === "s" || e.key === "S") && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        openPlaylistFind();
+        return;
+    }
+
     if (e.key === "Escape") {
         e.preventDefault();
-        closePlaylistPanel();
+        if (app.add2listPanelOpen) closeAdd2listPanel();
+        else closePlaylistPanel();
         return;
     }
 
@@ -279,7 +401,7 @@ export async function handlePlaylistPanelKeydown(e) {
                 scrollPlaylistIntoView(app.selectedPlaylist, !app.playlistNavFast);
             });
 
-            scheduleSongsFetchForSelectedPlaylist();
+            if (!app.add2listPanelOpen) scheduleSongsFetchForSelectedPlaylist();
             return;
         }
 
@@ -305,6 +427,25 @@ export async function handlePlaylistPanelKeydown(e) {
                 commitSongNav(!app.playlistNavFast);
             }
         });
+        return;
+    }
+
+    if (app.add2listPanelOpen) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            const p = app.playlists[app.selectedPlaylist];
+            const uri = Spicetify.Player.data?.item?.uri || Spicetify.Player.data?.track?.uri;
+            if (!uri) { jamSay("Nothing playing"); return; }
+            if (!p) return;
+            try {
+                await Spicetify.Platform.PlaylistAPI.add(p.uri, [uri], { after: "end" });
+                jamSay("Added to " + p.name);
+                closeAdd2listPanel();
+            } catch (err) {
+                jamSay("Add error: " + (err.message || err));
+            }
+        }
         return;
     }
 

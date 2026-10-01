@@ -70,6 +70,10 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -ly -cp -active <#hex> -inactive <#hex> -near <#hex>` | Set lyrics colors |
 | `tui -ly -cp off` | Reset lyrics colors |
 | `tui -ly -animation <on/off>` | Toggle lyrics loader animation |
+| `tui -ly -spacing <value>` | Controls vertical spacing between lines in lyrics |
+| `tui -ly -spacing off` | Resets line spacing in lyrics |
+| `tui -viz -color <#hex>` | Set visualizer bar color |
+| `tui -viz off` | Reset visualizer bar color |
 | `tui -bar -bg <#hex> -border <#hex> -text <#hex>` | Set player bar colors |
 | `tui -bar -v <on/off>` | Toggle native play bar visibility |
 | `tui -bar -c <on/off>` | Toggle custom TUI play bar |
@@ -84,6 +88,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -panel off` | Reset panel colors |
 | `tui restore [-full]` | Reset all settings to defaults and reload (keeps history, keybinds, actions; `-full` wipes everything) |
 | `playlist` / `list` `<playlist-name>` | Open playlist viewer or play a specific playlist |
+| `add2list` | Add the current song to a playlist |
 | `play` / `pause` / `p` | Toggle playback |
 | `skip` | Next track |
 | `back` | Previous track |
@@ -93,6 +98,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `like` | Like/unlike current song |
 | `loop` / `superloop` | Toggle repeat mode |
 | `lyrics` | Toggle lyrics panel |
+| `visualizer` | Toggle audio visualizer |
 | `dj` | Play the DJ playlist |
 | `echo <text>` | Display a message |
 | `search <query>` | Search Spotify |

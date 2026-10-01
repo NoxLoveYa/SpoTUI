@@ -48,6 +48,7 @@ const style = `#spotui-tui {
 body.spotui-lyrics-panel #spotui-logo,
 body.spotui-dj-panel #spotui-logo,
 body.spotui-playlist-panel #spotui-logo,
+body.spotui-add2list-panel #spotui-logo,
 body.spotui-help-panel #spotui-logo,
 body.spotui-theme-panel #spotui-logo,
 body.spotui-search-panel #spotui-logo,
@@ -202,6 +203,7 @@ body.spotui-onboarding-panel #spotui-onboarding-panel {
 body:has(#spotui-wallpaper) body.spotui-lyrics-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-dj-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-playlist-panel #spotui-logo,
+body:has(#spotui-wallpaper) body.spotui-add2list-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-help-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-theme-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-about-panel #spotui-logo,
@@ -236,10 +238,28 @@ body:has(#spotui-wallpaper) body.spotui-saves-panel #spotui-logo {
 #spotui-boards-panel::-webkit-scrollbar,
 #spotui-saves-panel::-webkit-scrollbar,
 #spotui-playlist-list::-webkit-scrollbar,
+#spotui-add2list-list::-webkit-scrollbar,
 #spotui-song-list::-webkit-scrollbar,
 .spotui-lyrics-lines::-webkit-scrollbar {
     width: 0;
     height: 0;
+}
+
+#spotui-visualizer {
+    display: none;
+    width: 100%;
+    height: 56px;
+    flex: 0 0 56px;
+    margin-top: auto;
+    pointer-events: none;
+}
+
+body.spotui-visualizer-on #spotui-visualizer {
+    display: block;
+}
+
+body.spotui-visualizer-on #spotui-footer {
+    margin-top: 0;
 }
 
 #spotui-footer {
@@ -433,7 +453,7 @@ body.spotui-dj-mode .dj-button svg {
     color: var(--lyrics-color-inactive, #777);
     font-size: 17px;
     line-height: 1.45;
-    padding: 10px 8px;
+    padding: var(--lyrics-line-spacing, 10px) 8px;
     opacity: 0.45;
     transform: scale(0.96);
     transition:
@@ -513,6 +533,118 @@ body.spotui-lyrics-animation-on .spotui-lyrics-loader {
 }
 
 body.spotui-playlist-panel #spotui-playlist-panel {
+    display: flex;
+    opacity: 1;
+    transform: translateY(0);
+    transition-delay: 0.6s;
+}
+
+#spotui-playlist-sort {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 6;
+    min-width: 180px;
+    padding: 10px;
+    border: 1px solid var(--panel-border-color, #ff8c42);
+    border-radius: 4px;
+    background: #000;
+}
+
+#spotui-playlist-sort.songs {
+    left: auto;
+    right: 12px;
+}
+
+#spotui-playlist-find {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 6;
+    width: 220px;
+    padding: 8px 10px;
+    border: 1px solid var(--panel-border-color, #ff8c42);
+    border-radius: 4px;
+    background: #000;
+    color: #ddd;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 14px;
+    outline: none;
+}
+
+#spotui-playlist-find.songs {
+    left: auto;
+    right: 12px;
+}
+
+#spotui-playlist-info {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    z-index: 7;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--panel-text-color, #ff8c42);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    pointer-events: auto;
+    opacity: 0.7;
+}
+
+#spotui-playlist-info:hover {
+    opacity: 1;
+}
+
+#spotui-playlist-info svg {
+    display: block;
+}
+
+#spotui-playlist-info-popup {
+    position: absolute;
+    bottom: 36px;
+    right: 10px;
+    z-index: 7;
+    padding: 8px 12px;
+    border: 1px solid var(--panel-border-color, #ff8c42);
+    border-radius: 4px;
+    background: #000;
+    color: #ddd;
+    font-size: 13px;
+    white-space: nowrap;
+    pointer-events: auto;
+}
+
+#spotui-playlist-info-popup span {
+    color: var(--panel-text-color, #ff8c42);
+}
+
+#spotui-add2list-panel {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: row;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+    margin: 33vh auto 8px;
+    height: 60vh;
+    width: 40vw;
+    max-width: calc(100% - 4px);
+    border: none;
+    background: transparent;
+    overflow: visible;
+    box-sizing: border-box;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.spotui-add2list-panel #spotui-add2list-panel {
     display: flex;
     opacity: 1;
     transform: translateY(0);
@@ -664,7 +796,7 @@ body.spotui-saves-panel #spotui-saves-panel {
     color: var(--spotui-on-accent, #000);
 }
 
-#spotui-playlist-list, #spotui-song-list {
+#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list {
     width: 50%;
     overflow-y: auto;
     scroll-behavior: auto;
@@ -676,7 +808,13 @@ body.spotui-saves-panel #spotui-saves-panel {
     background: var(--panel-bg-color, transparent);
 }
 
-#spotui-playlist-list legend, #spotui-song-list legend {
+#spotui-add2list-list {
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+#spotui-playlist-list legend, #spotui-song-list legend, #spotui-add2list-list legend {
     color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     padding: 0 5px;
 }
@@ -694,7 +832,7 @@ body.spotui-saves-panel #spotui-saves-panel {
     white-space: nowrap;
 }
 
-#spotui-playlist-list, #spotui-song-list {
+#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list {
     position: relative;
 }
 
@@ -795,6 +933,41 @@ body.spotui-saves-panel #spotui-saves-panel {
     100% {
         height: calc(4 * var(--size));
     }
+}
+
+#spotui-sposync-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    margin-right: 4px;
+    color: currentColor;
+    pointer-events: auto;
+    cursor: default;
+}
+
+#spotui-sposync-status svg {
+    width: 22px;
+    height: 22px;
+    display: block;
+}
+
+#spotui-sposync-tip {
+    position: fixed;
+    transform: translateX(-50%);
+    z-index: 10000;
+    background: rgba(0, 0, 0, 0.92);
+    border: 1px solid var(--spotui-accent, #ff8c42);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: var(--spotui-accent, #ff8c42);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    white-space: pre-line;
+    pointer-events: none;
 }
 
 #spotui-controls {

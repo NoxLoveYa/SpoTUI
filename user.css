@@ -66,10 +66,7 @@ body.spotui-spotify-enabled .Root__globalNav .main-topBar-withBackgroundBlur {
 
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchSection,
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchContainer,
-body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputContainer,
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputSection,
-body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputWrapper,
-body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputTextWrapper,
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-historyButtonsContainer,
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-historyButtonsWrapper,
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-contentRight {
@@ -77,6 +74,15 @@ body.spotui-spotify-enabled .Root__globalNav .main-globalNav-contentRight {
     align-items: center !important;
     gap: 8px !important;
     min-height: 56px !important;
+}
+
+body.spotui-spotify-enabled .Root__globalNav .main-globalNav-historyButtonsContainer,
+body.spotui-spotify-enabled .Root__globalNav .main-globalNav-historyButtonsWrapper {
+    -webkit-app-region: no-drag !important;
+    app-region: no-drag !important;
+    pointer-events: auto !important;
+    position: relative !important;
+    z-index: 10010 !important;
 }
 
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-navLink,
@@ -94,29 +100,38 @@ body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchContainer [ro
     color: color-mix(in srgb, var(--spotui-accent, #ff8c42) 72%, white) !important;
 }
 
-body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchContainer,
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputContainer {
     background: #000 !important;
     border: 1px solid var(--spotui-accent, #ff8c42) !important;
     border-radius: 0 !important;
     box-shadow: inset 0 1px 0 rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.15) !important;
+    flex: 1 1 auto !important;
+    min-width: 180px !important;
 }
 
+body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputContainer input,
+body.spotui-spotify-enabled .Root__globalNav form[role="search"] input,
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputText,
-body.spotui-spotify-enabled .Root__globalNav .x-searchInput-searchInputInput,
-body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputTextWrapper input {
+body.spotui-spotify-enabled .Root__globalNav .x-searchInput-searchInputInput {
     color: var(--spotui-accent, #ff8c42) !important;
+    -webkit-text-fill-color: var(--spotui-accent, #ff8c42) !important;
     background: transparent !important;
     border: none !important;
     outline: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
     font-family: "JetBrains Mono", "Fira Code", monospace !important;
+    font-size: 14px !important;
     caret-color: var(--spotui-accent, #ff8c42) !important;
 }
 
+body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputContainer input::placeholder,
+body.spotui-spotify-enabled .Root__globalNav form[role="search"] input::placeholder,
 body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputText::placeholder,
-body.spotui-spotify-enabled .Root__globalNav .x-searchInput-searchInputInput::placeholder,
-body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputTextWrapper input::placeholder {
+body.spotui-spotify-enabled .Root__globalNav .x-searchInput-searchInputInput::placeholder {
     color: #777 !important;
+    -webkit-text-fill-color: #777 !important;
+    opacity: 1 !important;
 }
 
 .main-connectBar-connectBar,
@@ -127,6 +142,18 @@ body.spotui-spotify-enabled .Root__globalNav .main-globalNav-searchInputTextWrap
 .MZd_PqzVQOdrbpd6ircZ,
 .ABsPxBFldURR4hbFY38Y,
 .encore-bright-accent-set:has(> button span[aria-live="polite"]) {
+    display: none !important;
+}
+
+.notistack-SnackbarContainer,
+.notistack-CollapseWrapper,
+.notistack-Snackbar,
+div:has(> .notistack-SnackbarContainer) {
+    display: none !important;
+}
+
+.encore-announcement-set,
+div:has(> .encore-announcement-set) {
     display: none !important;
 }
 
@@ -480,19 +507,28 @@ body.spotui-spotify-enabled .search-modal-searchBar {
 
 body.spotui-spotify-enabled .x-searchInput-searchInputInput,
 body.spotui-spotify-enabled .main-globalNav-searchInputText,
+body.spotui-spotify-enabled .main-globalNav-searchInputContainer input,
+body.spotui-spotify-enabled form[role="search"] input,
 body.spotui-spotify-enabled .search-modal-searchBar input {
     color: var(--spotui-accent, #ff8c42) !important;
+    -webkit-text-fill-color: var(--spotui-accent, #ff8c42) !important;
     background: transparent !important;
     border: none !important;
     outline: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
     font-family: "JetBrains Mono", "Fira Code", monospace !important;
     caret-color: var(--spotui-accent, #ff8c42) !important;
 }
 
 body.spotui-spotify-enabled .x-searchInput-searchInputInput::placeholder,
 body.spotui-spotify-enabled .main-globalNav-searchInputText::placeholder,
+body.spotui-spotify-enabled .main-globalNav-searchInputContainer input::placeholder,
+body.spotui-spotify-enabled form[role="search"] input::placeholder,
 body.spotui-spotify-enabled .search-modal-searchBar input::placeholder {
     color: #777 !important;
+    -webkit-text-fill-color: #777 !important;
+    opacity: 1 !important;
 }
 
 body.spotui-spotify-enabled .x-searchInput-searchInputSearchIcon,
@@ -522,14 +558,30 @@ body.spotui-search-mode #spotui-controls {
 body.spotui-tui-hidden #spotui-back-btn,
 body.spotui-spotify-enabled #spotui-back-btn,
 body.spotui-search-mode #spotui-back-btn {
-    position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
+    position: static !important;
+    transform: none !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: auto !important;
+    min-width: unset !important;
+    height: auto !important;
+    aspect-ratio: auto !important;
+    padding: 6px 12px !important;
+    margin: 0 0 0 8px !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    font-family: "JetBrains Mono", monospace !important;
+    font-size: 13px !important;
+    line-height: 1.2 !important;
+    color: var(--input-text-color, #000) !important;
+    background: var(--input-bg-color, #ff8c42) !important;
+    border-radius: 0 !important;
+    pointer-events: auto !important;
     z-index: 10020 !important;
-    display: block !important;
-    min-width: 160px;
-    padding: 10px 16px;
+    cursor: pointer !important;
+    -webkit-app-region: no-drag !important;
+    app-region: no-drag !important;
 }
 
 body:not(.spotui-tui-hidden):not(.spotui-spotify-enabled):not(.spotui-search-mode) #spotui-back-btn {
@@ -706,12 +758,8 @@ body.spotui-search-mode .Root__globalNav .main-globalNav-searchContainer {
 }
 
 body.spotui-search-mode #spotui-back-btn {
-    position: fixed !important;
-    top: auto !important;
-    bottom: 110px !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    z-index: 10020 !important;
+    position: static !important;
+    transform: none !important;
 }
 
 body.spotui-search-mode .Root__globalNav button[aria-label="Home"],
@@ -877,13 +925,52 @@ body.spotui-spotify-enabled .main-shelf-shelfGrid.main-gridContainer-gridContain
     width: 100% !important;
 }
 
-body.spotui-spotify-enabled .main-shelf-shelfGrid.main-gridContainer-gridContainer > * {
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist .main-gridContainer-gridContainer {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
+    gap: 12px !important;
+    width: 100% !important;
+}
+
+body.spotui-spotify-enabled .main-shelf-shelfGrid.main-gridContainer-gridContainer > *,
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist .main-gridContainer-gridContainer > * {
     width: 100% !important;
     max-width: 100% !important;
     min-width: 0 !important;
     flex: none !important;
     box-sizing: border-box !important;
     margin: 0 !important;
+}
+
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist ul[role="treegrid"] {
+    display: block !important;
+    width: 100% !important;
+}
+
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist .main-gridContainer-gridContainer > [role="row"] {
+    display: block !important;
+    height: auto !important;
+}
+
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist [data-encore-id="card"] {
+    background: #000 !important;
+    border: 1px solid var(--spotui-accent, #ff8c42) !important;
+    box-shadow: inset 0 0 0 1px rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    border-radius: 0 !important;
+    height: 100% !important;
+    padding: 6px !important;
+}
+
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist .main-cardImage-imageWrapper,
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist .main-cardImage-image {
+    width: 100% !important;
+    border-radius: 0 !important;
+}
+
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist [data-encore-id="text"],
+body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist .e-10860-card-title {
+    font-size: 12px !important;
+    line-height: 1.2 !important;
 }
 
 body.spotui-spotify-enabled .marketplace-grid.main-gridContainer-gridContainer.main-gridContainer-fixedWidth > .main-card-card {
@@ -1030,7 +1117,14 @@ body.spotui-spotify-enabled .marketplace-footer button {
     font-family: "JetBrains Mono", "Fira Code", monospace !important;
 }
 
-/* Credit: darkthemer */
+body.spotui-spotify-enabled .marketplace-footer {
+    padding-bottom: 120px !important;
+}
+
+body.spotui-spotify-enabled.spotui-custom-bar-on .marketplace-footer {
+    padding-bottom: 176px !important;
+}
+
 .main-home-content::before, .uFQUpbITgGovaKRr6I_g h1, #searchPage::before, .collection-collection-header h1, .marketplace-header::before, .x-settings-headerContainer h1, .queue-queuePage-header, .n6LsTkKvpO88xeRyRTdw {
     display: block;
     width: fit-content;
@@ -1095,4 +1189,7 @@ body.spotui-spotify-enabled .marketplace-footer button {
 .queue-queuePage-header, .n6LsTkKvpO88xeRyRTdw {
     margin: 50px 0;
 }
-/* --- */
+
+body.spotui-spotify-enabled .playlist-playlist-playlistContent {
+    padding-bottom: 120px !important;
+}

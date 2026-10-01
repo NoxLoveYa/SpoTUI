@@ -1,4 +1,4 @@
-import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, createControlButtons } from "./appearance.js";
+import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, createControlButtons } from "./appearance.js";
 import { initUpdateBanner, showRestartPopup } from "./banner.js";
 import { LYRICS_ANIMATION_KEY, LYRICS_STORAGE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { resumeJamFromStorage } from "./jam.js";
@@ -12,6 +12,7 @@ import { applyShade } from "./shade.js";
 import { injectStyle } from "./styles.js";
 import { initSync } from "./sync.js";
 import { createTerminal } from "./terminal.js";
+import { restoreVisualizer } from "./visualizer.js";
 import { setWallpaper } from "./wallpaper.js";
 import { dbg } from "./utils.js";
 
@@ -83,6 +84,9 @@ try {
         dbg("[SpoTUI-pin] boot: wall OFF,", getPosterImages().length, "stored image(s) (enable with tui -posters on).");
     }
     applyLyricColors();
+    applyLyricLineSpacing();
+    applyVisualizerColor();
+    restoreVisualizer();
     applyPlayerBarColors();
     applyPlayerBarVisibility();
     applyCustomBarState();

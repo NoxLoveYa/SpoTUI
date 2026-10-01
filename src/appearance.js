@@ -1,4 +1,4 @@
-import { ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, SHADE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, SHADE_KEY, VISUALIZER_COLOR, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { startAsciiPaintLoop } from "./ascii.js";
 import { resetPosterPrefs, setPostersEnabled } from "./posters.js";
 import { applyShade, isValidShade, parseHexToRgb255 } from "./shade.js";
@@ -38,6 +38,18 @@ export function applyLyricColors() {
     } catch (e) {
         console.error("SpoTUI: Failed to apply lyric colors", e);
     }
+}
+
+export function applyLyricLineSpacing() {
+	try {
+		applyCssVar(LYRICS_LINE_SPACING, "--lyrics-line-spacing");
+	} catch (e) {
+		console.error("SpoTUI: Failed to apply line spacing", e);
+	}
+}
+
+export function applyVisualizerColor() {
+    applyCssVar(VISUALIZER_COLOR, "--visualizer-color");
 }
 
 // Apply stored player bar color preferences from localStorage
@@ -352,11 +364,17 @@ export function createControlButtons() {
         handleLyricsCommand();
     });
 
+    const placeBackBtn = () => {
+        const nav = document.querySelector(".main-globalNav-historyButtonsWrapper");
+        if (nav && backBtn.parentElement !== nav) nav.appendChild(backBtn);
+    };
+
     const spotifyBtn = createButton("enable-spotify-btn", "spotui-control-btn", "Enable Spotify", () => {
         const enabled = document.body.classList.toggle("spotui-spotify-enabled");
         if (enabled) {
             document.body.classList.add("spotui-tui-hidden");
             spotifyBtn.textContent = "Disable Spotify";
+            placeBackBtn();
         } else {
             spotifyBtn.textContent = "Enable Spotify";
             document.body.classList.remove("spotui-tui-hidden");
@@ -382,6 +400,7 @@ export function createControlButtons() {
         spotifyBtn.textContent = "Enable Spotify";
         syncLyricsState();
     });
+    backBtn.type = "button";
     document.body.appendChild(backBtn);
 }
 // Toggle ASCII logo visibility
@@ -419,6 +438,12 @@ export function resetAllSettings() {
     storageRemove(LYRICS_COLOR_INACTIVE);
     storageRemove(LYRICS_COLOR_LIGHT_INACTIVE);
     applyLyricColors();
+
+    storageRemove(LYRICS_LINE_SPACING);
+    applyLyricLineSpacing();
+
+    storageRemove(VISUALIZER_COLOR);
+    applyVisualizerColor();
 
     storageRemove(PLAYER_BAR_BG);
     storageRemove(PLAYER_BAR_BORDER);

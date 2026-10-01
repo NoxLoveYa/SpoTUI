@@ -1,13 +1,14 @@
 import { handleActionsCommand } from "./actions.js";
-import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, handleColorArgs, toggleLogo, updateCustomBar } from "./appearance.js";
+import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, handleColorArgs, toggleLogo, updateCustomBar } from "./appearance.js";
 import { resetGrid, startAsciiPaintLoop } from "./ascii.js";
 import { initUpdateBanner, showRestartPopup } from "./banner.js";
-import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, HISTORY_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, HISTORY_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, VISUALIZER_COLOR, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { getAllowedJamGuestCommands, jamCreate, jamJoin, jamLeave, jamSay } from "./jam.js";
 import { getKeybinds, isRestrictedThemeCommand, saveKeybinds, stripCommandPrefix } from "./keybinds.js";
 import { handleLyricsCommand, syncLyricsHighlight } from "./lyrics.js";
+import { handleVisualizerCommand } from "./visualizer.js";
 import { getAllowedOnboardingCommands } from "./onboarding.js";
-import { openAboutPanel, closeActivePanel, consumePendingMenu, openBoardsPanel, openHelpPanel, openPlaylistPanel, openSavesPanel, openThemePanel } from "./panels.js";
+import { openAboutPanel, closeActivePanel, consumePendingMenu, openAdd2listPanel, openBoardsPanel, openHelpPanel, openPlaylistPanel, openSavesPanel, openThemePanel } from "./panels.js";
 import { getPlaylists } from "./playlists.js";
 import { openSearchPanel } from "./search.js";
 import { app } from "./state.js";
@@ -34,16 +35,16 @@ export async function execute(cmd, opts = {}) {
 // First-token command inventory (mirrors the executeInner branches below).
 // Used by history: unknown shapes stay session-only instead of persisting.
 const KNOWN_COMMANDS = new Set([
-    "tui", "standby", "help", "about", "playlist", "list", "theme",
+    "tui", "standby", "help", "about", "playlist", "list", "add2list", "theme",
     "discord", "search", "seek", "s", "volume", "v", "loop", "superloop",
-    "lyrics", "dj", "echo", "jam",
+    "lyrics", "visualizer", "dj", "echo", "jam",
     "play", "pause", "p", "skip", "back", "shuffle", "like",
 ]);
 const KNOWN_TUI_SUBS = new Set([
     "-l", "-a", "-debug", "-shade", "-wp", "-t", "bind", "unbind",
     "actions", "restore", "-posters", "-poster", "-pin-board",
     "-pin-boards", "-pin-clear", "-pin-feed", "-pin-refresh", "-pin-token",
-    "-ly", "-bar", "-progress", "-panel", "-inputs",
+    "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs",
 ]);
 const KNOWN_JAM_SUBS = new Set(["create", "join", "leave"]);
 
@@ -74,7 +75,7 @@ async function executeInner(cmd, opts = {}) {
 
     const allowedJamCommands = getAllowedJamGuestCommands();
     if (allowedJamCommands && !allowedJamCommands.has(command)) {
-        jamSay("Commands limited to: `volume`, `lyrics`, `jam leave`");
+        jamSay("Commands limited to: `volume`, `lyrics`, `visualizer`, `jam leave`");
         return;
     }
 
@@ -330,6 +331,11 @@ async function executeInner(cmd, opts = {}) {
             applyLyricColors();
             return;
         }
+        if (argsLower.includes("-viz")) {
+            handleColorArgs(args, { "-color": VISUALIZER_COLOR });
+            applyVisualizerColor();
+            return;
+        }
         if (argsLower.includes("-ly") && argsLower.includes("-animation")) {
             const idx = argsLower.indexOf("-animation");
             const state = (args[idx + 1] || "").toLowerCase();
@@ -343,6 +349,20 @@ async function executeInner(cmd, opts = {}) {
             if (app.lyricsPanelOpen) {
                 syncLyricsHighlight(true);
             }
+            return;
+        }
+        if (argsLower.includes("-ly") && argsLower.includes("-spacing")) {
+            const idx = argsLower.indexOf("-spacing");
+            let value = args[idx + 1];
+            if ((value || "").toLowerCase() === "off") {
+                storageRemove(LYRICS_LINE_SPACING);
+            } else {
+                if (!isNaN(value)) {
+                    value = value + "px";
+                }
+                storageSet(LYRICS_LINE_SPACING, value);
+            }
+            applyLyricLineSpacing();
             return;
         }
         if (argsLower.includes("-bar")) {
@@ -480,6 +500,7 @@ async function executeInner(cmd, opts = {}) {
 
         openPlaylistPanel(); return; 
     }
+    if (command === "add2list") { openAdd2listPanel(); return; }
     if (command === "theme") { openThemePanel(); return; }
     if (command === "discord") {
         storageRemove(UPDATE_BANNER_KEY);
@@ -541,6 +562,7 @@ async function executeInner(cmd, opts = {}) {
     if (command === "loop") { handleRepeatCommand("loop", argText); return; }
     if (command === "superloop") { handleRepeatCommand("superloop", argText); return; }
     if (command === "lyrics") { handleLyricsCommand(argText); return; }
+    if (command === "visualizer") { handleVisualizerCommand(argText); return; }
     if (command === "dj") {
         try {
             app.playlists = await getPlaylists();
