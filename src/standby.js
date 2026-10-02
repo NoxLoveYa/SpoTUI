@@ -73,7 +73,7 @@ function removeOverlay() {
 }
 
 function restoreSpotui() {
-    document.body.classList.remove("spotui-standby", "spotui-search-mode", "spotui-spotify-enabled", "spotui-tui-hidden");
+    document.body.classList.remove("spotui-standby", "spotui-spotify-enabled", "spotui-tui-hidden");
     const spotifyBtn = document.getElementById("enable-spotify-btn");
     if (spotifyBtn) spotifyBtn.textContent = "Enable Spotify";
     if (swallowKeys) return;

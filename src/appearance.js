@@ -91,18 +91,20 @@ export function applyPlayerBarVisibility() {
     }
 }
 
-// Elements this module hides inline (cleared on Spotify mode).
-function barTouched() { return (window.__spotuiBarNodes = window.__spotuiBarNodes || []); }
+// Elements this module hides inline (cleared on Spotify mode) and the last
+// detected native bar region.
+let barTouched = [];
+let nativeBar = null;
 
 function clearBarInline() {
-    try { barTouched().forEach((el) => { try { el.style.removeProperty("display"); } catch {} }); } catch {}
-    window.__spotuiBarNodes = [];
-    try { document.querySelectorAll("[data-spotui-keep]").forEach((el) => { try { el.removeAttribute("data-spotui-keep"); } catch {} }); } catch {}
+    barTouched.forEach((el) => { try { el.style.removeProperty("display"); } catch {} });
+    barTouched = [];
+    document.querySelectorAll("[data-spotui-keep]").forEach((el) => el.removeAttribute("data-spotui-keep"));
 }
 
 function touchBarNode(el, value) {
     try { el.style.setProperty("display", value, "important"); } catch {}
-    if (!barTouched().includes(el)) barTouched().push(el);
+    if (!barTouched.includes(el)) barTouched.push(el);
 }
 
 // Exempt a node from landmark hiding. No display value is ever set to
@@ -142,50 +144,39 @@ function climbBarShaped(seed, main) {
     return top;
 }
 
-// Hidden nodes report zero rects, so a hidden bar is unfindable by
-// geometry. Reveal via the mode class, scan, climb, restore — one task.
 function isBarShaped(r) {
     const W = window.innerWidth, H = window.innerHeight;
     return r.width > W * 0.4 && r.height > 0 && r.height < 280 && r.bottom > H - 280;
 }
 
+// Find the native player bar: the data-testid hook first, then a bottom-strip
+// geometry scan. Hidden nodes report zero rects, so the last resort reveals
+// the client via the mode class, scans, and restores it — synchronously, so
+// nothing paints. Attribute observers (lyrics) only see the settled state.
 function detectNativeBar() {
     try {
         const main = document.getElementById("main");
         if (!main) return null;
         const direct = main.querySelector('[data-testid="now-playing-bar"]');
         if (direct) return direct;
-        const prev = window.__spotuiNativeBar;
-        if (prev && main.contains(prev)) {
-            try { if (isBarShaped(prev.getBoundingClientRect())) return prev; } catch {}
+        if (nativeBar && main.contains(nativeBar)) {
+            try { if (isBarShaped(nativeBar.getBoundingClientRect())) return nativeBar; } catch {}
         }
-        let seeds = scanBottomSeeds(main);
-        for (const seed of seeds) {
-            const top = climbBarShaped(seed, main);
-            if (top) return top;
-        }
-        // Reveal via the mode class itself: every TUI-scoped hiding rule
-        // (present and future) stops applying, with client layout intact.
-        // Synchronous add/measure/remove = no paint, no flash. Attribute
-        // observers (lyrics) only see the settled state in a microtask.
-        let revealed = false;
+        const scan = () => {
+            for (const seed of scanBottomSeeds(main)) {
+                const top = climbBarShaped(seed, main);
+                if (top) return top;
+            }
+            return null;
+        };
+        const found = scan();
+        if (found) return found;
         try {
             document.body.classList.add("spotui-spotify-enabled");
-            revealed = true;
             void main.offsetHeight;
-            seeds = scanBottomSeeds(main);
-            let top = null;
-            for (const seed of seeds) {
-                top = climbBarShaped(seed, main);
-                if (top) break;
-            }
-            if (revealed) {
-                try { document.body.classList.remove("spotui-spotify-enabled"); } catch {}
-            }
-            return top;
-        } catch {
-            try { document.body.classList.remove("spotui-spotify-enabled"); } catch {}
-            return null;
+            return scan();
+        } finally {
+            document.body.classList.remove("spotui-spotify-enabled");
         }
     } catch { return null; }
 }
@@ -197,12 +188,12 @@ function detectNativeBar() {
 function showNativeBar() {
     clearBarInline();
     const main = document.getElementById("main");
-    let bar = detectNativeBar() || window.__spotuiNativeBar || null;
+    const bar = detectNativeBar() || nativeBar;
     if (!bar || !main || !main.contains(bar)) {
         scheduleNativeBarTag();
         return;
     }
-    window.__spotuiNativeBar = bar;
+    nativeBar = bar;
     const chain = [];
     let el = bar;
     while (el && el !== main && el !== document.body) {
@@ -217,17 +208,16 @@ function showNativeBar() {
             if (sib !== n && sib.nodeType === 1) touchBarNode(sib, "none");
         });
     });
-    hookBarPlayer();
 }
 
-// Hide native bar: inline-hide the detected region root (landmark CSS
-// covers the rest). Falls back to the legacy class for older clients.
+// Hide native bar: inline-hide the detected region root (the landmark CSS
+// and the spotui-bar-off class cover the rest).
 function hideNativeBar() {
     clearBarInline();
     const main = document.getElementById("main");
-    const bar = detectNativeBar() || window.__spotuiNativeBar || null;
+    const bar = detectNativeBar() || nativeBar;
     if (bar && (!main || main.contains(bar))) {
-        window.__spotuiNativeBar = bar;
+        nativeBar = bar;
         touchBarNode(bar, "none");
     }
 }
@@ -257,7 +247,10 @@ function hookBarPlayer() {
             const reassert = () => {
                 try {
                     if (document.body.classList.contains("spotui-spotify-enabled")) return;
-                    applyPlayerBarVisibility();
+                    // Not applyPlayerBarVisibility: that would reset the
+                    // spotui-bar-off class (jam guests force it on).
+                    if (storageGet(PLAYER_BAR_VISIBLE) === "off") hideNativeBar();
+                    else showNativeBar();
                 } catch {}
             };
             Spicetify.Player.addEventListener("songchange", reassert);
@@ -396,7 +389,7 @@ export async function updateCustomBar() {
     try {
         const bar = document.getElementById("spotui-custom-bar");
         if (!bar) return;
-        const track = (Spicetify.Player.data || {}).item || (Spicetify.Player.data || {}).track || null;
+        const track = Spicetify.Player.data?.item;
         if (!track) {
             if (!bar.querySelector(".spotui-custom-bar-empty")) {
                 bar.innerHTML = "<div class='spotui-custom-bar-empty'>Nothing playing</div>";
@@ -564,7 +557,6 @@ export function createControlButtons() {
         } else {
             spotifyBtn.textContent = "Enable Spotify";
             document.body.classList.remove("spotui-tui-hidden");
-            document.body.classList.remove("spotui-search-mode");
             applyPlayerBarVisibility();
             applyCustomBarState();
             startAsciiPaintLoop();
@@ -584,7 +576,7 @@ export function createControlButtons() {
     (document.getElementById("spotui-footer") || document.body).appendChild(controls);
 
     const backBtn = createButton("spotui-back-btn", "spotui-control-btn", "Back", () => {
-        document.body.classList.remove("spotui-search-mode", "spotui-spotify-enabled", "spotui-tui-hidden");
+        document.body.classList.remove("spotui-spotify-enabled", "spotui-tui-hidden");
         spotifyBtn.textContent = "Enable Spotify";
         applyPlayerBarVisibility();
         applyCustomBarState();
