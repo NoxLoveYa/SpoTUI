@@ -371,6 +371,7 @@ async function executeInner(cmd, opts = {}) {
                 const state = (args[idx + 1] || "").toLowerCase();
                 if (state === "on" || state === "off") {
                     storageSet(PLAYER_BAR_VISIBLE, state);
+                    if (state === "on") storageSet(CUSTOM_BAR_ENABLED, "off");
                     applyPlayerBarVisibility();
                     applyCustomBarState();
                 }
@@ -388,6 +389,10 @@ async function executeInner(cmd, opts = {}) {
                 const state = (args[idx + 1] || "").toLowerCase();
                 if (state === "on" || state === "off") {
                     storageSet(CUSTOM_BAR_ENABLED, state);
+                    if (state === "on") {
+                        storageSet(PLAYER_BAR_VISIBLE, "off");
+                        applyPlayerBarVisibility();
+                    }
                     applyCustomBarState();
                 }
                 if (argsLower.includes("-progress")) {

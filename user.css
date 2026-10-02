@@ -1,10 +1,5 @@
 .Root__main-view,
 .Root__nav-bar,
-nav,
-main,
-aside,
-.main-view-container,
-.YourLibraryX,
 .main-topBar-container,
 .main-yourLibraryX-libraryRootlist,
 .main-yourLibraryX-entryPoints,
@@ -16,13 +11,21 @@ aside,
     display: none !important;
 }
 
+/* TUI mode on recent Spotify (1.3.x): the base UI lives in semantic
+   landmarks now (legacy Root__* hooks are dead upstream). Search mode is
+   excluded: it overlays Spotify's own search box, which needs its nav. */
+body:not(.spotui-spotify-enabled):not(.spotui-search-mode) nav,
+body:not(.spotui-spotify-enabled):not(.spotui-search-mode) main,
+body:not(.spotui-spotify-enabled):not(.spotui-search-mode) aside,
+body:not(.spotui-spotify-enabled):not(.spotui-search-mode) .main-view-container,
+body:not(.spotui-spotify-enabled):not(.spotui-search-mode) .YourLibraryX {
+    display: none !important;
+}
+/* (Native player bar visibility is enforced inline at runtime — see
+   applyPlayerBarVisibility — since no Spotify hook survives renames.) */
+
 body.spotui-spotify-enabled .Root__main-view,
 body.spotui-spotify-enabled .Root__nav-bar,
-body.spotui-spotify-enabled nav,
-body.spotui-spotify-enabled main,
-body.spotui-spotify-enabled aside,
-body.spotui-spotify-enabled .main-view-container,
-body.spotui-spotify-enabled .YourLibraryX,
 body.spotui-spotify-enabled .main-topBar-container,
 body.spotui-spotify-enabled .Root__globalNav,
 body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist,

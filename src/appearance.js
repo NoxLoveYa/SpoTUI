@@ -78,14 +78,137 @@ export function applyPlayerBarColors() {
 export function applyPlayerBarVisibility() {
     try {
         const visible = storageGet(PLAYER_BAR_VISIBLE);
-        if (visible === "off") {
-            document.body.classList.add("spotui-bar-off");
-        } else {
-            document.body.classList.remove("spotui-bar-off");
-        }
+        document.body.classList.toggle("spotui-bar-off", visible === "off");
+        // The legacy .Root__now-playing-bar hook is dead on recent Spotify
+        // and the bar can nest inside hidden landmarks, so visibility is
+        // enforced inline on the detected bar region (no class names).
+        nativeBarTagTries = 0;
+        if (visible === "off") hideNativeBar();
+        else showNativeBar();
     } catch {
         console.error("SpoTUI: Failed to apply player bar visibility");
     }
+}
+
+// Elements this module hides/shows inline (cleared on Spotify mode).
+function barTouched() { return (window.__spotuiBarNodes = window.__spotuiBarNodes || []); }
+
+function clearBarInline() {
+    try { barTouched().forEach((el) => { try { el.style.removeProperty("display"); } catch {} }); } catch {}
+    window.__spotuiBarNodes = [];
+}
+
+function touchBarNode(el, value) {
+    try { el.style.setProperty("display", value, "important"); } catch {}
+    if (!barTouched().includes(el)) barTouched().push(el);
+}
+
+// Locate the native player bar without relying on Spotify class names:
+// the volume/progress sliders sit in a wide, short strip pinned near the
+// viewport bottom. Returns the topmost such ancestor (bar region root).
+function findNativeBarRoot() {
+    try {
+        const main = document.getElementById("main");
+        if (!main) return null;
+        const sliders = Array.from(main.querySelectorAll('input[type="range"]'));
+        const low = sliders.filter((r) => {
+            try {
+                const b = r.getBoundingClientRect();
+                return b.height > 0 && b.bottom > window.innerHeight - 240;
+            } catch { return false; }
+        });
+        if (!low.length) return null;
+        let el = low[0];
+        let top = null;
+        while (el && el !== main) {
+            let r;
+            try { r = el.getBoundingClientRect(); } catch { break; }
+            if (r.width > window.innerWidth * 0.5 && r.height > 0 && r.height < 280 && r.bottom > window.innerHeight - 280) top = el;
+            el = el.parentElement;
+        }
+        return top;
+    } catch { return null; }
+}
+
+// Show native bar: revert the chain (bar root up to #main) so it survives
+// hidden landmarks with grid placement intact, and hide each level's other
+// children inline. Nothing inside the bar root is touched, so controls,
+// sliders and text render normally.
+function showNativeBar() {
+    clearBarInline();
+    const main = document.getElementById("main");
+    let bar = findNativeBarRoot() || window.__spotuiNativeBar || null;
+    if (!bar || !main || !main.contains(bar)) {
+        scheduleNativeBarTag();
+        return;
+    }
+    window.__spotuiNativeBar = bar;
+    const chain = [];
+    let el = bar;
+    while (el && el !== main && el !== document.body) {
+        chain.push(el);
+        el = el.parentElement;
+    }
+    chain.forEach((n) => {
+        touchBarNode(n, "revert");
+        const p = n.parentElement;
+        if (!p) return;
+        Array.from(p.children).forEach((sib) => {
+            if (sib !== n && sib.nodeType === 1) touchBarNode(sib, "none");
+        });
+    });
+    hookBarSongchange();
+}
+
+// Hide native bar: inline-hide the detected region root (landmark CSS
+// covers the rest). Falls back to the legacy class for older clients.
+function hideNativeBar() {
+    clearBarInline();
+    const main = document.getElementById("main");
+    const bar = findNativeBarRoot() || window.__spotuiNativeBar || null;
+    if (bar && (!main || main.contains(bar))) {
+        window.__spotuiNativeBar = bar;
+        touchBarNode(bar, "none");
+    }
+}
+
+let nativeBarTagTries = 0;
+// The player DOM can mount after the bundle runs; retry a few times
+// (bounded) so a boot with native bar on keeps it visible.
+function scheduleNativeBarTag() {
+    if (nativeBarTagTries >= 3) return;
+    nativeBarTagTries += 1;
+    setTimeout(() => {
+        try {
+            if (storageGet(PLAYER_BAR_VISIBLE) === "off") return;
+            if (document.body.classList.contains("spotui-spotify-enabled")) return;
+            showNativeBar();
+        } catch {}
+    }, 2500);
+}
+
+let barSongHooked = false;
+// Track changes can replace bar-adjacent nodes; re-assert state cheaply.
+function hookBarSongchange() {
+    if (barSongHooked) return;
+    try {
+        if (Spicetify?.Player?.addEventListener) {
+            Spicetify.Player.addEventListener("songchange", () => {
+                try {
+                    if (storageGet(PLAYER_BAR_VISIBLE) === "off") return;
+                    if (document.body.classList.contains("spotui-spotify-enabled")) return;
+                    showNativeBar();
+                } catch {}
+            });
+            barSongHooked = true;
+        }
+    } catch {}
+}
+
+// Spotify mode shows the full client: drop JS bar overrides (stored state
+// is re-applied when returning to TUI mode).
+export function clearNativeBarOverrides() {
+    clearBarInline();
 }
 
 // Render progress bar using specified style and fill percentage
@@ -374,11 +497,14 @@ export function createControlButtons() {
         if (enabled) {
             document.body.classList.add("spotui-tui-hidden");
             spotifyBtn.textContent = "Disable Spotify";
+            clearNativeBarOverrides();
             placeBackBtn();
         } else {
             spotifyBtn.textContent = "Enable Spotify";
             document.body.classList.remove("spotui-tui-hidden");
             document.body.classList.remove("spotui-search-mode");
+            applyPlayerBarVisibility();
+            applyCustomBarState();
             startAsciiPaintLoop();
         }
     });
@@ -398,6 +524,8 @@ export function createControlButtons() {
     const backBtn = createButton("spotui-back-btn", "spotui-control-btn", "Back", () => {
         document.body.classList.remove("spotui-search-mode", "spotui-spotify-enabled", "spotui-tui-hidden");
         spotifyBtn.textContent = "Enable Spotify";
+        applyPlayerBarVisibility();
+        applyCustomBarState();
         syncLyricsState();
     });
     backBtn.type = "button";
