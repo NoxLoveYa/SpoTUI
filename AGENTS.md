@@ -2,9 +2,9 @@
 
 ## Source of truth
 - Edit `src/*.js` + `user.css` only. Entry: `src/main.js`.
-- `theme.js` is a build artifact (gitignored, bundled by CI via
-  `npx --yes rollup src/main.js --file theme.js --format iife`). Never edit it
-  by hand, never force-add/commit it.
+- `theme.js` is a build artifact, generated from `src/main.js` via
+  `npx --yes rollup src/main.js --file theme.js --format iife`. It is
+  committed: rebuild it before committing so it matches `src/`.
 
 ## Local test loop (Spicetify override)
 1. Find the Spicetify installation:
@@ -37,7 +37,7 @@
 - Commit scope: `src/`, `user.css`, `color.ini` (intentional only),
   `manifest.json`, `scripts/`, docs. No secrets, no local paths, no user data.
   Before commit, `git diff --stat` must show only intended files (revert any
-  debug prints and the rebuilt `theme.js`).
+  debug prints; run the rollup build so `theme.js` matches `src/`).
 
 ## Hard-won rules (from audits — follow, don't re-learn)
 - CSS: triplet vars take comma alpha only —
