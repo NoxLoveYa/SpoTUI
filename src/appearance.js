@@ -83,6 +83,7 @@ export function applyPlayerBarVisibility() {
         // and the bar can nest inside hidden landmarks, so visibility is
         // enforced inline on the detected bar region (no class names).
         nativeBarTagTries = 0;
+        hookBarPlayer();
         if (visible === "off") hideNativeBar();
         else showNativeBar();
     } catch {
@@ -90,12 +91,13 @@ export function applyPlayerBarVisibility() {
     }
 }
 
-// Elements this module hides/shows inline (cleared on Spotify mode).
+// Elements this module hides inline (cleared on Spotify mode).
 function barTouched() { return (window.__spotuiBarNodes = window.__spotuiBarNodes || []); }
 
 function clearBarInline() {
     try { barTouched().forEach((el) => { try { el.style.removeProperty("display"); } catch {} }); } catch {}
     window.__spotuiBarNodes = [];
+    try { document.querySelectorAll("[data-spotui-keep]").forEach((el) => { try { el.removeAttribute("data-spotui-keep"); } catch {} }); } catch {}
 }
 
 function touchBarNode(el, value) {
@@ -103,41 +105,99 @@ function touchBarNode(el, value) {
     if (!barTouched().includes(el)) barTouched().push(el);
 }
 
-// Locate the native player bar without relying on Spotify class names:
-// the volume/progress sliders sit in a wide, short strip pinned near the
-// viewport bottom. Returns the topmost such ancestor (bar region root).
-function findNativeBarRoot() {
+// Exempt a node from landmark hiding. No display value is ever set to
+// show: both inline and stylesheet revert would clobber Spotify's own
+// flex/grid with browser defaults — exemption preserves client layout.
+function keepBarNode(el) {
+    try { el.setAttribute("data-spotui-keep", "1"); } catch {}
+}
+
+// Collect every real control in the bottom strip (play button, art,
+// sliders — any tag, since the player is custom div-built). Pure reads;
+// cheap when batched with no writes in between.
+function scanBottomSeeds(main) {
+    let els = [];
+    try { els = Array.from(main.querySelectorAll("*")); } catch { return []; }
+    const H = window.innerHeight, W = window.innerWidth;
+    const out = [];
+    for (const el of els) {
+        let r;
+        try { r = el.getBoundingClientRect(); } catch { continue; }
+        if (r.width > 24 && r.width < W * 0.9 && r.height >= 3 && r.height < 200 && r.bottom > H - 280) out.push(el);
+        if (out.length >= 40) break;
+    }
+    return out;
+}
+
+// Climb from a control to the topmost bar-shaped ancestor (wide, short,
+// bottom-pinned): the player bar region root.
+function climbBarShaped(seed, main) {
+    let el = seed, top = null;
+    while (el && el !== main) {
+        let r;
+        try { r = el.getBoundingClientRect(); } catch { break; }
+        if (isBarShaped(r)) top = el;
+        el = el.parentElement;
+    }
+    return top;
+}
+
+// Hidden nodes report zero rects, so a hidden bar is unfindable by
+// geometry. Reveal via the mode class, scan, climb, restore — one task.
+function isBarShaped(r) {
+    const W = window.innerWidth, H = window.innerHeight;
+    return r.width > W * 0.4 && r.height > 0 && r.height < 280 && r.bottom > H - 280;
+}
+
+function detectNativeBar() {
     try {
         const main = document.getElementById("main");
         if (!main) return null;
-        const sliders = Array.from(main.querySelectorAll('input[type="range"]'));
-        const low = sliders.filter((r) => {
-            try {
-                const b = r.getBoundingClientRect();
-                return b.height > 0 && b.bottom > window.innerHeight - 240;
-            } catch { return false; }
-        });
-        if (!low.length) return null;
-        let el = low[0];
-        let top = null;
-        while (el && el !== main) {
-            let r;
-            try { r = el.getBoundingClientRect(); } catch { break; }
-            if (r.width > window.innerWidth * 0.5 && r.height > 0 && r.height < 280 && r.bottom > window.innerHeight - 280) top = el;
-            el = el.parentElement;
+        const direct = main.querySelector('[data-testid="now-playing-bar"]');
+        if (direct) return direct;
+        const prev = window.__spotuiNativeBar;
+        if (prev && main.contains(prev)) {
+            try { if (isBarShaped(prev.getBoundingClientRect())) return prev; } catch {}
         }
-        return top;
+        let seeds = scanBottomSeeds(main);
+        for (const seed of seeds) {
+            const top = climbBarShaped(seed, main);
+            if (top) return top;
+        }
+        // Reveal via the mode class itself: every TUI-scoped hiding rule
+        // (present and future) stops applying, with client layout intact.
+        // Synchronous add/measure/remove = no paint, no flash. Attribute
+        // observers (lyrics) only see the settled state in a microtask.
+        let revealed = false;
+        try {
+            document.body.classList.add("spotui-spotify-enabled");
+            revealed = true;
+            void main.offsetHeight;
+            seeds = scanBottomSeeds(main);
+            let top = null;
+            for (const seed of seeds) {
+                top = climbBarShaped(seed, main);
+                if (top) break;
+            }
+            if (revealed) {
+                try { document.body.classList.remove("spotui-spotify-enabled"); } catch {}
+            }
+            return top;
+        } catch {
+            try { document.body.classList.remove("spotui-spotify-enabled"); } catch {}
+            return null;
+        }
     } catch { return null; }
 }
 
-// Show native bar: revert the chain (bar root up to #main) so it survives
-// hidden landmarks with grid placement intact, and hide each level's other
-// children inline. Nothing inside the bar root is touched, so controls,
-// sliders and text render normally.
+// Show native bar: exempt the chain (bar root up to #main) from landmark
+// hiding and hide each level's other children inline. Nothing inside the
+// bar root is touched and no display value is forced to show, so client
+// flex/grid layout and all controls render normally.
 function showNativeBar() {
     clearBarInline();
     const main = document.getElementById("main");
-    let bar = findNativeBarRoot() || window.__spotuiNativeBar || null;
+    let bar = detectNativeBar() || window.__spotuiNativeBar || null;
     if (!bar || !main || !main.contains(bar)) {
         scheduleNativeBarTag();
         return;
@@ -150,14 +210,14 @@ function showNativeBar() {
         el = el.parentElement;
     }
     chain.forEach((n) => {
-        touchBarNode(n, "revert");
+        keepBarNode(n);
         const p = n.parentElement;
         if (!p) return;
         Array.from(p.children).forEach((sib) => {
             if (sib !== n && sib.nodeType === 1) touchBarNode(sib, "none");
         });
     });
-    hookBarSongchange();
+    hookBarPlayer();
 }
 
 // Hide native bar: inline-hide the detected region root (landmark CSS
@@ -165,7 +225,7 @@ function showNativeBar() {
 function hideNativeBar() {
     clearBarInline();
     const main = document.getElementById("main");
-    const bar = findNativeBarRoot() || window.__spotuiNativeBar || null;
+    const bar = detectNativeBar() || window.__spotuiNativeBar || null;
     if (bar && (!main || main.contains(bar))) {
         window.__spotuiNativeBar = bar;
         touchBarNode(bar, "none");
@@ -174,9 +234,9 @@ function hideNativeBar() {
 
 let nativeBarTagTries = 0;
 // The player DOM can mount after the bundle runs; retry a few times
-// (bounded) so a boot with native bar on keeps it visible.
+// (bounded) so a slow boot with native bar on keeps it visible.
 function scheduleNativeBarTag() {
-    if (nativeBarTagTries >= 3) return;
+    if (nativeBarTagTries >= 5) return;
     nativeBarTagTries += 1;
     setTimeout(() => {
         try {
@@ -184,23 +244,25 @@ function scheduleNativeBarTag() {
             if (document.body.classList.contains("spotui-spotify-enabled")) return;
             showNativeBar();
         } catch {}
-    }, 2500);
+    }, 4000);
 }
 
-let barSongHooked = false;
-// Track changes can replace bar-adjacent nodes; re-assert state cheaply.
-function hookBarSongchange() {
-    if (barSongHooked) return;
+let barPlayerHooked = false;
+// Re-assert stored bar state on playback changes (covers late mounts,
+// slow boots and node replacements). Installed eagerly; once-guarded.
+function hookBarPlayer() {
+    if (barPlayerHooked) return;
     try {
         if (Spicetify?.Player?.addEventListener) {
-            Spicetify.Player.addEventListener("songchange", () => {
+            const reassert = () => {
                 try {
-                    if (storageGet(PLAYER_BAR_VISIBLE) === "off") return;
                     if (document.body.classList.contains("spotui-spotify-enabled")) return;
-                    showNativeBar();
+                    applyPlayerBarVisibility();
                 } catch {}
-            });
-            barSongHooked = true;
+            };
+            Spicetify.Player.addEventListener("songchange", reassert);
+            Spicetify.Player.addEventListener("onplaypause", reassert);
+            barPlayerHooked = true;
         }
     } catch {}
 }
@@ -334,7 +396,7 @@ export async function updateCustomBar() {
     try {
         const bar = document.getElementById("spotui-custom-bar");
         if (!bar) return;
-        const track = Spicetify.Player.data.item;
+        const track = (Spicetify.Player.data || {}).item || (Spicetify.Player.data || {}).track || null;
         if (!track) {
             if (!bar.querySelector(".spotui-custom-bar-empty")) {
                 bar.innerHTML = "<div class='spotui-custom-bar-empty'>Nothing playing</div>";
