@@ -1,3 +1,4 @@
+import { COMMAND_NAMES } from "./constants.js";
 import { app } from "./state.js";
 
 // Ghost-text fill suggestions for the command bar: known full-line
@@ -46,6 +47,7 @@ const STATIC_SUGGESTIONS = [
     "tui actions list",
     "playlist ",
     "add2list",
+    "queue",
     "search ",
     "theme",
     "lyrics",
@@ -70,8 +72,29 @@ const STATIC_SUGGESTIONS = [
     "jam leave",
 ];
 
-// Newest-first history matches, then static matches not already listed.
-// Empty or exact input suggests nothing (quiet bar).
+// Word-by-word completion over every command in COMMAND_LIST: finishes the
+// last partial word when the words before it match a known command
+// ("tui -viz -ga" -> "tui -viz -gap"). Keeps a leading "/" or ".".
+function wordCompletions(q) {
+    const slash = /^[/.]/.test(q) ? q[0] : "";
+    const body = slash ? q.slice(1) : q;
+    const partial = (/\S+$/.exec(body) || [""])[0];
+    if (!partial) return [];
+    const head = body.slice(0, body.length - partial.length);
+    const words = head.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const lowerPartial = partial.toLowerCase();
+    const next = new Set();
+    for (const name of COMMAND_NAMES) {
+        const cmd = name.split(/\s+/);
+        if (cmd.length > words.length
+            && words.every((word, i) => cmd[i] === word)
+            && cmd[words.length].startsWith(lowerPartial)) next.add(cmd[words.length]);
+    }
+    return [...next].map((word) => slash + head + word);
+}
+
+// Newest-first history matches, then static matches, then word completions,
+// none repeated. Empty or exact input suggests nothing (quiet bar).
 export function getSuggestions(input, historyList) {
     const q = String(input || "").trimStart();
     if (!q) return [];
@@ -82,12 +105,15 @@ export function getSuggestions(input, historyList) {
         if (typeof cand !== "string") return;
         if (cand.length <= q.length) return;
         if (!cand.toLowerCase().startsWith(lower)) return;
-        if (seen.has(cand)) return;
-        seen.add(cand);
+        // "tui -t pull " and "tui -t pull" are one suggestion.
+        const key = cand.trimEnd();
+        if (seen.has(key)) return;
+        seen.add(key);
         out.push(cand);
     };
     for (const h of historyList || []) take(h);
     for (const s of STATIC_SUGGESTIONS) take(s);
+    for (const w of wordCompletions(q)) take(w);
     return out;
 }
 

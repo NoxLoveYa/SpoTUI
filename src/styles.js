@@ -49,6 +49,7 @@ body.spotui-lyrics-panel #spotui-logo,
 body.spotui-dj-panel #spotui-logo,
 body.spotui-playlist-panel #spotui-logo,
 body.spotui-add2list-panel #spotui-logo,
+body.spotui-queue-panel #spotui-logo,
 body.spotui-help-panel #spotui-logo,
 body.spotui-theme-panel #spotui-logo,
 body.spotui-search-panel #spotui-logo,
@@ -204,6 +205,7 @@ body:has(#spotui-wallpaper) body.spotui-lyrics-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-dj-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-playlist-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-add2list-panel #spotui-logo,
+body:has(#spotui-wallpaper) body.spotui-queue-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-help-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-theme-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-about-panel #spotui-logo,
@@ -239,6 +241,7 @@ body:has(#spotui-wallpaper) body.spotui-saves-panel #spotui-logo {
 #spotui-saves-panel::-webkit-scrollbar,
 #spotui-playlist-list::-webkit-scrollbar,
 #spotui-add2list-list::-webkit-scrollbar,
+#spotui-queue-list::-webkit-scrollbar,
 #spotui-song-list::-webkit-scrollbar,
 .spotui-lyrics-lines::-webkit-scrollbar {
     width: 0;
@@ -577,7 +580,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     right: 12px;
 }
 
-#spotui-playlist-info {
+#spotui-playlist-info, #spotui-queue-info, #spotui-search-info {
     position: absolute;
     bottom: 10px;
     right: 10px;
@@ -596,15 +599,15 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     opacity: 0.7;
 }
 
-#spotui-playlist-info:hover {
+#spotui-playlist-info:hover, #spotui-queue-info:hover, #spotui-search-info:hover {
     opacity: 1;
 }
 
-#spotui-playlist-info svg {
+#spotui-playlist-info svg, #spotui-queue-info svg, #spotui-search-info svg {
     display: block;
 }
 
-#spotui-playlist-info-popup {
+#spotui-playlist-info-popup, #spotui-queue-info-popup, #spotui-search-info-popup {
     position: absolute;
     bottom: 36px;
     right: 10px;
@@ -619,11 +622,15 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     pointer-events: auto;
 }
 
-#spotui-playlist-info-popup span {
+#spotui-queue-info-popup, #spotui-search-info-popup {
+    white-space: normal;
+}
+
+#spotui-playlist-info-popup span, #spotui-queue-info-popup span, #spotui-search-info-popup span {
     color: var(--panel-text-color, #ff8c42);
 }
 
-#spotui-add2list-panel {
+#spotui-add2list-panel, #spotui-queue-panel {
     display: none;
     flex: 1 1 auto;
     min-height: 0;
@@ -644,7 +651,8 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-body.spotui-add2list-panel #spotui-add2list-panel {
+body.spotui-add2list-panel #spotui-add2list-panel,
+body.spotui-queue-panel #spotui-queue-panel {
     display: flex;
     opacity: 1;
     transform: translateY(0);
@@ -776,6 +784,108 @@ body.spotui-saves-panel #spotui-saves-panel {
 .theme-card button:hover {
     background-color: var(--panel-text-hover-color, color-mix(in srgb, var(--spotui-accent, #ff8c42) 88%, black));
 }
+
+.spotui-theme-controls {
+    margin-bottom: 20px;
+    display: flex;
+    gap: 8px;
+}
+
+.spotui-theme-search,
+.spotui-theme-channel {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
+    border-radius: 4px;
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    padding: 8px 12px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 14px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.spotui-theme-search {
+    flex: 1;
+}
+
+.spotui-theme-search::placeholder {
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    opacity: 0.5;
+}
+
+.spotui-theme-channel {
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 32px;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--panel-text-color, var(--spotui-accent, #ff8c42)) 50%),
+        linear-gradient(135deg, var(--panel-text-color, var(--spotui-accent, #ff8c42)) 50%, transparent 50%);
+    background-position:
+        calc(100% - 18px) calc(50% + 1px),
+        calc(100% - 13px) calc(50% + 1px);
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+}
+
+.spotui-theme-search:hover,
+.spotui-theme-channel:hover {
+    border-color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
+
+.spotui-theme-search:focus,
+.spotui-theme-channel:focus {
+    outline: none;
+    border-color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    box-shadow: 0 0 0 1px var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
+
+.spotui-theme-channel option {
+    background: var(--panel-bg-color, #121212);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
+
+.spotui-theme-refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
+    border-radius: 4px;
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.spotui-theme-refresh svg {
+    display: block;
+}
+
+.spotui-theme-refresh.spinning svg {
+    animation: spotui-theme-refresh-spin 0.6s ease;
+}
+
+.spotui-theme-refresh:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@keyframes spotui-theme-refresh-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.spotui-theme-refresh:hover:not(:disabled) {
+    border-color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
+
+.spotui-theme-refresh:focus:not(:disabled) {
+    outline: none;
+    border-color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    box-shadow: 0 0 0 1px var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
 .help-item {
     padding: 4px 0;
     display: flex;
@@ -796,7 +906,7 @@ body.spotui-saves-panel #spotui-saves-panel {
     color: var(--spotui-on-accent, #000);
 }
 
-#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list {
+#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list, #spotui-queue-list {
     width: 50%;
     overflow-y: auto;
     scroll-behavior: auto;
@@ -808,13 +918,13 @@ body.spotui-saves-panel #spotui-saves-panel {
     background: var(--panel-bg-color, transparent);
 }
 
-#spotui-add2list-list {
+#spotui-add2list-list, #spotui-queue-list {
     width: 100%;
     box-sizing: border-box;
     min-width: 0;
 }
 
-#spotui-playlist-list legend, #spotui-song-list legend, #spotui-add2list-list legend {
+#spotui-playlist-list legend, #spotui-song-list legend, #spotui-add2list-list legend, #spotui-queue-list legend {
     color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     padding: 0 5px;
 }
@@ -822,6 +932,14 @@ body.spotui-saves-panel #spotui-saves-panel {
 .playlist-item, .song-item {
     padding: 4px 6px;
     cursor: pointer;
+}
+
+.playlist-item.queue-end {
+    text-align: center;
+    border: 1px solid var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    border-radius: 4px;
+    margin-top: 8px;
+    opacity: 0.85;
 }
 
 .playlist-item, .song-item {
@@ -832,7 +950,7 @@ body.spotui-saves-panel #spotui-saves-panel {
     white-space: nowrap;
 }
 
-#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list {
+#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list, #spotui-queue-list {
     position: relative;
 }
 
@@ -1129,6 +1247,7 @@ body.spotui-tui-hidden #spotui-tui {
     height: 60vh;
     padding: 20px;
     box-sizing: border-box;
+    position: relative;
     border: 1px solid var(--panel-border-color, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3));
     border-radius: 6px;
     background: var(--panel-bg-color, transparent);

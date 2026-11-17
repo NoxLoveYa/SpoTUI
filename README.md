@@ -19,6 +19,12 @@
   </p>
 </div>
 
+<p align="center">
+  <a href="https://ko-fi.com/skens">
+    <img src="https://img.shields.io/badge/Support-SpoTUI-ff8c42?style=for-the-badge&logo=ko-fi&logoColor=white&labelColor=101010" alt="Support SpoTUI on Ko-fi">
+  </a>
+</p>
+
 ![SpoTUI preview](https://img.ge/i/OJuvD46.png)
 
 <table>
@@ -43,13 +49,13 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -l <on/off>` | Toggle ASCII logo visibility |
 | `tui -l -a <on/off>` | Toggle ASCII animation |
 | `tui -wp <url> [-o <0-1>] [-fit <cover/contain/fill/none>] [-pos <center/top/bottom/left/right>] [-rich <0-200>]` | Set wallpaper — bare `tui -wp` shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off) |
-| `tui -t pull <theme_id>` | Apply a theme by its ID (you can find the id on our website) |
+| `tui -t pull <theme_id> [-live]` | Apply a theme by its ID from the stable feed, or the live feed with `-live` (you can find the id on our website) |
 | `tui -t <save <name>\|list\|apply <name>\|delete <name>>` | Snapshot the current look locally (incl. poster wall layout); list opens the themes menu (Enter applies, Del/D fills in the delete command); restore/delete snapshots |
 | `tui bind "<Letter>" "<command>"` | Binds Alt+`<Letter>` to run a TUI command (e.g. `tui bind "T" "tui -t list"` opens the themes menu on `Alt+T`; `Ctrl` combos never reach the page) |
 | `tui unbind "<Letter>"` | Remove the Alt+<Letter> keybind |
 | `tui bind clear` | Remove all keybinds |
 | `Ctrl+R` | Reverse-search persistent command history (typing filters, `Ctrl+R` cycles older matches, `Enter` fills the bar, `Esc` aborts; unknown commands stay session-only) |
-| `Tab` | Accept the ghost fill suggestion in the command bar (repeat to cycle matches) |
+| `Tab` | Accept the ghost fill suggestion in the command bar (repeat to cycle matches); also completes the last word of any known command, e.g. `tui -viz -ga` + `Tab` → `tui -viz -gap` |
 | `Esc` | Abort history search, or leave the command bar so Spotify gets its keys back |
 | `tui actions create <name>` | Create a named action |
 | `tui actions "<name>" "<listener>" "<command>"` | Bind an action to a listener |
@@ -73,6 +79,14 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -ly -spacing <value>` | Controls vertical spacing between lines in lyrics |
 | `tui -ly -spacing off` | Resets line spacing in lyrics |
 | `tui -viz -color <#hex>` | Set visualizer bar color |
+| `tui -viz -gap <px>` | Set gap between visualizer bars (0 = touching) |
+| `tui -viz -gap off` | Reset visualizer bar gap |
+| `tui -viz -bars <count>` | Set how many visualizer bars to show |
+| `tui -viz -bars off` | Reset visualizer bar count |
+| `tui -viz -smooth <1-100>` | Set visualizer bar smoothing |
+| `tui -viz -smooth off` | Reset visualizer bar smoothing |
+| `tui -viz -mode <adaptive/global>` | Set visualizer reaction mode |
+| `tui -viz -mode off` | Reset visualizer reaction mode |
 | `tui -viz off` | Reset visualizer bar color |
 | `tui -bar -bg <#hex> -border <#hex> -text <#hex>` | Set player bar colors |
 | `tui -bar -v <on/off>` | Toggle native play bar visibility |
@@ -84,28 +98,32 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -inputs -bg <#hex> -bg-hover <#hex> -text <#hex> -border <#hex>` | Set input colors |
 | `tui -inputs -buttons <on/off>` | Toggle bottom right buttons visibility |
 | `tui -inputs off` | Reset input colors |
-| `tui -panel -bg <#hex> -border <#hex> -text <#hex>` | Set panel colors |
+| `tui -panel -bg <#hex> -border <#hex> -text <#hex>` | Set help/playlist/theme/about panel colors |
 | `tui -panel off` | Reset panel colors |
 | `tui restore [-full]` | Reset all settings to defaults and reload (keeps history, keybinds, actions; `-full` wipes everything) |
 | `playlist` / `list` `<playlist-name>` | Open playlist viewer or play a specific playlist |
 | `add2list` | Add the current song to a playlist |
+| `queue` | View and reorder the play queue |
 | `play` / `pause` / `p` | Toggle playback |
 | `skip` | Next track |
 | `back` | Previous track |
 | `s` / `seek <mm:ss>` | Jump to a specific time |
 | `v` / `volume <%>` | Set volume (0-100) |
 | `shuffle` | Toggle shuffle |
-| `like` | Like/unlike current song |
 | `loop` / `superloop` | Toggle repeat mode |
+| `like` | Like/unlike current song |
 | `lyrics` | Toggle lyrics panel |
 | `visualizer` | Toggle audio visualizer |
 | `dj` | Play the DJ playlist |
 | `echo <text>` | Display a message |
-| `search <query>` | Search Spotify |
+| `search <query>` | Search Spotify (on a highlighted result: `Enter` plays, `a` adds it to a playlist, `q` adds it to the queue) |
 | `about` | Show about panel |
 | `theme` | Browse and apply themes |
 | `discord` | Show the Discord update banner and re-enable it on boot |
 | `standby` | Enter standby mode (any key to exit) |
+| `jam create` | Start a listening jam and get a PIN |
+| `jam join <pin>` | Join a jam by PIN (volume/lyrics only) |
+| `jam leave` | Leave the current jam |
 | `help` | Show the help panel |
 
 ## Poster wall (Pinterest mode)
@@ -172,6 +190,15 @@ tui -t apply cozy     # restore it, live
 tui -t delete cozy    # forget it
 ```
 
+## Queue
+
+`queue` opens the play queue. `Enter` plays the hovered track, `Tab` grabs it
+to reorder (arrows move it, `Tab` drops it), `r` removes it, `Esc` closes.
+
+```bash
+queue                # open the queue pane (run again to close)
+```
+
 ## Action Targets
 
 Actions run a command when a listener fires. Create one, then bind it:
@@ -190,6 +217,7 @@ tui actions "autolyrics" "actions:spotui@pane_close>!lyrics" "lyrics on"
 | `actions:spotui@pane_close>theme` | Fires when the theme pane closes |
 | `actions:spotui@pane_close>lyrics` | Fires when the lyrics pane closes |
 | `actions:spotui@pane_close>search` | Fires when the search pane closes |
+| `actions:spotui@pane_close>queue` | Fires when the queue pane closes |
 | `actions:spotui@pane_close>!<pane>` | Fires when any pane except `<pane>` closes |
 | `actions:spotui@pane_close><pane> \| spotui@pane_close><pane>` | Fires when any listed pane closes |
 | `actions:spotui@pane_close>!<pane> \| spotui@pane_close>!<pane>` | Fires when the closed pane is none of the listed panes |
@@ -331,3 +359,7 @@ SkenS - https://github.com/SkenSMasteR
   </table>
   > Note: If you are using Spicetify v3, follow the guide in the "spotui@&lt;version&gt;" release.
 </details>
+
+## License
+
+Copyright (C) 2026 SkenS (SkenSMasteR). SpoTUI is licensed under the GNU General Public License v2 (GPL-2.0). See the [LICENSE](license) file.

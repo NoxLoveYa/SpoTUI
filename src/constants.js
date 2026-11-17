@@ -1,6 +1,11 @@
 // Theme feed host for pulling community themes
 export const THEME_HOST = "https://spotui.root.sx/";
 
+export const THEME_CHANNELS = {
+    stable: "https://cdn.jsdelivr.net/gh/SkenSMasteR/SpoTUI@aux/Themes/themes.js",
+    live: `${THEME_HOST}themes.js`,
+};
+
 // LocalStorage keys for user preferences
 export const ANIMATION_KEY = "spotui:ascii-animation";
 export const LYRICS_STORAGE_KEY = "spotui:lyrics-open";
@@ -23,6 +28,10 @@ export const LYRICS_COLOR_LIGHT_INACTIVE = "spotui:lyrics-color-light-inactive";
 export const LYRICS_LINE_SPACING = "spotui:lyrics-line-spacing";
 export const VISUALIZER_STORAGE_KEY = "spotui:visualizer-open";
 export const VISUALIZER_COLOR = "spotui:visualizer-color";
+export const VISUALIZER_GAP = "spotui:visualizer-gap";
+export const VISUALIZER_BARS = "spotui:visualizer-bars";
+export const VISUALIZER_SMOOTH = "spotui:visualizer-smooth";
+export const VISUALIZER_MODE = "spotui:visualizer-mode";
 export const PLAYER_BAR_BG = "spotui:player-bar-bg";
 export const PLAYER_BAR_BORDER = "spotui:player-bar-border";
 export const PLAYER_BAR_TEXT = "spotui:player-bar-text";
@@ -125,7 +134,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -wp off", desc: "Remove wallpaper" },
     { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare tui -shade shows current" },
     { cmd: "tui -debug &lt;on/off&gt;", desc: "Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print)" },
-    { cmd: "tui -t pull &lt;theme_id&gt;", desc: "Apply a theme by its ID (you can find the id on our website)" },
+    { cmd: "tui -t pull &lt;theme_id&gt; [-live]", desc: "Apply a theme by its ID from the stable feed, or the live feed with -live (find IDs on our website)" },
     { cmd: "tui -t &lt;save &lt;name&gt;|list|apply &lt;name&gt;|delete &lt;name&gt;&gt;", desc: "Snapshot the current look locally (incl. poster wall layout); list opens the themes menu (Enter applies, Del/D fills in the delete command); restore/delete snapshots" },
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
     { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
@@ -146,6 +155,14 @@ export const COMMAND_LIST = [
     { cmd: "tui -ly -spacing &lt;value&gt;", desc: "Controls vertical spacing between lines in lyrics" },
     { cmd: "tui -ly -spacing off", desc: "Resets line spacing in lyrics" },
     { cmd: "tui -viz -color &lt;#hex&gt;", desc: "Set visualizer bar color" },
+    { cmd: "tui -viz -gap &lt;px&gt;", desc: "Set gap between visualizer bars (0 = touching)" },
+    { cmd: "tui -viz -gap off", desc: "Reset visualizer bar gap" },
+    { cmd: "tui -viz -bars &lt;count&gt;", desc: "Set how many visualizer bars to show" },
+    { cmd: "tui -viz -bars off", desc: "Reset visualizer bar count" },
+    { cmd: "tui -viz -smooth &lt;1-100&gt;", desc: "Set visualizer bar smoothing" },
+    { cmd: "tui -viz -smooth off", desc: "Reset visualizer bar smoothing" },
+    { cmd: "tui -viz -mode &lt;adaptive/global&gt;", desc: "Set visualizer reaction mode" },
+    { cmd: "tui -viz -mode off", desc: "Reset visualizer reaction mode" },
     { cmd: "tui -viz off", desc: "Reset visualizer bar color" },
     { cmd: "tui -bar -bg &lt;#hex&gt; -border &lt;#hex&gt; -text &lt;#hex&gt;", desc: "Set player bar colors" },
     { cmd: "tui -bar -v &lt;on/off&gt;", desc: "Toggle play bar visibility" },
@@ -161,6 +178,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -panel off", desc: "Reset panel colors" },
     { cmd: "playlist / list &lt;playlist-name&gt;", desc: "Open playlist viewer or play a specific playlist" },
     { cmd: "add2list", desc: "Add the current song to a playlist" },
+    { cmd: "queue", desc: "View and reorder the play queue" },
     { cmd: "play / pause / p", desc: "Toggle playback" },
     { cmd: "skip", desc: "Next track" },
     { cmd: "back", desc: "Previous track" },
@@ -190,3 +208,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -pin-feed | tui -pin-refresh [board] [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins, then recreate the wall (flags apply after) / save API token on this machine only" },
     { cmd: "help", desc: "Show this panel" },
 ];
+
+export const COMMAND_NAMES = [...new Set(COMMAND_LIST.flatMap(({ cmd }) =>
+    cmd.replace(/(?:&lt;|<).*$/, "").split(" / ").map((name) => name.replace(/[\["\s]+$/, ""))
+))].filter(Boolean).sort();

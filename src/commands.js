@@ -1,14 +1,15 @@
 import { handleActionsCommand } from "./actions.js";
-import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, handleColorArgs, toggleLogo, updateCustomBar } from "./appearance.js";
+import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, applyVisualizerGap, handleColorArgs, toggleLogo, updateCustomBar } from "./appearance.js";
 import { resetGrid, startAsciiPaintLoop } from "./ascii.js";
 import { initUpdateBanner, showRestartPopup } from "./banner.js";
-import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, HISTORY_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, VISUALIZER_COLOR, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, HISTORY_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, VISUALIZER_BARS, VISUALIZER_COLOR, VISUALIZER_GAP, VISUALIZER_MODE, VISUALIZER_SMOOTH, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { getAllowedJamGuestCommands, jamCreate, jamJoin, jamLeave, jamSay } from "./jam.js";
 import { getKeybinds, isRestrictedThemeCommand, saveKeybinds, stripCommandPrefix } from "./keybinds.js";
 import { handleLyricsCommand, syncLyricsHighlight } from "./lyrics.js";
-import { handleVisualizerCommand } from "./visualizer.js";
+import { handleVisualizerCommand, refreshVisualizer } from "./visualizer.js";
 import { getAllowedOnboardingCommands } from "./onboarding.js";
 import { openAboutPanel, closeActivePanel, consumePendingMenu, openAdd2listPanel, openBoardsPanel, openHelpPanel, openPlaylistPanel, openSavesPanel, openThemePanel } from "./panels.js";
+import { closeQueuePanel, openQueuePanel } from "./queue.js";
 import { getPlaylists } from "./playlists.js";
 import { openSearchPanel } from "./search.js";
 import { app } from "./state.js";
@@ -19,7 +20,17 @@ import { applyTheme as applySavedTheme, deleteTheme, invalidateSavesCache, listT
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
 import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, getBoardCounts, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
-import { dbg, pinToast } from "./utils.js";
+import { dbg, pinToast, playFresh } from "./utils.js";
+
+const playerMap = {
+    play: { fn: () => { if (!Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Play" },
+    pause: { fn: () => { if (Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Pause" },
+    p: { fn: () => { const p = Spicetify.Player.isPlaying(); Spicetify.Player.togglePlay(); return p; }, name: "Play/PauseToggle" },
+    skip: { fn: () => Spicetify.Player.next(), name: "Skip" },
+    back: { fn: () => Spicetify.Player.back(), name: "Back" },
+    shuffle: { fn: () => { const s = Spicetify.Player.getShuffle(); Spicetify.Player.setShuffle(!s); return s; }, name: "Shuffle" },
+    like: { fn: async () => { const h = await Spicetify.Player.getHeart(); await Spicetify.Player.toggleHeart(); return h; }, name: "Like" }
+};
 
 // All command traffic (typed, keybound, themed, synced) flows through here,
 // so menu round-trips are consumed in one place: if a menu prefill armed a
@@ -35,7 +46,7 @@ export async function execute(cmd, opts = {}) {
 // First-token command inventory (mirrors the executeInner branches below).
 // Used by history: unknown shapes stay session-only instead of persisting.
 const KNOWN_COMMANDS = new Set([
-    "tui", "standby", "help", "about", "playlist", "list", "add2list", "theme",
+    "tui", "standby", "help", "about", "playlist", "list", "add2list", "queue", "theme",
     "discord", "search", "seek", "s", "volume", "v", "loop", "superloop",
     "lyrics", "visualizer", "dj", "echo", "jam",
     "play", "pause", "p", "skip", "back", "shuffle", "like",
@@ -267,12 +278,13 @@ async function executeInner(cmd, opts = {}) {
             if (tSub === "delete" || tSub === "rm" || tSub === "remove") { deleteTheme(tName); return; }
             if (tSub === "pull" && args[2]) {
                 const base64Name = args[2];
+                const channel = argsLower.includes("-live") ? "live" : "stable";
                 try {
                     const themeName = atob(base64Name);
-                    applyThemeByName(themeName);
+                    applyThemeByName(themeName, { channel });
                 } catch (e) {}
             } else if (tSub !== "pull") {
-                console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id>>");
+                console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id> [-live]>");
             }
             return;
         }
@@ -332,8 +344,50 @@ async function executeInner(cmd, opts = {}) {
             return;
         }
         if (argsLower.includes("-viz")) {
-            handleColorArgs(args, { "-color": VISUALIZER_COLOR });
-            applyVisualizerColor();
+            const filteredArgs = [];
+            for (let i = 0; i < args.length; i++) {
+                if (argsLower[i] === "-gap") {
+                    const value = (args[i + 1] || "").toLowerCase();
+                    if (value === "off") {
+                        storageRemove(VISUALIZER_GAP);
+                    } else if (/^\d+$/.test(value)) {
+                        storageSet(VISUALIZER_GAP, String(Math.min(Number(value), 100)));
+                    }
+                    i++;
+                } else if (argsLower[i] === "-bars") {
+                    const value = (args[i + 1] || "").toLowerCase();
+                    if (value === "off") {
+                        storageRemove(VISUALIZER_BARS);
+                    } else if (/^\d+$/.test(value)) {
+                        storageSet(VISUALIZER_BARS, String(Math.min(Math.max(Number(value), 1), 256)));
+                    }
+                    i++;
+                } else if (argsLower[i] === "-smooth") {
+                    const value = (args[i + 1] || "").toLowerCase();
+                    if (value === "off") {
+                        storageRemove(VISUALIZER_SMOOTH);
+                    } else if (/^\d+$/.test(value)) {
+                        storageSet(VISUALIZER_SMOOTH, String(Math.min(Math.max(Number(value), 1), 100)));
+                    }
+                    i++;
+                } else if (argsLower[i] === "-mode") {
+                    const value = (args[i + 1] || "").toLowerCase();
+                    if (value === "off") {
+                        storageRemove(VISUALIZER_MODE);
+                    } else if (value === "global" || value === "adaptive") {
+                        storageSet(VISUALIZER_MODE, value);
+                    }
+                    i++;
+                } else {
+                    filteredArgs.push(args[i]);
+                }
+            }
+            if (filteredArgs.length > 1 || (filteredArgs.length === 1 && filteredArgs[0].toLowerCase() === "off")) {
+                handleColorArgs(filteredArgs, { "-color": VISUALIZER_COLOR });
+                applyVisualizerColor();
+            }
+            applyVisualizerGap();
+            refreshVisualizer();
             return;
         }
         if (argsLower.includes("-ly") && argsLower.includes("-animation")) {
@@ -495,7 +549,7 @@ async function executeInner(cmd, opts = {}) {
 
             const match = app.playlists.filter(p => p.name.toLowerCase().includes(unquote(argText).toLowerCase()));
             if (match.length === 1) {
-                Spicetify.Player.playUri(match[0].uri);
+                await playFresh(match[0].uri);
                 return;
             } else if (match.length > 1) {
                 jamSay("Multiple matches: " + match.map(p => p.name).join(", "));
@@ -506,6 +560,12 @@ async function executeInner(cmd, opts = {}) {
         openPlaylistPanel(); return; 
     }
     if (command === "add2list") { openAdd2listPanel(); return; }
+    if (command === "queue") {
+        if (app.queuePanelOpen) { closeQueuePanel(); return; }
+        closeActivePanel();
+        openQueuePanel();
+        return;
+    }
     if (command === "theme") { openThemePanel(); return; }
     if (command === "discord") {
         storageRemove(UPDATE_BANNER_KEY);
@@ -514,16 +574,6 @@ async function executeInner(cmd, opts = {}) {
         initUpdateBanner();
         return;
     }
-
-    const playerMap = {
-        play: { fn: () => { if (!Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Play" },
-        pause: { fn: () => { if (Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Pause" },
-        p: { fn: () => { const p = Spicetify.Player.isPlaying(); Spicetify.Player.togglePlay(); return p; }, name: "Play/PauseToggle" },
-        skip: { fn: () => Spicetify.Player.next(), name: "Skip" },
-        back: { fn: () => Spicetify.Player.back(), name: "Back" },
-        shuffle: { fn: () => { const s = Spicetify.Player.getShuffle(); Spicetify.Player.setShuffle(!s); return s; }, name: "Shuffle" },
-        like: { fn: async () => { const h = await Spicetify.Player.getHeart(); await Spicetify.Player.toggleHeart(); return h; }, name: "Like" }
-    };
 
     if (playerMap[command]) {
         const act = playerMap[command];
@@ -576,7 +626,7 @@ async function executeInner(cmd, opts = {}) {
                 jamSay("Spotify DJ isn’t available for your account yet.");
                 return;
             }
-            Spicetify.Player.playUri(match.uri);
+            await playFresh(match.uri);
         } catch (err) {
             jamSay("Spotify DJ isn’t available for your account yet.");
         }

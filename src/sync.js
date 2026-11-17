@@ -1,5 +1,5 @@
 import { execute } from "./commands.js";
-import { CUSTOM_BAR_PROGRESS_STYLE, PROGRESS_STYLES } from "./constants.js";
+import { CUSTOM_BAR_PROGRESS_STYLE, PROGRESS_STYLES, VISUALIZER_BARS, VISUALIZER_MODE, VISUALIZER_SMOOTH } from "./constants.js";
 import { getAllowedJamGuestCommands } from "./jam.js";
 import { isSensitiveCommand } from "./keybinds.js";
 import { getCurrentTrackLyricsInfo, resolveTrackLyrics } from "./lyrics.js";
@@ -7,7 +7,7 @@ import { getPlaylists, normalizeTrackItem } from "./playlists.js";
 import { searchSpotify } from "./search.js";
 import { app } from "./state.js";
 import { storageGet } from "./storage.js";
-import { dbg } from "./utils.js";
+import { dbg, playFresh } from "./utils.js";
 import { setVisualizerBars } from "./visualizer.js";
 
 const WS_URL = "ws://localhost:8765";
@@ -37,22 +37,23 @@ function toHex(value, fallback) {
     return "#" + [m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, "0")).join("");
 }
 
-function cssVar(name, fallback) {
-    return toHex(getComputedStyle(document.documentElement).getPropertyValue(name), fallback);
+function cssVar(style, name, fallback) {
+    return toHex(style.getPropertyValue(name), fallback);
 }
 
 function getColors() {
+    const style = getComputedStyle(document.documentElement);
     return {
-        active: cssVar("--lyrics-color-active", "#ff8c42"),
-        inactive: cssVar("--lyrics-color-inactive", "#777777"),
-        near: cssVar("--lyrics-color-light-inactive", "#b3b3b3"),
-        accent: cssVar("--spotui-accent", "#ff8c42"),
-        panel_bg: cssVar("--panel-bg-color", "#000000"),
-        panel_border: cssVar("--panel-border-color", "#ff8c42"),
-        panel_text: cssVar("--panel-text-color", "#ff8c42"),
-        bar_bg: cssVar("--player-bar-background", "#000000"),
-        bar_text: cssVar("--player-bar-text-color", "#ff8c42"),
-        visualizer: cssVar("--visualizer-color", "#ff8c42"),
+        active: cssVar(style, "--lyrics-color-active", "#ff8c42"),
+        inactive: cssVar(style, "--lyrics-color-inactive", "#777777"),
+        near: cssVar(style, "--lyrics-color-light-inactive", "#b3b3b3"),
+        accent: cssVar(style, "--spotui-accent", "#ff8c42"),
+        panel_bg: cssVar(style, "--panel-bg-color", "#000000"),
+        panel_border: cssVar(style, "--panel-border-color", "#ff8c42"),
+        panel_text: cssVar(style, "--panel-text-color", "#ff8c42"),
+        bar_bg: cssVar(style, "--player-bar-background", "#000000"),
+        bar_text: cssVar(style, "--player-bar-text-color", "#ff8c42"),
+        visualizer: cssVar(style, "--visualizer-color", "#ff8c42"),
     };
 }
 
@@ -85,10 +86,30 @@ function getDurationMs(item) {
     return 0;
 }
 
+function getVisualizerBars() {
+    const stored = storageGet(VISUALIZER_BARS);
+    if (stored === null) return 48;
+    const value = Number(stored);
+    return Number.isFinite(value) ? Math.min(256, Math.max(1, Math.floor(value))) : 48;
+}
+
+function getVisualizerSmooth() {
+    const stored = storageGet(VISUALIZER_SMOOTH);
+    if (stored === null) return 45;
+    const value = Number(stored);
+    return Number.isFinite(value) ? Math.min(100, Math.max(1, Math.floor(value))) : 45;
+}
+
+function getVisualizerMode() {
+    const stored = storageGet(VISUALIZER_MODE);
+    return stored === "global" ? "global" : "adaptive";
+}
+
 function getTrackPayload() {
     const data = Spicetify.Player.data;
     const item = data?.item ?? data?.track;
     if (!item) return null;
+    const progressStyle = storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block";
     return {
         type: "update",
         title: item.name ?? item.metadata?.title ?? "",
@@ -101,9 +122,12 @@ function getTrackPayload() {
         timestamp: Date.now(),
         colors: getCachedColors(),
         lyrics: lyricsCache,
-        progress_style: storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block",
-        progress_chars: PROGRESS_STYLES[storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block"] || PROGRESS_STYLES["classic-block"],
+        progress_style: progressStyle,
+        progress_chars: PROGRESS_STYLES[progressStyle] || PROGRESS_STYLES["classic-block"],
         visualizer: app.visualizerOpen,
+        visualizer_bars: getVisualizerBars(),
+        visualizer_smoothing: getVisualizerSmooth(),
+        visualizer_mode: getVisualizerMode(),
     };
 }
 
@@ -115,7 +139,7 @@ function sendJson(obj) {
 function send() {
     const payload = getTrackPayload();
     if (payload) sendJson(payload);
-    else sendJson({ type: "update", visualizer: app.visualizerOpen, colors: getColors(), lyrics: lyricsCache });
+    else sendJson({ type: "update", visualizer: app.visualizerOpen, visualizer_bars: getVisualizerBars(), visualizer_smoothing: getVisualizerSmooth(), visualizer_mode: getVisualizerMode(), colors: getCachedColors(), lyrics: lyricsCache });
 }
 
 async function refreshLyrics() {
@@ -179,7 +203,7 @@ async function handleTuiPlaylist(argText) {
         const q = argText.toLowerCase();
         const match = slim.filter((p) => p.name.toLowerCase().includes(q));
         if (match.length === 1) {
-            Spicetify.Player.playUri(match[0].uri);
+            playFresh(match[0].uri);
             return;
         }
         if (match.length > 1) {
@@ -194,8 +218,7 @@ async function handleTuiPlaylist(argText) {
 
 function playUri(uri, context) {
     if (!uri) return;
-    if (context) Spicetify.Player.playUri(context, {}, { skipTo: { uri } });
-    else Spicetify.Player.playUri(uri);
+    playFresh(uri, context);
 }
 
 function syncTip(show) {

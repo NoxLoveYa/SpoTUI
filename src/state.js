@@ -16,6 +16,11 @@ export const app = {
     cmdSuggest: null,
     playlistPanelOpen: false,
     add2listPanelOpen: false,
+    add2listTrackUri: null,
+    queuePanelOpen: false,
+    queueTracks: [],
+    selectedQueue: 0,
+    queueGrab: -1,
     playlists: [],
     playlistSongs: [],
     playlistSongsTotal: 0,
@@ -76,15 +81,17 @@ export const app = {
     playlistFindSource: []
 };
 
+const PANEL_OPEN_KEYS = Object.keys(app).filter(k => k.endsWith("PanelOpen") && k !== "lyricsPanelOpen");
+
 // Returns true if any panel except lyrics or standby is open
 export function isAnyPanelOpen() {
-    return app.standbyOpen || Object.keys(app).some(k => k.endsWith("PanelOpen") && k !== "lyricsPanelOpen" && app[k]);
+    return app.standbyOpen || PANEL_OPEN_KEYS.some(k => app[k]);
 }
 
 // Panels with their own inputs or key handling: the command bar yields to them.
 // Read-only panels (help, about) leave the command input usable.
 export function isInputBlockingPanelOpen() {
-    return app.standbyOpen || app.playlistPanelOpen || app.add2listPanelOpen || app.searchPanelOpen ||
+    return app.standbyOpen || app.playlistPanelOpen || app.add2listPanelOpen || app.queuePanelOpen || app.searchPanelOpen ||
         app.themePanelOpen || app.boardsPanelOpen || app.savesPanelOpen ||
         app.onboardingPanelOpen || app.djPanelOpen;
 }

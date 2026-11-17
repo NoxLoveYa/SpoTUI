@@ -4,6 +4,11 @@
     // Theme feed host for pulling community themes
     const THEME_HOST = "https://spotui.root.sx/";
 
+    const THEME_CHANNELS = {
+        stable: "https://cdn.jsdelivr.net/gh/SkenSMasteR/SpoTUI@aux/Themes/themes.js",
+        live: `${THEME_HOST}themes.js`,
+    };
+
     // LocalStorage keys for user preferences
     const ANIMATION_KEY = "spotui:ascii-animation";
     const LYRICS_STORAGE_KEY = "spotui:lyrics-open";
@@ -26,6 +31,10 @@
     const LYRICS_LINE_SPACING = "spotui:lyrics-line-spacing";
     const VISUALIZER_STORAGE_KEY = "spotui:visualizer-open";
     const VISUALIZER_COLOR = "spotui:visualizer-color";
+    const VISUALIZER_GAP = "spotui:visualizer-gap";
+    const VISUALIZER_BARS = "spotui:visualizer-bars";
+    const VISUALIZER_SMOOTH = "spotui:visualizer-smooth";
+    const VISUALIZER_MODE = "spotui:visualizer-mode";
     const PLAYER_BAR_BG = "spotui:player-bar-bg";
     const PLAYER_BAR_BORDER = "spotui:player-bar-border";
     const PLAYER_BAR_TEXT = "spotui:player-bar-text";
@@ -126,7 +135,7 @@
         { cmd: "tui -wp off", desc: "Remove wallpaper" },
         { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare tui -shade shows current" },
         { cmd: "tui -debug &lt;on/off&gt;", desc: "Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print)" },
-        { cmd: "tui -t pull &lt;theme_id&gt;", desc: "Apply a theme by its ID (you can find the id on our website)" },
+        { cmd: "tui -t pull &lt;theme_id&gt; [-live]", desc: "Apply a theme by its ID from the stable feed, or the live feed with -live (find IDs on our website)" },
         { cmd: "tui -t &lt;save &lt;name&gt;|list|apply &lt;name&gt;|delete &lt;name&gt;&gt;", desc: "Snapshot the current look locally (incl. poster wall layout); list opens the themes menu (Enter applies, Del/D fills in the delete command); restore/delete snapshots" },
         { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
         { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
@@ -147,6 +156,14 @@
         { cmd: "tui -ly -spacing &lt;value&gt;", desc: "Controls vertical spacing between lines in lyrics" },
         { cmd: "tui -ly -spacing off", desc: "Resets line spacing in lyrics" },
         { cmd: "tui -viz -color &lt;#hex&gt;", desc: "Set visualizer bar color" },
+        { cmd: "tui -viz -gap &lt;px&gt;", desc: "Set gap between visualizer bars (0 = touching)" },
+        { cmd: "tui -viz -gap off", desc: "Reset visualizer bar gap" },
+        { cmd: "tui -viz -bars &lt;count&gt;", desc: "Set how many visualizer bars to show" },
+        { cmd: "tui -viz -bars off", desc: "Reset visualizer bar count" },
+        { cmd: "tui -viz -smooth &lt;1-100&gt;", desc: "Set visualizer bar smoothing" },
+        { cmd: "tui -viz -smooth off", desc: "Reset visualizer bar smoothing" },
+        { cmd: "tui -viz -mode &lt;adaptive/global&gt;", desc: "Set visualizer reaction mode" },
+        { cmd: "tui -viz -mode off", desc: "Reset visualizer reaction mode" },
         { cmd: "tui -viz off", desc: "Reset visualizer bar color" },
         { cmd: "tui -bar -bg &lt;#hex&gt; -border &lt;#hex&gt; -text &lt;#hex&gt;", desc: "Set player bar colors" },
         { cmd: "tui -bar -v &lt;on/off&gt;", desc: "Toggle play bar visibility" },
@@ -162,6 +179,7 @@
         { cmd: "tui -panel off", desc: "Reset panel colors" },
         { cmd: "playlist / list &lt;playlist-name&gt;", desc: "Open playlist viewer or play a specific playlist" },
         { cmd: "add2list", desc: "Add the current song to a playlist" },
+        { cmd: "queue", desc: "View and reorder the play queue" },
         { cmd: "play / pause / p", desc: "Toggle playback" },
         { cmd: "skip", desc: "Next track" },
         { cmd: "back", desc: "Previous track" },
@@ -191,6 +209,10 @@
         { cmd: "tui -pin-feed | tui -pin-refresh [board] [-o/-c/-d/-t/-r] | tui -pin-token &lt;token&gt;", desc: "Random mix from all your boards (needs token) / re-pull boards — or one matching board — to pick up new pins, then recreate the wall (flags apply after) / save API token on this machine only" },
         { cmd: "help", desc: "Show this panel" },
     ];
+
+    const COMMAND_NAMES = [...new Set(COMMAND_LIST.flatMap(({ cmd }) =>
+        cmd.replace(/(?:&lt;|<).*$/, "").split(" / ").map((name) => name.replace(/[\["\s]+$/, ""))
+    ))].filter(Boolean).sort();
 
     function storageGet(key) {
         try {
@@ -243,6 +265,15 @@
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function playFresh(uri, context) {
+        if (!uri && !context) return;
+        try {
+            await Spicetify.Platform.PlayerAPI.clearQueue();
+        } catch {}
+        if (context) Spicetify.Player.playUri(context, {}, { skipTo: { uri } });
+        else Spicetify.Player.playUri(uri);
     }
 
     // randomizing animation sequences - fisher-yates
@@ -504,6 +535,11 @@ body.spotui-spotify-enabled, body {
         cmdSuggest: null,
         playlistPanelOpen: false,
         add2listPanelOpen: false,
+        add2listTrackUri: null,
+        queuePanelOpen: false,
+        queueTracks: [],
+        selectedQueue: 0,
+        queueGrab: -1,
         playlists: [],
         playlistSongs: [],
         playlistSongsTotal: 0,
@@ -564,10 +600,12 @@ body.spotui-spotify-enabled, body {
         playlistFindSource: []
     };
 
+    Object.keys(app).filter(k => k.endsWith("PanelOpen") && k !== "lyricsPanelOpen");
+
     // Panels with their own inputs or key handling: the command bar yields to them.
     // Read-only panels (help, about) leave the command input usable.
     function isInputBlockingPanelOpen() {
-        return app.standbyOpen || app.playlistPanelOpen || app.add2listPanelOpen || app.searchPanelOpen ||
+        return app.standbyOpen || app.playlistPanelOpen || app.add2listPanelOpen || app.queuePanelOpen || app.searchPanelOpen ||
             app.themePanelOpen || app.boardsPanelOpen || app.savesPanelOpen ||
             app.onboardingPanelOpen || app.djPanelOpen;
     }
@@ -686,6 +724,9 @@ body.spotui-spotify-enabled, body {
         ctx.textAlign = "left";
         ctx.textBaseline = "top";
         ctx.fontVariantCaps = "normal";
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
         const chars = app.asciiCharData;
         for (let i = 0; i < chars.length; i += 1) {
             const { el, row, col } = chars[i];
@@ -694,9 +735,6 @@ body.spotui-spotify-enabled, body {
             const color = el.style.color;
             ctx.fillStyle = color;
             ctx.shadowColor = color;
-            ctx.shadowBlur = 6;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0;
             ctx.fillText(ch, pad + col * asciiDraw.cellW, pad + row * asciiDraw.cellH);
         }
     }
@@ -2179,6 +2217,7 @@ body.spotui-spotify-enabled, body {
             activeEl.id === "spotui-input" ||
             activeEl.id === "spotui-theme-search" ||
             activeEl.tagName === "TEXTAREA" ||
+            activeEl.tagName === "SELECT" ||
             (activeEl.tagName === "INPUT" && activeEl.type !== "button")
         );
         if (isTypingField && !hasModifier) return;
@@ -2191,6 +2230,33 @@ body.spotui-spotify-enabled, body {
     let bars = [];
     let raf = 0;
 
+    function getGap() {
+        const stored = storageGet(VISUALIZER_GAP);
+        if (stored === null) return 2;
+        const value = Number(stored);
+        return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 2;
+    }
+
+    function getBarCount() {
+        const stored = storageGet(VISUALIZER_BARS);
+        if (stored === null) return 48;
+        const value = Number(stored);
+        return Number.isFinite(value) ? Math.min(256, Math.max(1, Math.floor(value))) : 48;
+    }
+
+    function resample(source, count) {
+        if (!source.length || count === source.length) return source;
+        const out = new Array(count);
+        for (let i = 0; i < count; i++) {
+            const start = Math.floor((i * source.length) / count);
+            const end = Math.max(start + 1, Math.floor(((i + 1) * source.length) / count));
+            let sum = 0;
+            for (let j = start; j < end && j < source.length; j++) sum += source[j];
+            out[i] = sum / (end - start);
+        }
+        return out;
+    }
+
     function paint() {
         raf = 0;
         const c = document.getElementById("spotui-visualizer");
@@ -2201,19 +2267,28 @@ body.spotui-spotify-enabled, body {
         if (c.width !== w) c.width = w;
         if (c.height !== h) c.height = h;
         ctx.clearRect(0, 0, w, h);
-        const n = bars.length;
-        if (!n || !w || !h) return;
-        const gap = 2;
-        const bw = Math.max(1, (w - gap * n) / n);
+        if (!bars.length || !w || !h) return;
+        const data = resample(bars, Math.min(getBarCount(), Math.max(1, Math.floor(w))));
+        const n = data.length;
+        const gap = n > 1 ? Math.min(getGap(), Math.max(0, Math.floor((w - n) / (n - 1)))) : 0;
+        const bw = Math.max(1, (w - gap * (n - 1)) / n);
+        const step = bw + gap;
         ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--visualizer-color").trim() || "#ff8c42";
         for (let i = 0; i < n; i++) {
-            const bh = bars[i] * h;
-            if (bh > 0) ctx.fillRect(i * (bw + gap), h - bh, bw, bh);
+            const bh = data[i] * h;
+            if (bh <= 0) continue;
+            const left = Math.round(i * step);
+            const right = Math.round(i * step + bw);
+            ctx.fillRect(left, h - bh, Math.max(1, right - left), bh);
         }
     }
 
     function setVisualizerBars(next) {
         bars = next || [];
+        refreshVisualizer();
+    }
+
+    function refreshVisualizer() {
         if (app.visualizerOpen && !raf) raf = requestAnimationFrame(paint);
     }
 
@@ -2688,7 +2763,7 @@ body.spotui-spotify-enabled, body {
                 e.preventDefault();
                 e.stopPropagation();
                 const p = app.playlists[app.selectedPlaylist];
-                const uri = Spicetify.Player.data?.item?.uri || Spicetify.Player.data?.track?.uri;
+                const uri = app.add2listTrackUri || Spicetify.Player.data?.item?.uri || Spicetify.Player.data?.track?.uri;
                 if (!uri) { jamSay("Nothing playing"); return; }
                 if (!p) return;
                 try {
@@ -2715,7 +2790,7 @@ body.spotui-spotify-enabled, body {
             if (isPlaylist) {
                 const p = app.playlists[app.selectedPlaylist];
                 if (p) {
-                    Spicetify.Player.playUri(p.uri);
+                    await playFresh(p.uri);
                     dbg("[SpoTUI] playing playlist:", p.name);
                     closePlaylistPanel();
                 }
@@ -2723,7 +2798,7 @@ body.spotui-spotify-enabled, body {
                 const song = app.playlistSongs[app.selectedSong];
                 const context = app.playlists[app.selectedPlaylist];
                 if (song && context) {
-                    Spicetify.Player.playUri(context.uri, {}, { skipTo: { uri: song.uri } });
+                    await playFresh(song.uri, context.uri);
                     dbg("[SpoTUI] playing:", song.name, "from", context.name);
                     closePlaylistPanel();
                 }
@@ -2777,7 +2852,157 @@ body.spotui-spotify-enabled, body {
         return list;
     }
 
+    function isQueueEndMarker(item) {
+        if (item.artist) return false;
+        return /^Track\s+\d+$/i.test(item.name || "");
+    }
+
+    function loadQueue() {
+        const q = Spicetify.Queue || {};
+        const cur = q.track;
+        const tracks = [];
+        if (cur) {
+            const item = { ...normalizeTrackItem(cur, 0), uid: cur.uid, current: true };
+            if (!isQueueEndMarker(item)) tracks.push(item);
+        }
+        let ended = false;
+        (q.nextTracks || []).forEach((t, i) => {
+            if (ended) return;
+            const item = { ...normalizeTrackItem(t, i + 1), uid: t.uid, current: false };
+            if (isQueueEndMarker(item)) {
+                tracks.push({ uri: "", uid: "", name: "End of queue", artist: "", current: false, endOfQueue: true });
+                ended = true;
+                return;
+            }
+            tracks.push(item);
+        });
+        app.queueTracks = tracks;
+        app.selectedQueue = 0;
+    }
+
+    function onSongChange() {
+        if (!app.queuePanelOpen || app.queueGrab >= 0) return;
+        const sel = app.queueTracks[app.selectedQueue];
+        loadQueue();
+        if (sel) {
+            const i = app.queueTracks.findIndex((t) => (sel.uid && t.uid === sel.uid) || t.uri === sel.uri);
+            if (i >= 0) app.selectedQueue = i;
+        }
+        renderQueueList();
+    }
+
+    function renderQueueList() {
+        const el = document.getElementById("spotui-queue-list");
+        if (!el) return;
+        const legend = document.createElement("legend");
+        legend.textContent = "Queue";
+        const nodes = app.queueTracks.map((t, i) => {
+            const d = document.createElement("div");
+            d.className = "playlist-item" + (t.endOfQueue ? " queue-end" : "") + (i === app.selectedQueue ? " selected" : "");
+            d.textContent = t.endOfQueue
+                ? (app.queueGrab === i ? "> " : "") + "End of queue"
+                : (app.queueGrab === i ? "> " : "") + (t.current ? "\u25B6 " : "") + t.name + (t.artist ? " - " + t.artist : "");
+            return d;
+        });
+        el.replaceChildren(legend, ...nodes);
+        el.children[app.selectedQueue + 1]?.scrollIntoView({ block: "nearest" });
+    }
+
+    async function applyQueueOrder() {
+        const i = app.queueTracks.findIndex((t) => t.current);
+        const next = app.queueTracks.slice(i < 0 ? 0 : i + 1).filter((t) => !t.endOfQueue && t.uri).map((t) => ({ uri: t.uri, uid: t.uid }));
+        await Spicetify.Platform.PlayerAPI.clearQueue();
+        if (next.length) await Spicetify.addToQueue(next);
+    }
+
+    function handleQueueKeydown(e) {
+        if (!app.queuePanelOpen) return;
+        e.stopPropagation();
+        if (e.key === "Escape") {
+            e.preventDefault();
+            closeQueuePanel();
+            return;
+        }
+        if (e.key === "Tab") {
+            e.preventDefault();
+            if (app.queueGrab < 0) {
+                const t = app.queueTracks[app.selectedQueue];
+                if (app.selectedQueue && t && !t.endOfQueue) app.queueGrab = app.selectedQueue;
+            }
+            else {
+                app.queueGrab = -1;
+                applyQueueOrder();
+            }
+            renderQueueList();
+            return;
+        }
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            const dir = e.key === "ArrowUp" ? -1 : 1;
+            const n = app.queueTracks.length;
+            if (!n) return;
+            const to = app.selectedQueue + dir;
+            if (to < 0 || to >= n) return;
+            if (app.queueGrab >= 0) {
+                if (!to) return;
+                if (app.queueTracks[to]?.endOfQueue || app.queueTracks[app.selectedQueue]?.endOfQueue) return;
+                const a = app.queueTracks;
+                [a[app.selectedQueue], a[to]] = [a[to], a[app.selectedQueue]];
+                app.selectedQueue = app.queueGrab = to;
+            } else app.selectedQueue = to;
+            renderQueueList();
+            return;
+        }
+        if (e.key === "Enter") {
+            e.preventDefault();
+            const t = app.queueTracks[app.selectedQueue];
+            if (!app.selectedQueue || !t || t.endOfQueue) return;
+            for (let i = app.selectedQueue; i--;) Spicetify.Player.next();
+            closeQueuePanel();
+            return;
+        }
+        if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            const t = app.queueTracks[app.selectedQueue];
+            if (!t || t.current || t.endOfQueue) return;
+            app.queueGrab = -1;
+            app.queueTracks.splice(app.selectedQueue, 1);
+            if (app.selectedQueue >= app.queueTracks.length) app.selectedQueue = Math.max(0, app.queueTracks.length - 1);
+            applyQueueOrder();
+            renderQueueList();
+        }
+    }
+
+    function closeQueuePanel() {
+        const wasOpen = app.queuePanelOpen;
+        app.queuePanelOpen = false;
+        app.queueGrab = -1;
+        document.body.classList.remove("spotui-queue-panel");
+        const panel = document.getElementById("spotui-queue-panel");
+        if (panel) panel.hidden = true;
+        const input = document.getElementById("spotui-input");
+        if (input) input.focus();
+        document.removeEventListener("keydown", handleQueueKeydown, true);
+        Spicetify.Player.removeEventListener("songchange", onSongChange);
+        if (wasOpen) emitPaneClose("queue");
+    }
+
+    function openQueuePanel() {
+        loadQueue();
+        app.queueGrab = -1;
+        app.queuePanelOpen = true;
+        document.body.classList.add("spotui-queue-panel");
+        const panel = document.getElementById("spotui-queue-panel");
+        if (panel) panel.hidden = false;
+        const input = document.getElementById("spotui-input");
+        if (input) input.blur();
+        renderQueueList();
+        document.addEventListener("keydown", handleQueueKeydown, true);
+        Spicetify.Player.addEventListener("songchange", onSongChange);
+    }
+
     const SEARCH_DEBOUNCE_MS = 250;
+    const AUTOCOMPLETE_TYPE_RE = /autocomplete/i;
 
     function resolveName(data) {
         const candidates = [
@@ -2807,7 +3032,7 @@ body.spotui-spotify-enabled, body {
 
     function isAutocompleteEntry(entry, data) {
         const types = [entry?.item?.__typename, data?.__typename, entry?.__typename];
-        return types.some((type) => typeof type === "string" && /autocomplete/i.test(type));
+        return types.some((type) => typeof type === "string" && AUTOCOMPLETE_TYPE_RE.test(type));
     }
 
     function extractResults(searchV2) {
@@ -2985,10 +3210,10 @@ body.spotui-spotify-enabled, body {
         updateSearchBarFocus();
     }
 
-    function playSearchResult(idx) {
+    async function playSearchResult(idx) {
         const item = app.searchResults[idx];
         if (!item || !item.uri) return;
-        Spicetify.Player.playUri(item.uri);
+        await playFresh(item.uri);
         closeSearchPanel();
     }
 
@@ -3018,7 +3243,7 @@ body.spotui-spotify-enabled, body {
         });
     }
 
-    function handleSearchPanelKeydown(e) {
+    async function handleSearchPanelKeydown(e) {
         if (!app.searchPanelOpen) return;
         if (e.key === "Escape") {
             e.preventDefault();
@@ -3079,10 +3304,27 @@ body.spotui-spotify-enabled, body {
                 app.searchSelected = Math.min(Math.max(0, app.searchSelected), app.searchResults.length - 1);
             }
             playSearchResult(app.searchSelected);
+            return;
+        }
+        if (app.searchFocus !== "results" || e.ctrlKey || e.altKey || e.metaKey) return;
+        const item = app.searchResults[app.searchSelected];
+        if ((e.key === "a" || e.key === "A") && item?.uri) {
+            e.preventDefault();
+            await openAdd2listPanel(item.uri);
+            return;
+        }
+        if ((e.key === "q" || e.key === "Q") && item?.uri) {
+            e.preventDefault();
+            try {
+                await Spicetify.addToQueue([{ uri: item.uri }]);
+                jamSay("Added to queue");
+            } catch (err) {
+                jamSay("Queue error: " + (err.message || err));
+            }
         }
     }
 
-    function closeSearchPanel() {
+    function closeSearchPanel(opts = {}) {
         const wasOpen = app.searchPanelOpen;
         app.searchPanelOpen = false;
         app.searchAutocomplete = "";
@@ -3092,6 +3334,8 @@ body.spotui-spotify-enabled, body {
             ghost.textContent = "";
         }
         document.body.classList.remove("spotui-search-panel");
+        const infoPopup = document.getElementById("spotui-search-info-popup");
+        if (infoPopup) infoPopup.hidden = true;
         const panel = document.getElementById("spotui-search-panel");
         if (panel) panel.hidden = true;
         document.removeEventListener("keydown", handleSearchPanelKeydown, true);
@@ -3101,7 +3345,7 @@ body.spotui-spotify-enabled, body {
         }
         const input = document.getElementById("spotui-input");
         if (input) input.focus();
-        if (wasOpen) emitPaneClose("search");
+        if (wasOpen && !opts.silent) emitPaneClose("search");
     }
 
     function openSearchPanel(query = "") {
@@ -3410,6 +3654,8 @@ body.spotui-spotify-enabled, body {
         applyLyricColors();
         applyLyricLineSpacing();
         applyVisualizerColor();
+        applyVisualizerGap();
+        refreshVisualizer();
         applyPlayerBarColors();
         applyPlayerBarVisibility();
         applyCustomBarState();
@@ -3649,6 +3895,7 @@ body.spotui-spotify-enabled, body {
         "tui actions list",
         "playlist ",
         "add2list",
+        "queue",
         "search ",
         "theme",
         "lyrics",
@@ -3673,8 +3920,29 @@ body.spotui-spotify-enabled, body {
         "jam leave",
     ];
 
-    // Newest-first history matches, then static matches not already listed.
-    // Empty or exact input suggests nothing (quiet bar).
+    // Word-by-word completion over every command in COMMAND_LIST: finishes the
+    // last partial word when the words before it match a known command
+    // ("tui -viz -ga" -> "tui -viz -gap"). Keeps a leading "/" or ".".
+    function wordCompletions(q) {
+        const slash = /^[/.]/.test(q) ? q[0] : "";
+        const body = slash ? q.slice(1) : q;
+        const partial = (/\S+$/.exec(body) || [""])[0];
+        if (!partial) return [];
+        const head = body.slice(0, body.length - partial.length);
+        const words = head.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        const lowerPartial = partial.toLowerCase();
+        const next = new Set();
+        for (const name of COMMAND_NAMES) {
+            const cmd = name.split(/\s+/);
+            if (cmd.length > words.length
+                && words.every((word, i) => cmd[i] === word)
+                && cmd[words.length].startsWith(lowerPartial)) next.add(cmd[words.length]);
+        }
+        return [...next].map((word) => slash + head + word);
+    }
+
+    // Newest-first history matches, then static matches, then word completions,
+    // none repeated. Empty or exact input suggests nothing (quiet bar).
     function getSuggestions(input, historyList) {
         const q = String(input || "").trimStart();
         if (!q) return [];
@@ -3685,12 +3953,15 @@ body.spotui-spotify-enabled, body {
             if (typeof cand !== "string") return;
             if (cand.length <= q.length) return;
             if (!cand.toLowerCase().startsWith(lower)) return;
-            if (seen.has(cand)) return;
-            seen.add(cand);
+            // "tui -t pull " and "tui -t pull" are one suggestion.
+            const key = cand.trimEnd();
+            if (seen.has(key)) return;
+            seen.add(key);
             out.push(cand);
         };
         for (const h of historyList || []) take(h);
         for (const s of STATIC_SUGGESTIONS) take(s);
+        for (const w of wordCompletions(q)) take(w);
         return out;
     }
 
@@ -3851,6 +4122,13 @@ body.spotui-spotify-enabled, body {
         <legend>Playlists</legend>
     </fieldset>
 </div>
+<div id="spotui-queue-panel" hidden>
+    <fieldset id="spotui-queue-list">
+        <legend>Queue</legend>
+    </fieldset>
+    <button id="spotui-queue-info" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/></svg></button>
+    <div id="spotui-queue-info-popup" hidden>Play: press <span>Enter</span><br>Reorder: press <span>Tab</span><br>Remove: press <span>r</span></div>
+</div>
 <div id="spotui-help-panel" hidden><fieldset class="spotui-help-fieldset"><legend class="spotui-help-legend">Exit - Esc</legend><div class="spotui-help-content"></div></fieldset></div>
 <div id="spotui-about-panel" hidden></div>
 <div id="spotui-search-panel" hidden>
@@ -3859,6 +4137,8 @@ body.spotui-spotify-enabled, body {
         <input id="spotui-search-input" autocomplete="off" spellcheck="false" placeholder="type to search...">
     </div>
     <div id="spotui-search-results"></div>
+    <button id="spotui-search-info" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/></svg></button>
+    <div id="spotui-search-info-popup" hidden>Play: press <span>Enter</span><br>Add to playlist: press <span>a</span><br>Add to queue: press <span>q</span></div>
 </div>
 <div id="spotui-theme-panel" hidden></div>
 <div id="spotui-boards-panel" hidden><fieldset class="spotui-help-fieldset"><legend class="spotui-help-legend">Boards — Enter — re-pull · Del/D — forget · A — add · Esc</legend><div class="spotui-boards-content"></div></fieldset></div>
@@ -3874,15 +4154,11 @@ body.spotui-spotify-enabled, body {
         document.body.appendChild(box);
         initAsciiAnimation();
         initSearchPanel();
-        const playlistInfo = document.getElementById("spotui-playlist-info");
-        const playlistInfoPopup = document.getElementById("spotui-playlist-info-popup");
-        if (playlistInfo && playlistInfoPopup) {
-            playlistInfo.addEventListener("click", (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                playlistInfoPopup.hidden = !playlistInfoPopup.hidden;
-            });
-        }
+        [["spotui-playlist-info", "spotui-playlist-info-popup"], ["spotui-queue-info", "spotui-queue-info-popup"], ["spotui-search-info", "spotui-search-info-popup"]].forEach(([btnId, popId]) => {
+            const btn = document.getElementById(btnId);
+            const pop = document.getElementById(popId);
+            if (btn && pop) btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); pop.hidden = !pop.hidden; });
+        });
 
         const input = document.getElementById("spotui-input");
 
@@ -4067,16 +4343,58 @@ body.spotui-spotify-enabled, body {
         app.themesFeedPromise.then(onLoad, onError);
     }
 
-    function createAddThemeCard(imgUrl) {
+    const channelCache = {};
+    const channelInflight = {};
+
+    function loadThemeChannel(channel, force = false) {
+        const key = THEME_CHANNELS[channel] ? channel : "live";
+        if (!force && channelCache[key]) return Promise.resolve(channelCache[key].slice());
+        if (!force && channelInflight[key]) return channelInflight[key];
+        const src = `${THEME_CHANNELS[key]}?_=${Math.floor(Date.now() / 1000)}`;
+        const promise = new Promise((resolve, reject) => {
+            const script = document.createElement("script");
+            script.src = src;
+            script.onload = () => {
+                try {
+                    const themes = (window.spotuiThemes || []).slice();
+                    if (themes.length) {
+                        channelCache[key] = themes;
+                        resolve(themes.slice());
+                    } else {
+                        reject(new Error("Theme feed loaded but empty"));
+                    }
+                } finally {
+                    script.remove();
+                    delete channelInflight[key];
+                }
+            };
+            script.onerror = () => {
+                try {
+                    reject(new Error("Failed to load themes"));
+                } finally {
+                    script.remove();
+                    delete channelInflight[key];
+                }
+            };
+            document.body.appendChild(script);
+        });
+        channelInflight[key] = promise;
+        return promise;
+    }
+
+    function createAddThemeCard(imgUrl, channel) {
+        const stable = channel === "stable";
+        const label = stable ? "Contribute" : "Add yours";
+        const url = stable ? "https://github.com/SkenSMasteR/SpoTUI/blob/aux/Themes/themes.json" : THEME_HOST;
         const card = document.createElement("div");
         card.className = "theme-card";
         card.innerHTML = `
-        <h3>Add yours</h3>
-        <img src="${imgUrl}" alt="Add Theme">
-        <button>Add</button>
+        <h3>${label}</h3>
+        <img src="${imgUrl}" alt="${label}">
+        <button>${stable ? "Contribute" : "Add"}</button>
     `;
         card.querySelector("button").addEventListener("click", () => {
-            window.open("https://spotui.root.sx/", "_blank");
+            window.open(url, "_blank");
         });
         return card;
     }
@@ -4100,31 +4418,35 @@ body.spotui-spotify-enabled, body {
     // Apply community theme by name
     function applyThemeByName(themeName, opts = {}) {
         const skipNonTui = Boolean(opts.skipNonTui);
+        const apply = async (themes) => {
+            resetAllSettings();
+            const theme = (themes || []).find((t) => t.name === themeName);
+            if (theme && theme.commands) {
+                const pending = [];
+                theme.commands.forEach((cmd, idx) => {
+                    const text = String(cmd || "").trim();
+                    if (skipNonTui && !text.startsWith("tui")) return;
+                    if (isRestrictedThemeCommand(text)) return;
+                    pending.push(
+                        new Promise((res, rej) => {
+                            setTimeout(() => {
+                                execute(cmd, { bypassOnboarding: skipNonTui, fromTheme: true }).then(res, rej);
+                            }, idx * 120);
+                        })
+                    );
+                });
+                await Promise.all(pending);
+            }
+            return theme || null;
+        };
+        if (opts.channel) {
+            return loadThemeChannel(opts.channel).then((themes) => apply(themes));
+        }
         return new Promise((resolve, reject) => {
             loadThemeFeed(
                 async () => {
                     try {
-                        resetAllSettings();
-                        const themes = window.spotuiThemes || [];
-                        const theme = themes.find((t) => t.name === themeName);
-
-                        if (theme && theme.commands) {
-                            const pending = [];
-                            theme.commands.forEach((cmd, idx) => {
-                                const text = String(cmd || "").trim();
-                                if (skipNonTui && !text.startsWith("tui")) return;
-                                if (isRestrictedThemeCommand(text)) return;
-                                pending.push(
-                                    new Promise((res, rej) => {
-                                        setTimeout(() => {
-                                            execute(cmd, { bypassOnboarding: skipNonTui, fromTheme: true }).then(res, rej);
-                                        }, idx * 120);
-                                    })
-                                );
-                            });
-                            await Promise.all(pending);
-                        }
-                        resolve(theme || null);
+                        resolve(await apply(window.spotuiThemes || []));
                     } catch (err) {
                         reject(err);
                     }
@@ -4182,6 +4504,7 @@ body.spotui-spotify-enabled, body {
         if (app.lyricsPanelOpen) closeLyricsPanel();
         if (app.playlistPanelOpen) closePlaylistPanel();
         if (app.add2listPanelOpen) closeAdd2listPanel();
+        if (app.queuePanelOpen) closeQueuePanel();
         if (app.themePanelOpen) closeThemePanel();
         if (app.boardsPanelOpen) closeBoardsPanel();
         if (app.savesPanelOpen) closeSavesPanel();
@@ -4319,6 +4642,7 @@ body.spotui-spotify-enabled, body {
     function closeAdd2listPanel() {
         const wasOpen = app.add2listPanelOpen;
         app.add2listPanelOpen = false;
+        app.add2listTrackUri = null;
         document.body.classList.remove("spotui-add2list-panel");
         const panel = document.getElementById("spotui-add2list-panel");
         if (panel) panel.hidden = true;
@@ -4328,9 +4652,11 @@ body.spotui-spotify-enabled, body {
         if (wasOpen) emitPaneClose("add2list");
     }
 
-    async function openAdd2listPanel() {
+    async function openAdd2listPanel(trackUri = null) {
         if (app.add2listPanelOpen) { closeAdd2listPanel(); return; }
-        closeActivePanel();
+        // When triggering add2list from search, the panes switch. And we dont want something like autolyrics to trigger at the same time as the add2list pane.
+        if (app.searchPanelOpen) closeSearchPanel({ silent: true });
+        else closeActivePanel();
 
         try {
             app.playlists = (await getPlaylists()).filter((p) => p.name !== "DJ" && !p.isLikedSongs);
@@ -4340,6 +4666,7 @@ body.spotui-spotify-enabled, body {
         }
 
         app.add2listPanelOpen = true;
+        app.add2listTrackUri = trackUri;
         document.body.classList.add("spotui-add2list-panel");
         const panel = document.getElementById("spotui-add2list-panel");
         if (panel) panel.hidden = false;
@@ -4358,7 +4685,7 @@ body.spotui-spotify-enabled, body {
         setPanelState("spotui-theme-panel", "spotui-theme-panel", "themePanelOpen", false);
     }
 
-    // Open theme browser panel (with search and theme cards)
+    // Open theme browser panel
     async function openThemePanel() {
         if (app.themePanelOpen) { closeThemePanel(); return; }
         closeActivePanel();
@@ -4367,59 +4694,77 @@ body.spotui-spotify-enabled, body {
         const panel = document.getElementById("spotui-theme-panel");
         if (!panel) return;
 
-        panel.innerHTML = `<div class="spotui-theme-loading"><div class="spotui-lyrics-loader active"></div></div>`;
+        panel.innerHTML = `
+        <div class="spotui-theme-controls">
+            <input id="spotui-theme-search" class="spotui-theme-search" placeholder="Search themes...">
+            <select id="spotui-theme-channel" class="spotui-theme-channel">
+                <option value="stable">Stable</option>
+                <option value="live">Live</option>
+            </select>
+            <button id="spotui-theme-refresh" class="spotui-theme-refresh" title="Refresh" aria-label="Refresh">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
+                    <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
+                </svg>
+            </button>
+        </div>
+        <div class="theme-grid"></div>
+    `;
 
-        loadThemeFeed(
-            () => {
-                const themes = window.spotuiThemes || [];
-                    panel.innerHTML = `
-                <div style="margin-bottom: 20px; display: flex;">
-                    <input id="spotui-theme-search" placeholder="Search themes..." style="width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42)); border-radius: 4px; color: #ddd; padding: 8px 12px; font-family: 'JetBrains Mono', monospace; font-size: 14px;">
-                </div>
-                <div class="theme-grid"></div>
-            `;
-                const grid = panel.querySelector('.theme-grid');
-                const searchInput = document.getElementById('spotui-theme-search');
+        const grid = panel.querySelector(".theme-grid");
+        const searchInput = panel.querySelector("#spotui-theme-search");
+        const channelSelect = panel.querySelector("#spotui-theme-channel");
+        const refreshBtn = panel.querySelector("#spotui-theme-refresh");
 
-                searchInput.addEventListener('input', (e) => {
-                    const searchTerm = e.target.value.toLowerCase();
-                    const cards = grid.querySelectorAll('.theme-card');
-                    cards.forEach(card => {
-                        const title = card.querySelector('h3')?.textContent.toLowerCase();
-                        if (title) {
-                            card.style.display = title.includes(searchTerm) ? '' : 'none';
-                        }
-                    });
-                });
+        const applyFilter = () => {
+            const term = searchInput.value.toLowerCase();
+            grid.querySelectorAll(".theme-card").forEach((card) => {
+                const title = card.querySelector("h3")?.textContent.toLowerCase();
+                if (title) card.style.display = title.includes(term) ? "" : "none";
+            });
+        };
 
-                grid.appendChild(createAddThemeCard(ADD_THEME_IMG_OK));
+        searchInput.addEventListener("input", applyFilter);
 
-                themes.forEach(theme => {
-                    grid.appendChild(createThemeCard(theme));
-                });
-
-                grid.addEventListener('click', e => {
-                    if (e.target.tagName === 'BUTTON' && e.target.dataset.commands) {
-                        resetAllSettings();
-                        const commands = JSON.parse(e.target.dataset.commands);
-                        commands.forEach(cmd => { if (!isRestrictedThemeCommand(cmd)) execute(cmd, { fromTheme: true }); });
-                        closeThemePanel();
-                    }
-                });
-            },
-            () => {
-                    panel.innerHTML = `
-                <div style="margin-bottom: 20px; display: flex;">
-                     <input id="spotui-theme-search" placeholder="Search themes..." style="width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42)); border-radius: 4px; color: #ddd; padding: 8px 12px; font-family: 'JetBrains Mono', monospace; font-size: 14px;" disabled>
-                </div>
-                <p>¯\\_(ツ)_/¯</p><p>Error loading themes. The server may be down or you are rate-limited. Please wait and try again.</p>
-            `;
-                const grid = document.createElement('div');
-                grid.className = 'theme-grid';
-                grid.appendChild(createAddThemeCard(ADD_THEME_IMG_ERR));
-                panel.appendChild(grid);
+        grid.addEventListener("click", (e) => {
+            if (e.target.tagName === "BUTTON" && e.target.dataset.commands) {
+                resetAllSettings();
+                const commands = JSON.parse(e.target.dataset.commands);
+                commands.forEach((cmd) => { if (!isRestrictedThemeCommand(cmd)) execute(cmd, { fromTheme: true }); });
+                closeThemePanel();
             }
-        );
+        });
+
+        const load = (channel, force = false) => {
+            grid.innerHTML = `<div class="spotui-theme-loading"><div class="spotui-lyrics-loader active"></div></div>`;
+            loadThemeChannel(channel, force).then(
+                (themes) => {
+                    grid.innerHTML = "";
+                    grid.appendChild(createAddThemeCard(ADD_THEME_IMG_OK, channel));
+                    themes.forEach((theme) => grid.appendChild(createThemeCard(theme)));
+                    applyFilter();
+                },
+                () => {
+                    grid.innerHTML = "";
+                    grid.appendChild(createAddThemeCard(ADD_THEME_IMG_ERR, channel));
+                    const msg = document.createElement("p");
+                    msg.textContent = "Error loading themes. The server may be down or you are rate-limited. Please wait and try again.";
+                    grid.appendChild(msg);
+                }
+            );
+        };
+
+        channelSelect.value = "stable";
+        channelSelect.addEventListener("change", () => load(channelSelect.value));
+        refreshBtn.addEventListener("click", () => {
+            if (refreshBtn.disabled) return;
+            refreshBtn.disabled = true;
+            refreshBtn.classList.add("spinning");
+            load(channelSelect.value, true);
+            setTimeout(() => { refreshBtn.disabled = false; }, 3000);
+        });
+        refreshBtn.querySelector("svg").addEventListener("animationend", () => refreshBtn.classList.remove("spinning"));
+        load("stable");
     }
 
     // Escape user data rendered into menu rows.
@@ -4643,9 +4988,6 @@ body.spotui-spotify-enabled, body {
 
     // Render current onboarding stage content
     function renderOnboardingStage(panel) {
-        const themes = getThemeSelectionList(window.spotuiThemes || [], app.onboardingShowAllThemes);
-        const themeCards = themes.map(onboardingThemeCard);
-
         if (app.onboardingStage === "commands") {
             panel.innerHTML = `
             <div class="spotui-onboarding-stage">
@@ -4673,6 +5015,8 @@ body.spotui-spotify-enabled, body {
                 renderOnboardingPanel();
             });
         } else if (app.onboardingStage === "themes") {
+            const themes = getThemeSelectionList(window.spotuiThemes || [], app.onboardingShowAllThemes);
+            const themeCards = themes.map(onboardingThemeCard);
             panel.innerHTML = `
             <div class="spotui-onboarding-stage">
                 <div class="spotui-onboarding-copy">
@@ -4804,10 +5148,9 @@ body.spotui-spotify-enabled, body {
 
         panel.innerHTML = "<p>Loading first boot...</p>";
 
-        loadThemeFeed(
-            () => renderOnboardingStage(panel),
-            () => renderOnboardingFeedError(panel)
-        );
+        loadThemeChannel("stable")
+            .then(() => renderOnboardingStage(panel))
+            .catch(() => renderOnboardingFeedError(panel));
     }
 
     // Launch first-boot onboarding if user has never launched before
@@ -4971,6 +5314,16 @@ body.spotui-spotify-enabled, body {
         }
     }
 
+    const playerMap = {
+        play: { fn: () => { if (!Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Play" },
+        pause: { fn: () => { if (Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Pause" },
+        p: { fn: () => { const p = Spicetify.Player.isPlaying(); Spicetify.Player.togglePlay(); return p; }, name: "Play/PauseToggle" },
+        skip: { fn: () => Spicetify.Player.next(), name: "Skip" },
+        back: { fn: () => Spicetify.Player.back(), name: "Back" },
+        shuffle: { fn: () => { const s = Spicetify.Player.getShuffle(); Spicetify.Player.setShuffle(!s); return s; }, name: "Shuffle" },
+        like: { fn: async () => { const h = await Spicetify.Player.getHeart(); await Spicetify.Player.toggleHeart(); return h; }, name: "Like" }
+    };
+
     // All command traffic (typed, keybound, themed, synced) flows through here,
     // so menu round-trips are consumed in one place: if a menu prefill armed a
     // reopen and this command matches it, the menu comes back with fresh data.
@@ -4985,7 +5338,7 @@ body.spotui-spotify-enabled, body {
     // First-token command inventory (mirrors the executeInner branches below).
     // Used by history: unknown shapes stay session-only instead of persisting.
     const KNOWN_COMMANDS = new Set([
-        "tui", "standby", "help", "about", "playlist", "list", "add2list", "theme",
+        "tui", "standby", "help", "about", "playlist", "list", "add2list", "queue", "theme",
         "discord", "search", "seek", "s", "volume", "v", "loop", "superloop",
         "lyrics", "visualizer", "dj", "echo", "jam",
         "play", "pause", "p", "skip", "back", "shuffle", "like",
@@ -5217,12 +5570,13 @@ body.spotui-spotify-enabled, body {
                 if (tSub === "delete" || tSub === "rm" || tSub === "remove") { deleteTheme(tName); return; }
                 if (tSub === "pull" && args[2]) {
                     const base64Name = args[2];
+                    const channel = argsLower.includes("-live") ? "live" : "stable";
                     try {
                         const themeName = atob(base64Name);
-                        applyThemeByName(themeName);
+                        applyThemeByName(themeName, { channel });
                     } catch (e) {}
                 } else if (tSub !== "pull") {
-                    console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id>>");
+                    console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id> [-live]>");
                 }
                 return;
             }
@@ -5282,8 +5636,50 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             if (argsLower.includes("-viz")) {
-                handleColorArgs(args, { "-color": VISUALIZER_COLOR });
-                applyVisualizerColor();
+                const filteredArgs = [];
+                for (let i = 0; i < args.length; i++) {
+                    if (argsLower[i] === "-gap") {
+                        const value = (args[i + 1] || "").toLowerCase();
+                        if (value === "off") {
+                            storageRemove(VISUALIZER_GAP);
+                        } else if (/^\d+$/.test(value)) {
+                            storageSet(VISUALIZER_GAP, String(Math.min(Number(value), 100)));
+                        }
+                        i++;
+                    } else if (argsLower[i] === "-bars") {
+                        const value = (args[i + 1] || "").toLowerCase();
+                        if (value === "off") {
+                            storageRemove(VISUALIZER_BARS);
+                        } else if (/^\d+$/.test(value)) {
+                            storageSet(VISUALIZER_BARS, String(Math.min(Math.max(Number(value), 1), 256)));
+                        }
+                        i++;
+                    } else if (argsLower[i] === "-smooth") {
+                        const value = (args[i + 1] || "").toLowerCase();
+                        if (value === "off") {
+                            storageRemove(VISUALIZER_SMOOTH);
+                        } else if (/^\d+$/.test(value)) {
+                            storageSet(VISUALIZER_SMOOTH, String(Math.min(Math.max(Number(value), 1), 100)));
+                        }
+                        i++;
+                    } else if (argsLower[i] === "-mode") {
+                        const value = (args[i + 1] || "").toLowerCase();
+                        if (value === "off") {
+                            storageRemove(VISUALIZER_MODE);
+                        } else if (value === "global" || value === "adaptive") {
+                            storageSet(VISUALIZER_MODE, value);
+                        }
+                        i++;
+                    } else {
+                        filteredArgs.push(args[i]);
+                    }
+                }
+                if (filteredArgs.length > 1 || (filteredArgs.length === 1 && filteredArgs[0].toLowerCase() === "off")) {
+                    handleColorArgs(filteredArgs, { "-color": VISUALIZER_COLOR });
+                    applyVisualizerColor();
+                }
+                applyVisualizerGap();
+                refreshVisualizer();
                 return;
             }
             if (argsLower.includes("-ly") && argsLower.includes("-animation")) {
@@ -5445,7 +5841,7 @@ body.spotui-spotify-enabled, body {
 
                 const match = app.playlists.filter(p => p.name.toLowerCase().includes(unquote(argText).toLowerCase()));
                 if (match.length === 1) {
-                    Spicetify.Player.playUri(match[0].uri);
+                    await playFresh(match[0].uri);
                     return;
                 } else if (match.length > 1) {
                     jamSay("Multiple matches: " + match.map(p => p.name).join(", "));
@@ -5456,6 +5852,12 @@ body.spotui-spotify-enabled, body {
             openPlaylistPanel(); return; 
         }
         if (command === "add2list") { openAdd2listPanel(); return; }
+        if (command === "queue") {
+            if (app.queuePanelOpen) { closeQueuePanel(); return; }
+            closeActivePanel();
+            openQueuePanel();
+            return;
+        }
         if (command === "theme") { openThemePanel(); return; }
         if (command === "discord") {
             storageRemove(UPDATE_BANNER_KEY);
@@ -5464,16 +5866,6 @@ body.spotui-spotify-enabled, body {
             initUpdateBanner();
             return;
         }
-
-        const playerMap = {
-            play: { fn: () => { if (!Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Play" },
-            pause: { fn: () => { if (Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Pause" },
-            p: { fn: () => { const p = Spicetify.Player.isPlaying(); Spicetify.Player.togglePlay(); return p; }, name: "Play/PauseToggle" },
-            skip: { fn: () => Spicetify.Player.next(), name: "Skip" },
-            back: { fn: () => Spicetify.Player.back(), name: "Back" },
-            shuffle: { fn: () => { const s = Spicetify.Player.getShuffle(); Spicetify.Player.setShuffle(!s); return s; }, name: "Shuffle" },
-            like: { fn: async () => { const h = await Spicetify.Player.getHeart(); await Spicetify.Player.toggleHeart(); return h; }, name: "Like" }
-        };
 
         if (playerMap[command]) {
             const act = playerMap[command];
@@ -5526,7 +5918,7 @@ body.spotui-spotify-enabled, body {
                     jamSay("Spotify DJ isn’t available for your account yet.");
                     return;
                 }
-                Spicetify.Player.playUri(match.uri);
+                await playFresh(match.uri);
             } catch (err) {
                 jamSay("Spotify DJ isn’t available for your account yet.");
             }
@@ -5937,9 +6329,10 @@ body.spotui-spotify-enabled, body {
     // Tries exact match first, then searches by closest duration
     async function fetchLrclibLyrics(info) {
         const headers = { "Lrclib-Client": "SpoTUI (https://github.com/SkenS/SpoTUI)" };
+        const artistName = info.artist.split(",")[0].trim();
         const exactParams = new URLSearchParams({
             track_name: info.title,
-            artist_name: info.artist.split(",")[0].trim(),
+            artist_name: artistName,
             album_name: info.album || info.title,
             duration: String(info.durationSec || 0),
         });
@@ -5954,7 +6347,7 @@ body.spotui-spotify-enabled, body {
         try {
             const searchParams = new URLSearchParams({
                 track_name: info.title,
-                artist_name: info.artist.split(",")[0].trim(),
+                artist_name: artistName,
             });
             const searchRes = await fetch(`https://lrclib.net/api/search?${searchParams}`, { headers });
             if (!searchRes.ok) return null;
@@ -5982,9 +6375,49 @@ body.spotui-spotify-enabled, body {
         return null;
     }
 
+    async function fetchSpolyrcLyrics(info) {
+        const params = new URLSearchParams({
+            title: info.title,
+            artist: info.artist.split(",")[0].trim(),
+        });
+        if (info.album) params.set("album", info.album);
+        if (info.durationSec) params.set("duration", String(info.durationSec));
+        if (info.uri) params.set("spotify_id", info.uri);
+        const url = `https://spolyrc-spotui.root.sx/lyrics?${params}`;
+        let data = null;
+        if (Spicetify.CosmosAsync?.get) {
+            try {
+                data = await Spicetify.CosmosAsync.get(url);
+                if (typeof data === "string") {
+                    try { data = JSON.parse(data); } catch { data = null; }
+                }
+            } catch { data = null; }
+        }
+        if (!data || typeof data !== "object") {
+            try {
+                const res = await fetch(url);
+                if (!res.ok) return null;
+                data = await res.json();
+            } catch { return null; }
+        }
+        if (!data || typeof data !== "object") return null;
+        if (data.instrumental) return { lines: [], synced: false, provider: "spolyrc", instrumental: true };
+        const syncedLines = Array.isArray(data.synced)
+            ? data.synced
+                .map(line => ({ startTime: Number(line.start_ms) || 0, text: String(line.text || "").trim() }))
+                .filter(line => line.text && line.text !== "♪")
+            : [];
+        if (syncedLines.length) return { lines: syncedLines, synced: true, provider: "spolyrc", instrumental: false };
+        const plainLines = plainLyricsToLines(data.unsynced);
+        if (plainLines.length) return { lines: plainLines, synced: false, provider: "spolyrc", instrumental: false };
+        return null;
+    }
+
     // Fetch lyrics from all available sources
-    // Tries Spotify first, then lrclib as fallback
+    // Tries spolyrc first, then Spotify, then lrclib as fallback
     async function resolveTrackLyrics(info) {
+        const spolyrc = await fetchSpolyrcLyrics(info);
+        if (spolyrc) return spolyrc;
         const spotify = await fetchSpotifyColorLyrics(info.uri);
         if (spotify) return spotify;
         const lrclib = await fetchLrclibLyrics(info);
@@ -6084,7 +6517,7 @@ body.spotui-spotify-enabled, body {
         const GAP_THRESHOLD = 8000;
         const LYRIC_DURATION_ESTIMATE = 2000;
 
-        if (synced && lines.length > 0 && lines[0].startTime > 3000) {
+        if (synced && lines[0].startTime > 3000) {
             const startLoader = document.createElement("div");
             startLoader.className = "spotui-lyrics-loader";
             startLoader.dataset.gapStart = "0";
@@ -6118,7 +6551,7 @@ body.spotui-spotify-enabled, body {
             }
         });
 
-        if (synced && lines.length > 0) {
+        if (synced) {
             const lastLine = lines[lines.length - 1];
             const lastLineEnd = lastLine.startTime + LYRIC_DURATION_ESTIMATE;
             const endLoader = document.createElement("div");
@@ -6436,6 +6869,10 @@ body.spotui-spotify-enabled, body {
 
     function applyVisualizerColor() {
         applyCssVar(VISUALIZER_COLOR, "--visualizer-color");
+    }
+
+    function applyVisualizerGap() {
+        applyCssVar(VISUALIZER_GAP, "--visualizer-gap");
     }
 
     // Apply stored player bar color preferences from localStorage
@@ -6844,10 +7281,6 @@ body.spotui-spotify-enabled, body {
             window.addEventListener("resize", updateCustomBarWidth);
         } else {
             document.body.classList.remove("spotui-custom-bar-on");
-            if (window.spotuiCustomBarInterval) {
-                clearInterval(window.spotuiCustomBarInterval);
-                delete window.spotuiCustomBarInterval;
-            }
             window.removeEventListener("resize", updateCustomBarWidth);
         }
     }
@@ -7013,6 +7446,13 @@ body.spotui-spotify-enabled, body {
         storageRemove(VISUALIZER_COLOR);
         applyVisualizerColor();
 
+        storageRemove(VISUALIZER_GAP);
+        applyVisualizerGap();
+
+        storageRemove(VISUALIZER_BARS);
+        storageRemove(VISUALIZER_SMOOTH);
+        storageRemove(VISUALIZER_MODE);
+
         storageRemove(PLAYER_BAR_BG);
         storageRemove(PLAYER_BAR_BORDER);
         storageRemove(PLAYER_BAR_TEXT);
@@ -7163,6 +7603,245 @@ body.spotui-spotify-enabled, body {
         }
     }
 
+    // these are hidden when spotui pane is on and shown when its off.
+    const SPOTUI_HIDDEN_UI = [
+        "Root__main-view",
+        "main-view-container",
+        "Root__nav-bar",
+        "bQsutxbyIOatthweRHfK",
+        "main-topBar-container",
+        "main-yourLibraryX-libraryRootlist",
+        "main-yourLibraryX-entryPoints",
+        "WWTxshVPO07BZLrdUL3h",
+        "YourLibraryX",
+        "main-buddy-list",
+        "main-trackList-trackList",
+        "main-card-card",
+        "main-gridContainer-gridContainer",
+        "main-entityHeader-container",
+        "Zh3rQRncNEHrT9Zvp61n",
+        "xg2bGi5tcuelbx14UC28",
+        "Clgyk1V8iQGkU1G6m5Lo",
+        "zLbWoHarv2xIIoERVTb9",
+        "uf2x5WzM1lLLCLSQdMFB",
+        "tDwxpCRHu3TEG0d_5KfE",
+        "SW7Ebfzvld30ve5zrter",
+        "vVF0gCDG9l8RCOK3_2kw",
+        "Root__globalNav",
+    ];
+
+    const HIDDEN_UI_MARKER = "spotui-hidden-ui";
+
+    const CLASS_MAP = {
+        "ABsPxBFldURR4hbFY38Y": [], // device-picker control
+        "dj-button": ["uddqO1SkevkDEtqc7mQP", "FrqTR9ccUqvGA9UZRf9H", "Nv04LEC5GMu3msfbzG0z", "Gf9V3C4X_WPPfvjwXujC"],
+        "centered-layout": [],
+        "collection-collection-header": [],
+        "collection-searchBar-searchBar": [],
+        "DHOpYzKPUqobiHLW": ["uddqO1SkevkDEtqc7mQP"], // DJ button
+        "e-10451-box--interactive": [],
+        "e-10860-card-title": [],
+        "encore-announcement-set": [],
+        "encore-bright-accent-set": [], 
+        "global-nav": [],
+        "HqUgEQOPyVcDu2NW": [], // (styled with the same hover colors as tracklist rows)
+        "lyrics-config-button": [],
+        "lyrics-config-button-container": [],
+        "lyrics-lyrics-background": [],
+        "lyrics-lyrics-container": [],
+        "lyrics-lyrics-contentContainer": [],
+        "lyrics-lyrics-contentWrapper": [],
+        "lyrics-lyricsContainer-Karaoke-WordActive": [],
+        "lyrics-lyricsContainer-LyricsBackground": [],
+        "lyrics-lyricsContainer-LyricsContainer": [],
+        "lyrics-lyricsContainer-LyricsLine": [],
+        "lyrics-lyricsContainer-LyricsLine-active": [],
+        "lyrics-lyricsContainer-LyricsLine-past": [],
+        "lyrics-lyricsContainer-Provider": [],
+        "lyrics-lyricsContent-active": [],
+        "lyrics-lyricsContent-lyric": [],
+        "lyrics-lyricsContent-previous": [],
+        "lyrics-lyricsContent-provider": [],
+        "lyrics-lyricsContent-text": [],
+        "lyrics-lyricsContent-upcoming": [],
+        "main-actionBarBackground-background": [],
+        "main-card-cardMetadata": [],
+        "main-cardHeader-link": [],
+        "main-cardHeader-text": [],
+        "main-cardImage-image": [],
+        "main-cardImage-imageWrapper": [],
+        "main-connectBar-connectBar": [],
+        "main-devicePicker-button": [],
+        "main-devicePicker-controlButton": [],
+        "main-devicePicker-moreButton": [],
+        "main-devicePicker-tooltip": [],
+        "main-entityHeader-background": [],
+        "main-entityHeader-overlay": [],
+        "main-globalNav-browseButtonWrapper": [],
+        "main-globalNav-contentRight": ["J69QIsElFMg5kJWeEOxw", "fOO2fIo3u1dllKA1PpsE"],
+        "main-globalNav-historyButtons": ["ie2Qo9PCf8p3rBbip9Hv", "Tpe_EXbFoHioEukq1L3y"],
+        "main-globalNav-historyButtonsWrapper": ["AwxHJjdqrlr_clQipYln", "GwGB43JbSV5e0q7q_6sj"],
+        "main-globalNav-navLink": ["oGrojYscaY3uU8Hy86FD", "T_cPbNTFfdOMoMku2Wc_", "tJNs6e3G6zxX78DnJY6T"],
+        "main-globalNav-searchInputContainer": [],
+        "main-globalNav-searchInputText": [],
+        "main-globalNav-searchInputWrapper": [],
+        "main-home-content": [],
+        "main-home-home": [],
+        "main-home-homeHeader": [],
+        "main-lyricsCinema-container": [],
+        "main-lyricsCinema-content": [],
+        "main-nowPlayingBar-center": ["rSRNVahRTJPSREItfKbj", "g1JESJMcieNsGs8YA91M"],
+        "main-nowPlayingBar-container": ["main-nowPlayingBar-nowPlayingBar", "cW4mdx7MbdsSDVOh4yFl", "qEDMggbdvFQOvRAwmrIT"],
+        "main-nowPlayingBar-extraControls": ["oqNKUl1wM7vavZeQ2s1V", "vQrn40NmmpeUfmOfgxeo"],
+        "main-nowPlayingBar-left": ["hvPltcX1Of4QRX6ymIPO", "Xaz3TDhhjakUcSaES5TR"],
+        "main-nowPlayingBar-lyricsButton": ["Tc4NZwap8qQOlHonxDWz", "OCDVdnseqXwal5Tk2fM8", "NmfW_y2jYByYTRtCmPaB"],
+        "main-nowPlayingBar-nowPlayingBar": ["cW4mdx7MbdsSDVOh4yFl", "iuUVHEu5S9rRkc0zz0Hq"],
+        "main-nowPlayingBar-right": ["P7V7BLPw5oupbrDHSbT_", "kUn_OZBjLN9zTu7bcgSg"],
+        "main-nowPlayingView-lyricsContent": [],
+        "main-nowPlayingView-lyricsControls": [],
+        "main-nowPlayingView-lyricsGradient": [],
+        "main-nowPlayingView-lyricsTitle": [],
+        "main-nowPlayingView-section": ["oA2xvck_WSZn6mRFcZ2J","RdD6POf8qaaGutBtUyMh", "iHJ6_yPvPOWhaNcXElNZ"],
+        "main-shelf-shelfGrid": [],
+        "main-topBar-background": [],
+        "main-topBar-overlay": [],
+        "main-topBar-searchBar": [],
+        "main-topBar-withBackgroundBlur": [],
+        "main-trackInfo-artists": ["iQ71jAm3u73Al0XZj90v", "yPuQIWyOhCzYrdC7hhfw", "pJWbyyFi7zAnwrlWlNr8"],
+        "main-trackInfo-container": ["main-nowPlayingWidget-nowPlaying", "XQslIrb_llPUT81TqFnT", "nH2R2U626Rdlv05YEt09"],
+        "main-trackInfo-contentContainer": ["_HN_yndimvPzsIkzzSvo", "nuY09VyDMngWeD4AGX2H", "tUoHgXvEUCxKvXSJQmH9"],
+        "main-trackInfo-contentWrapper": ["_HN_yndimvPzsIkzzSvo", "nuY09VyDMngWeD4AGX2H", "tUoHgXvEUCxKvXSJQmH9"],
+        "main-trackInfo-name": ["iSkZ_HES6ks1CnyZfh46", "UxJZcpiOpOv5I0B1Tjdw", "d3jICfEdIPzHv0kyDFHZ"],
+        "main-trackList-trackListRow": [],
+        "main-view-container__scroll-node": [],
+        "main-yourLibraryX-libraryContainer": [],
+        "main-yourLibraryX-listItem": [],
+        "marketplace-card--app": [],
+        "marketplace-card--extension": [],
+        "marketplace-card--snippet": [],
+        "marketplace-card--theme": [],
+        "marketplace-card-desc": [],
+        "marketplace-card-type-heading": [],
+        "marketplace-cardSubHeader": [],
+        "marketplace-card__author": [],
+        "marketplace-card__authors": [],
+        "marketplace-card__bottom-meta": [],
+        "marketplace-card__tag": [],
+        "marketplace-card__tags-container": [],
+        "marketplace-footer": [],
+        "marketplace-grid": [],
+        "marketplace-header": [],
+        "marketplace-header-icon-button": [],
+        "marketplace-header__label": [],
+        "marketplace-installButton": [],
+        "marketplace-tabBar-active": [],
+        "marketplace-tabBar-headerItemLink": [],
+        "MZd_PqzVQOdrbpd6ircZ": [], // device-picker control (hidden)
+        "n6LsTkKvpO88xeRyRTdw": [], // page header (styled like the queue page header)
+        "nav-ylx": [],
+        "notistack-CollapseWrapper": [],
+        "notistack-Snackbar": [],
+        "notistack-SnackbarContainer": [],
+        "os-viewport": [],
+        "playlist-playlist-playlistContent": [],
+        "progress-bar": ["Nd6cUzZDlHX30QzhnExg", "f42lbbUT05gjuREF86Hw"],
+        "queue-queuePage-header": [],
+        "Root": [],
+        "Root__now-playing-bar": ["z0qdvwslOFVOAihShLIq", "L5dM7nzQpMJtRkvZZBZL", "XvuTwlgQRqJ5NnVLN9ZH"], // If the play/pause button clips out of the playbar, this mapping needs to be updated
+        "Root__top-container": [],
+        "search-modal-searchBar": [],
+        "searchbar-bar": [],
+        "uFQUpbITgGovaKRr6I_g": [], // page header
+        "volume-bar": ["main-nowPlayingBar-volumeBar", "VIXZppPJeWhMxFseNCgy", "w6STr1NJYa2jHvg2wfCa"],
+        "volume-bar__icon-button": ["vM_Y7OPWespPewrOb1uN", "w1XCHDijYLIJuVCEkQID", "pBXkugh_Qs4OAeaVaTi9"],
+        "volume-bar__slider-container": ["d2AW7kxQkljoKbqyHvHC", "GN9SlMTfgQeqy7opGRSA", "GRePaldGFb3UeyjULrVd"],
+        "x-progressBar-fillColor": ["aZtKYi6r4EG1_WHGpmn9", "ISEJ4fISQcRgNTF5dVAA"],
+        "x-progressBar-handle": ["pKZTLhZq37S3mH2TFw4X", "GQiIgNkmZw4cDZnpvnGN", "dvBeolJPafPPVKB6Bj2F"],
+        "x-progressBar-progressBar": ["progress-bar", "Nd6cUzZDlHX30QzhnExg", "f42lbbUT05gjuREF86Hw"],
+        "x-progressBar-progressBarBg": ["SKxg0dANYkUKs2sk0q6e", "a5aI123LVia29JOBdk0K"],
+        "x-progressBar-progressFillColor": [],
+        "x-progressBar-sliderArea": ["PLraRYLMXymk2zPhyNnL", "wDpjbPLJt_10QvIanfC0"],
+        "x-searchInput-searchInputClearButton": [],
+        "x-searchInput-searchInputClearIcon": [],
+        "x-searchInput-searchInputInput": [],
+        "x-searchInput-searchInputSearchIcon": [],
+        "x-settings-header": [],
+        "x-settings-headerContainer": [],
+        "XTtlZOmdtscvhPLr": [], // DJ button
+        "YourLibraryX": [],
+    };
+
+    const HIDDEN_UI_SET = new Set(SPOTUI_HIDDEN_UI);
+
+    function injectHiddenUiCss() {
+        if (document.getElementById("spotui-hidden-ui-style")) return;
+        const style = document.createElement("style");
+        style.id = "spotui-hidden-ui-style";
+        // [data-spotui-keep] (tagged by appearance.js) exempts the native player bar chain.
+        style.textContent = `body:not(.spotui-spotify-enabled) .${HIDDEN_UI_MARKER}:not([data-spotui-keep]) { display: none !important; }`;
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    function tagElement(el, aliases) {
+        const names = el.getAttribute("class");
+        if (!names) return;
+        const tokens = names.split(/\s+/);
+        let add;
+        for (const token of tokens) {
+            const canonical = aliases.get(token);
+            if (!canonical) continue;
+            for (const name of canonical) {
+                if (name === token || el.classList.contains(name)) continue;
+                (add || (add = [])).push(name);
+            }
+        }
+        if (add) el.classList.add(...add);
+        if (!el.classList.contains(HIDDEN_UI_MARKER)) {
+            for (const token of tokens) {
+                if (HIDDEN_UI_SET.has(token)) {
+                    el.classList.add(HIDDEN_UI_MARKER);
+                    break;
+                }
+            }
+        }
+    }
+
+    function scanTree(root, aliases) {
+        if (root.hasAttribute && root.hasAttribute("class")) tagElement(root, aliases);
+        for (const el of root.querySelectorAll("[class]")) tagElement(el, aliases);
+    }
+
+    function initClassMap() {
+        const aliases = new Map();
+        for (const [canonical, names] of Object.entries(CLASS_MAP)) {
+            for (const name of names) {
+                if (aliases.has(name)) aliases.get(name).push(canonical);
+                else aliases.set(name, [canonical]);
+            }
+        }
+
+        const start = () => {
+            injectHiddenUiCss();
+            scanTree(document.body, aliases);
+            new MutationObserver((records) => {
+                for (const record of records) {
+                    if (record.type === "attributes") tagElement(record.target, aliases);
+                    else
+                        for (const node of record.addedNodes)
+                            if (node.nodeType === 1) scanTree(node, aliases);
+                }
+            }).observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["class"]
+            });
+        };
+
+        if (document.body) start();
+        else document.addEventListener("DOMContentLoaded", start, { once: true });
+    }
+
     const style = `#spotui-tui {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 4.75rem;
@@ -7214,6 +7893,7 @@ body.spotui-lyrics-panel #spotui-logo,
 body.spotui-dj-panel #spotui-logo,
 body.spotui-playlist-panel #spotui-logo,
 body.spotui-add2list-panel #spotui-logo,
+body.spotui-queue-panel #spotui-logo,
 body.spotui-help-panel #spotui-logo,
 body.spotui-theme-panel #spotui-logo,
 body.spotui-search-panel #spotui-logo,
@@ -7369,6 +8049,7 @@ body:has(#spotui-wallpaper) body.spotui-lyrics-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-dj-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-playlist-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-add2list-panel #spotui-logo,
+body:has(#spotui-wallpaper) body.spotui-queue-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-help-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-theme-panel #spotui-logo,
 body:has(#spotui-wallpaper) body.spotui-about-panel #spotui-logo,
@@ -7404,6 +8085,7 @@ body:has(#spotui-wallpaper) body.spotui-saves-panel #spotui-logo {
 #spotui-saves-panel::-webkit-scrollbar,
 #spotui-playlist-list::-webkit-scrollbar,
 #spotui-add2list-list::-webkit-scrollbar,
+#spotui-queue-list::-webkit-scrollbar,
 #spotui-song-list::-webkit-scrollbar,
 .spotui-lyrics-lines::-webkit-scrollbar {
     width: 0;
@@ -7742,7 +8424,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     right: 12px;
 }
 
-#spotui-playlist-info {
+#spotui-playlist-info, #spotui-queue-info, #spotui-search-info {
     position: absolute;
     bottom: 10px;
     right: 10px;
@@ -7761,15 +8443,15 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     opacity: 0.7;
 }
 
-#spotui-playlist-info:hover {
+#spotui-playlist-info:hover, #spotui-queue-info:hover, #spotui-search-info:hover {
     opacity: 1;
 }
 
-#spotui-playlist-info svg {
+#spotui-playlist-info svg, #spotui-queue-info svg, #spotui-search-info svg {
     display: block;
 }
 
-#spotui-playlist-info-popup {
+#spotui-playlist-info-popup, #spotui-queue-info-popup, #spotui-search-info-popup {
     position: absolute;
     bottom: 36px;
     right: 10px;
@@ -7784,11 +8466,15 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     pointer-events: auto;
 }
 
-#spotui-playlist-info-popup span {
+#spotui-queue-info-popup, #spotui-search-info-popup {
+    white-space: normal;
+}
+
+#spotui-playlist-info-popup span, #spotui-queue-info-popup span, #spotui-search-info-popup span {
     color: var(--panel-text-color, #ff8c42);
 }
 
-#spotui-add2list-panel {
+#spotui-add2list-panel, #spotui-queue-panel {
     display: none;
     flex: 1 1 auto;
     min-height: 0;
@@ -7809,7 +8495,8 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-body.spotui-add2list-panel #spotui-add2list-panel {
+body.spotui-add2list-panel #spotui-add2list-panel,
+body.spotui-queue-panel #spotui-queue-panel {
     display: flex;
     opacity: 1;
     transform: translateY(0);
@@ -7941,6 +8628,108 @@ body.spotui-saves-panel #spotui-saves-panel {
 .theme-card button:hover {
     background-color: var(--panel-text-hover-color, color-mix(in srgb, var(--spotui-accent, #ff8c42) 88%, black));
 }
+
+.spotui-theme-controls {
+    margin-bottom: 20px;
+    display: flex;
+    gap: 8px;
+}
+
+.spotui-theme-search,
+.spotui-theme-channel {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
+    border-radius: 4px;
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    padding: 8px 12px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 14px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.spotui-theme-search {
+    flex: 1;
+}
+
+.spotui-theme-search::placeholder {
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    opacity: 0.5;
+}
+
+.spotui-theme-channel {
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 32px;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--panel-text-color, var(--spotui-accent, #ff8c42)) 50%),
+        linear-gradient(135deg, var(--panel-text-color, var(--spotui-accent, #ff8c42)) 50%, transparent 50%);
+    background-position:
+        calc(100% - 18px) calc(50% + 1px),
+        calc(100% - 13px) calc(50% + 1px);
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+}
+
+.spotui-theme-search:hover,
+.spotui-theme-channel:hover {
+    border-color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
+
+.spotui-theme-search:focus,
+.spotui-theme-channel:focus {
+    outline: none;
+    border-color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    box-shadow: 0 0 0 1px var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
+
+.spotui-theme-channel option {
+    background: var(--panel-bg-color, #121212);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
+
+.spotui-theme-refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
+    border-radius: 4px;
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.spotui-theme-refresh svg {
+    display: block;
+}
+
+.spotui-theme-refresh.spinning svg {
+    animation: spotui-theme-refresh-spin 0.6s ease;
+}
+
+.spotui-theme-refresh:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@keyframes spotui-theme-refresh-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.spotui-theme-refresh:hover:not(:disabled) {
+    border-color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
+
+.spotui-theme-refresh:focus:not(:disabled) {
+    outline: none;
+    border-color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    box-shadow: 0 0 0 1px var(--panel-text-color, var(--spotui-accent, #ff8c42));
+}
 .help-item {
     padding: 4px 0;
     display: flex;
@@ -7961,7 +8750,7 @@ body.spotui-saves-panel #spotui-saves-panel {
     color: var(--spotui-on-accent, #000);
 }
 
-#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list {
+#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list, #spotui-queue-list {
     width: 50%;
     overflow-y: auto;
     scroll-behavior: auto;
@@ -7973,13 +8762,13 @@ body.spotui-saves-panel #spotui-saves-panel {
     background: var(--panel-bg-color, transparent);
 }
 
-#spotui-add2list-list {
+#spotui-add2list-list, #spotui-queue-list {
     width: 100%;
     box-sizing: border-box;
     min-width: 0;
 }
 
-#spotui-playlist-list legend, #spotui-song-list legend, #spotui-add2list-list legend {
+#spotui-playlist-list legend, #spotui-song-list legend, #spotui-add2list-list legend, #spotui-queue-list legend {
     color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     padding: 0 5px;
 }
@@ -7987,6 +8776,14 @@ body.spotui-saves-panel #spotui-saves-panel {
 .playlist-item, .song-item {
     padding: 4px 6px;
     cursor: pointer;
+}
+
+.playlist-item.queue-end {
+    text-align: center;
+    border: 1px solid var(--panel-text-color, var(--spotui-accent, #ff8c42));
+    border-radius: 4px;
+    margin-top: 8px;
+    opacity: 0.85;
 }
 
 .playlist-item, .song-item {
@@ -7997,7 +8794,7 @@ body.spotui-saves-panel #spotui-saves-panel {
     white-space: nowrap;
 }
 
-#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list {
+#spotui-playlist-list, #spotui-song-list, #spotui-add2list-list, #spotui-queue-list {
     position: relative;
 }
 
@@ -8294,6 +9091,7 @@ body.spotui-tui-hidden #spotui-tui {
     height: 60vh;
     padding: 20px;
     box-sizing: border-box;
+    position: relative;
     border: 1px solid var(--panel-border-color, rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.3));
     border-radius: 6px;
     background: var(--panel-bg-color, transparent);
@@ -8501,22 +9299,23 @@ body.spotui-standby .Root__now-playing-bar {
         return "#" + [m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, "0")).join("");
     }
 
-    function cssVar(name, fallback) {
-        return toHex(getComputedStyle(document.documentElement).getPropertyValue(name), fallback);
+    function cssVar(style, name, fallback) {
+        return toHex(style.getPropertyValue(name), fallback);
     }
 
     function getColors() {
+        const style = getComputedStyle(document.documentElement);
         return {
-            active: cssVar("--lyrics-color-active", "#ff8c42"),
-            inactive: cssVar("--lyrics-color-inactive", "#777777"),
-            near: cssVar("--lyrics-color-light-inactive", "#b3b3b3"),
-            accent: cssVar("--spotui-accent", "#ff8c42"),
-            panel_bg: cssVar("--panel-bg-color", "#000000"),
-            panel_border: cssVar("--panel-border-color", "#ff8c42"),
-            panel_text: cssVar("--panel-text-color", "#ff8c42"),
-            bar_bg: cssVar("--player-bar-background", "#000000"),
-            bar_text: cssVar("--player-bar-text-color", "#ff8c42"),
-            visualizer: cssVar("--visualizer-color", "#ff8c42"),
+            active: cssVar(style, "--lyrics-color-active", "#ff8c42"),
+            inactive: cssVar(style, "--lyrics-color-inactive", "#777777"),
+            near: cssVar(style, "--lyrics-color-light-inactive", "#b3b3b3"),
+            accent: cssVar(style, "--spotui-accent", "#ff8c42"),
+            panel_bg: cssVar(style, "--panel-bg-color", "#000000"),
+            panel_border: cssVar(style, "--panel-border-color", "#ff8c42"),
+            panel_text: cssVar(style, "--panel-text-color", "#ff8c42"),
+            bar_bg: cssVar(style, "--player-bar-background", "#000000"),
+            bar_text: cssVar(style, "--player-bar-text-color", "#ff8c42"),
+            visualizer: cssVar(style, "--visualizer-color", "#ff8c42"),
         };
     }
 
@@ -8549,10 +9348,30 @@ body.spotui-standby .Root__now-playing-bar {
         return 0;
     }
 
+    function getVisualizerBars() {
+        const stored = storageGet(VISUALIZER_BARS);
+        if (stored === null) return 48;
+        const value = Number(stored);
+        return Number.isFinite(value) ? Math.min(256, Math.max(1, Math.floor(value))) : 48;
+    }
+
+    function getVisualizerSmooth() {
+        const stored = storageGet(VISUALIZER_SMOOTH);
+        if (stored === null) return 45;
+        const value = Number(stored);
+        return Number.isFinite(value) ? Math.min(100, Math.max(1, Math.floor(value))) : 45;
+    }
+
+    function getVisualizerMode() {
+        const stored = storageGet(VISUALIZER_MODE);
+        return stored === "global" ? "global" : "adaptive";
+    }
+
     function getTrackPayload() {
         const data = Spicetify.Player.data;
         const item = data?.item ?? data?.track;
         if (!item) return null;
+        const progressStyle = storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block";
         return {
             type: "update",
             title: item.name ?? item.metadata?.title ?? "",
@@ -8565,9 +9384,12 @@ body.spotui-standby .Root__now-playing-bar {
             timestamp: Date.now(),
             colors: getCachedColors(),
             lyrics: lyricsCache,
-            progress_style: storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block",
-            progress_chars: PROGRESS_STYLES[storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block"] || PROGRESS_STYLES["classic-block"],
+            progress_style: progressStyle,
+            progress_chars: PROGRESS_STYLES[progressStyle] || PROGRESS_STYLES["classic-block"],
             visualizer: app.visualizerOpen,
+            visualizer_bars: getVisualizerBars(),
+            visualizer_smoothing: getVisualizerSmooth(),
+            visualizer_mode: getVisualizerMode(),
         };
     }
 
@@ -8579,7 +9401,7 @@ body.spotui-standby .Root__now-playing-bar {
     function send() {
         const payload = getTrackPayload();
         if (payload) sendJson(payload);
-        else sendJson({ type: "update", visualizer: app.visualizerOpen, colors: getColors(), lyrics: lyricsCache });
+        else sendJson({ type: "update", visualizer: app.visualizerOpen, visualizer_bars: getVisualizerBars(), visualizer_smoothing: getVisualizerSmooth(), visualizer_mode: getVisualizerMode(), colors: getCachedColors(), lyrics: lyricsCache });
     }
 
     async function refreshLyrics() {
@@ -8643,7 +9465,7 @@ body.spotui-standby .Root__now-playing-bar {
             const q = argText.toLowerCase();
             const match = slim.filter((p) => p.name.toLowerCase().includes(q));
             if (match.length === 1) {
-                Spicetify.Player.playUri(match[0].uri);
+                playFresh(match[0].uri);
                 return;
             }
             if (match.length > 1) {
@@ -8658,8 +9480,7 @@ body.spotui-standby .Root__now-playing-bar {
 
     function playUri(uri, context) {
         if (!uri) return;
-        if (context) Spicetify.Player.playUri(context, {}, { skipTo: { uri } });
-        else Spicetify.Player.playUri(uri);
+        playFresh(uri, context);
     }
 
     function syncTip(show) {
@@ -8814,6 +9635,7 @@ body.spotui-standby .Root__now-playing-bar {
     }
 
     // Inject styles, set up event listeners, and restore saved state
+    initClassMap();
     injectStyle();
     document.addEventListener("keydown", handleKeybindKeydown, true);
     setTimeout(createControlButtons, 500);

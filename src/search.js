@@ -1,7 +1,11 @@
 import { emitPaneClose } from "./actions.js";
+import { jamSay } from "./jam.js";
+import { openAdd2listPanel } from "./panels.js";
 import { app } from "./state.js";
+import { playFresh } from "./utils.js";
 
 const SEARCH_DEBOUNCE_MS = 250;
+const AUTOCOMPLETE_TYPE_RE = /autocomplete/i;
 
 function resolveName(data) {
     const candidates = [
@@ -31,7 +35,7 @@ function toResult(entry) {
 
 function isAutocompleteEntry(entry, data) {
     const types = [entry?.item?.__typename, data?.__typename, entry?.__typename];
-    return types.some((type) => typeof type === "string" && /autocomplete/i.test(type));
+    return types.some((type) => typeof type === "string" && AUTOCOMPLETE_TYPE_RE.test(type));
 }
 
 function extractResults(searchV2) {
@@ -209,10 +213,10 @@ function setSearchFocus(mode) {
     updateSearchBarFocus();
 }
 
-function playSearchResult(idx) {
+async function playSearchResult(idx) {
     const item = app.searchResults[idx];
     if (!item || !item.uri) return;
-    Spicetify.Player.playUri(item.uri);
+    await playFresh(item.uri);
     closeSearchPanel();
 }
 
@@ -242,7 +246,7 @@ export function initSearchPanel() {
     });
 }
 
-export function handleSearchPanelKeydown(e) {
+export async function handleSearchPanelKeydown(e) {
     if (!app.searchPanelOpen) return;
     if (e.key === "Escape") {
         e.preventDefault();
@@ -303,10 +307,27 @@ export function handleSearchPanelKeydown(e) {
             app.searchSelected = Math.min(Math.max(0, app.searchSelected), app.searchResults.length - 1);
         }
         playSearchResult(app.searchSelected);
+        return;
+    }
+    if (app.searchFocus !== "results" || e.ctrlKey || e.altKey || e.metaKey) return;
+    const item = app.searchResults[app.searchSelected];
+    if ((e.key === "a" || e.key === "A") && item?.uri) {
+        e.preventDefault();
+        await openAdd2listPanel(item.uri);
+        return;
+    }
+    if ((e.key === "q" || e.key === "Q") && item?.uri) {
+        e.preventDefault();
+        try {
+            await Spicetify.addToQueue([{ uri: item.uri }]);
+            jamSay("Added to queue");
+        } catch (err) {
+            jamSay("Queue error: " + (err.message || err));
+        }
     }
 }
 
-export function closeSearchPanel() {
+export function closeSearchPanel(opts = {}) {
     const wasOpen = app.searchPanelOpen;
     app.searchPanelOpen = false;
     app.searchAutocomplete = "";
@@ -316,6 +337,8 @@ export function closeSearchPanel() {
         ghost.textContent = "";
     }
     document.body.classList.remove("spotui-search-panel");
+    const infoPopup = document.getElementById("spotui-search-info-popup");
+    if (infoPopup) infoPopup.hidden = true;
     const panel = document.getElementById("spotui-search-panel");
     if (panel) panel.hidden = true;
     document.removeEventListener("keydown", handleSearchPanelKeydown, true);
@@ -325,7 +348,7 @@ export function closeSearchPanel() {
     }
     const input = document.getElementById("spotui-input");
     if (input) input.focus();
-    if (wasOpen) emitPaneClose("search");
+    if (wasOpen && !opts.silent) emitPaneClose("search");
 }
 
 export function openSearchPanel(query = "") {

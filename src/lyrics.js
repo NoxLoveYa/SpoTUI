@@ -152,9 +152,10 @@ export async function fetchSpotifyColorLyrics(uri) {
 // Tries exact match first, then searches by closest duration
 export async function fetchLrclibLyrics(info) {
     const headers = { "Lrclib-Client": "SpoTUI (https://github.com/SkenS/SpoTUI)" };
+    const artistName = info.artist.split(",")[0].trim();
     const exactParams = new URLSearchParams({
         track_name: info.title,
-        artist_name: info.artist.split(",")[0].trim(),
+        artist_name: artistName,
         album_name: info.album || info.title,
         duration: String(info.durationSec || 0),
     });
@@ -169,7 +170,7 @@ export async function fetchLrclibLyrics(info) {
     try {
         const searchParams = new URLSearchParams({
             track_name: info.title,
-            artist_name: info.artist.split(",")[0].trim(),
+            artist_name: artistName,
         });
         const searchRes = await fetch(`https://lrclib.net/api/search?${searchParams}`, { headers });
         if (!searchRes.ok) return null;
@@ -197,9 +198,49 @@ export function normalizeLrclibPayload(data) {
     return null;
 }
 
+export async function fetchSpolyrcLyrics(info) {
+    const params = new URLSearchParams({
+        title: info.title,
+        artist: info.artist.split(",")[0].trim(),
+    });
+    if (info.album) params.set("album", info.album);
+    if (info.durationSec) params.set("duration", String(info.durationSec));
+    if (info.uri) params.set("spotify_id", info.uri);
+    const url = `https://spolyrc-spotui.root.sx/lyrics?${params}`;
+    let data = null;
+    if (Spicetify.CosmosAsync?.get) {
+        try {
+            data = await Spicetify.CosmosAsync.get(url);
+            if (typeof data === "string") {
+                try { data = JSON.parse(data); } catch { data = null; }
+            }
+        } catch { data = null; }
+    }
+    if (!data || typeof data !== "object") {
+        try {
+            const res = await fetch(url);
+            if (!res.ok) return null;
+            data = await res.json();
+        } catch { return null; }
+    }
+    if (!data || typeof data !== "object") return null;
+    if (data.instrumental) return { lines: [], synced: false, provider: "spolyrc", instrumental: true };
+    const syncedLines = Array.isArray(data.synced)
+        ? data.synced
+            .map(line => ({ startTime: Number(line.start_ms) || 0, text: String(line.text || "").trim() }))
+            .filter(line => line.text && line.text !== "♪")
+        : [];
+    if (syncedLines.length) return { lines: syncedLines, synced: true, provider: "spolyrc", instrumental: false };
+    const plainLines = plainLyricsToLines(data.unsynced);
+    if (plainLines.length) return { lines: plainLines, synced: false, provider: "spolyrc", instrumental: false };
+    return null;
+}
+
 // Fetch lyrics from all available sources
-// Tries Spotify first, then lrclib as fallback
+// Tries spolyrc first, then Spotify, then lrclib as fallback
 export async function resolveTrackLyrics(info) {
+    const spolyrc = await fetchSpolyrcLyrics(info);
+    if (spolyrc) return spolyrc;
     const spotify = await fetchSpotifyColorLyrics(info.uri);
     if (spotify) return spotify;
     const lrclib = await fetchLrclibLyrics(info);
@@ -299,7 +340,7 @@ export function renderLyricsLines(lines, synced = true) {
     const GAP_THRESHOLD = 8000;
     const LYRIC_DURATION_ESTIMATE = 2000;
 
-    if (synced && lines.length > 0 && lines[0].startTime > 3000) {
+    if (synced && lines[0].startTime > 3000) {
         const startLoader = document.createElement("div");
         startLoader.className = "spotui-lyrics-loader";
         startLoader.dataset.gapStart = "0";
@@ -333,7 +374,7 @@ export function renderLyricsLines(lines, synced = true) {
         }
     });
 
-    if (synced && lines.length > 0) {
+    if (synced) {
         const lastLine = lines[lines.length - 1];
         const lastLineEnd = lastLine.startTime + LYRIC_DURATION_ESTIMATE;
         const endLoader = document.createElement("div");

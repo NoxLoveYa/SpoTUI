@@ -1,4 +1,4 @@
-import { ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, SHADE_KEY, VISUALIZER_COLOR, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, SHADE_KEY, VISUALIZER_BARS, VISUALIZER_COLOR, VISUALIZER_GAP, VISUALIZER_MODE, VISUALIZER_SMOOTH, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { startAsciiPaintLoop } from "./ascii.js";
 import { resetPosterPrefs, setPostersEnabled } from "./posters.js";
 import { applyShade, isValidShade, parseHexToRgb255 } from "./shade.js";
@@ -50,6 +50,10 @@ export function applyLyricLineSpacing() {
 
 export function applyVisualizerColor() {
     applyCssVar(VISUALIZER_COLOR, "--visualizer-color");
+}
+
+export function applyVisualizerGap() {
+    applyCssVar(VISUALIZER_GAP, "--visualizer-gap");
 }
 
 // Apply stored player bar color preferences from localStorage
@@ -458,10 +462,6 @@ export function applyCustomBarState() {
         window.addEventListener("resize", updateCustomBarWidth);
     } else {
         document.body.classList.remove("spotui-custom-bar-on");
-        if (window.spotuiCustomBarInterval) {
-            clearInterval(window.spotuiCustomBarInterval);
-            delete window.spotuiCustomBarInterval;
-        }
         window.removeEventListener("resize", updateCustomBarWidth);
     }
 }
@@ -626,6 +626,13 @@ export function resetAllSettings() {
 
     storageRemove(VISUALIZER_COLOR);
     applyVisualizerColor();
+
+    storageRemove(VISUALIZER_GAP);
+    applyVisualizerGap();
+
+    storageRemove(VISUALIZER_BARS);
+    storageRemove(VISUALIZER_SMOOTH);
+    storageRemove(VISUALIZER_MODE);
 
     storageRemove(PLAYER_BAR_BG);
     storageRemove(PLAYER_BAR_BORDER);
