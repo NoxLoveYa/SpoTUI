@@ -838,6 +838,8 @@ sposync_log_cause() {
         echo "SpoSync reports that port ${SPOSYNC_PORT} is held by another user's SpoSync. Only one signed-in user can run SpoSync (see README > SpoSync > Shared computers)."
     elif printf '%s\n' "$new" | grep -q 'does not answer'; then
         echo "SpoSync reports that port ${SPOSYNC_PORT} is busy and its holder does not answer. It will start at the next login once the port is free."
+    elif printf '%s\n' "$new" | grep -q 'could not verify this program'; then
+        echo "Port ${SPOSYNC_PORT} is held by a SpoSync that could not verify this program. See its log; start it with --no-peer-check if Spotify cannot connect."
     elif printf '%s\n' "$new" | grep -q 'cannot be bound'; then
         echo "SpoSync reports that port ${SPOSYNC_PORT} cannot be bound (reserved or blocked by the system). Choose a port outside the reserved ranges or free it."
     else

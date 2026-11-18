@@ -5,12 +5,14 @@ import contextlib
 import errno
 import hashlib
 import io
+import ipaddress
 import json
 import logging
 import math
 import os
 import re
 import socket
+import struct
 import sys
 import threading
 import time
@@ -67,9 +69,13 @@ class RecordingHooks(app.UiHooks):
         self.state = state
         self.exited = threading.Event()
         self.modes = []
+        self.peer_checks = []
 
     def on_mode(self, mode):
         self.modes.append(mode)
+
+    def on_peer_check(self, on):
+        self.peer_checks.append(on)
 
     def request_exit(self):
         self.exited.set()
@@ -1924,6 +1930,2487 @@ class LogHandlerCase(unittest.TestCase):
                 text = f.read()
         self.assertIn("title=a\\ud800b end", text)
         self.assertIn("second line", text)
+
+
+# ---------------------------------------------------------------- the peer's user
+
+IS_WIN = sys.platform == "win32"
+CAN_LOOKUP = IS_WIN or sys.platform.startswith("linux")
+
+
+def loopback_pair(family, host):
+    """A connected TCP pair on loopback: (client, accepted server side). Skips when the family is unavailable."""
+    srv = socket.socket(family)
+    cli = socket.socket(family)
+    try:
+        srv.bind((host, 0))
+        srv.listen(1)
+        cli.connect(srv.getsockname())
+        conn, _ = srv.accept()
+    except OSError as e:
+        cli.close()
+        raise unittest.SkipTest(f"no {host} loopback: {e}")
+    finally:
+        srv.close()
+    return cli, conn
+
+
+@unittest.skipUnless(CAN_LOOKUP, "no peer lookup on this platform")
+class PeerLookupRealCase(unittest.TestCase):
+    """The real connection table, for connections this test process makes itself."""
+
+    def expect_own(self, family, host):
+        cli, conn = loopback_pair(family, host)
+        self.addCleanup(cli.close)
+        self.addCleanup(conn.close)
+        verdict, pid = app.lookup_peer(conn.getpeername(), conn.getsockname())
+        self.assertEqual(verdict, app.PEER_SAME)
+        self.assertEqual(pid, os.getpid() if IS_WIN else None)
+        return cli, conn
+
+    def test_a_connection_of_this_process_is_ours_over_ipv4(self):
+        self.expect_own(socket.AF_INET, "127.0.0.1")
+
+    def test_a_connection_of_this_process_is_ours_over_ipv6(self):
+        self.expect_own(socket.AF_INET6, "::1")
+
+    def test_an_ipv4_peer_seen_through_a_dual_stack_socket_is_looked_up_as_ipv4(self):
+        cli, conn = loopback_pair(socket.AF_INET, "127.0.0.1")
+        self.addCleanup(cli.close)
+        self.addCleanup(conn.close)
+        (_, peer_port), (_, local_port) = conn.getpeername(), conn.getsockname()
+        verdict, _ = app.lookup_peer(("::ffff:127.0.0.1", peer_port, 0, 0), ("::ffff:127.0.0.1", local_port, 0, 0))
+        self.assertEqual(verdict, app.PEER_SAME)
+
+    def test_a_connection_that_is_not_in_the_table_is_not_found(self):
+        cli, conn = loopback_pair(socket.AF_INET, "127.0.0.1")
+        self.addCleanup(cli.close)
+        self.addCleanup(conn.close)
+        self.assertEqual(app.lookup_peer(("127.0.0.1", 1), conn.getsockname()), (app.PEER_NOTFOUND, None))
+        # Right peer, wrong listening port: that is somebody else's connection.
+        self.assertEqual(app.lookup_peer(conn.getpeername(), ("127.0.0.1", 1)), (app.PEER_NOTFOUND, None))
+
+    # Only the ADDRESS differs from the real connection (the ports are right): each address
+    # comparison alone must turn the row down.
+    def expect_address_matters(self, family, host, other):
+        cli, conn = loopback_pair(family, host)
+        self.addCleanup(cli.close)
+        self.addCleanup(conn.close)
+        peer, local = conn.getpeername()[:2], conn.getsockname()[:2]
+        self.assertEqual(app.lookup_peer(peer, local)[0], app.PEER_SAME)  # the control
+        self.assertEqual(app.lookup_peer((other, peer[1]), local), (app.PEER_NOTFOUND, None))  # peer address
+        self.assertEqual(app.lookup_peer(peer, (other, local[1])), (app.PEER_NOTFOUND, None))  # our address
+
+    def test_a_peer_or_listener_on_another_ipv4_address_with_the_same_ports_is_not_found(self):
+        self.expect_address_matters(socket.AF_INET, "127.0.0.1", "127.0.0.2")
+
+    def test_a_peer_or_listener_on_another_ipv6_address_with_the_same_ports_is_not_found(self):
+        self.expect_address_matters(socket.AF_INET6, "::1", "::2")
+
+    def test_a_name_that_is_not_an_inet_socket_name_raises(self):
+        for bad in (None, "path", ("only",), ("not an ip", 5)):
+            with self.assertRaises(ValueError):
+                app.lookup_peer(bad, ("127.0.0.1", 5))
+
+    def test_an_unsupported_platform_raises_peer_unsupported(self):
+        with mock.patch.object(sys, "platform", "darwin"), self.assertRaises(app.PeerUnsupported):
+            app.lookup_peer(("127.0.0.1", 1), ("127.0.0.1", 2))
+
+
+@unittest.skipUnless(IS_WIN, "Windows only")
+class PeerWindowsCase(unittest.TestCase):
+    def test_row_sizes_are_those_of_the_mib_owner_module_rows(self):
+        # The SDK layouts, with the compiler's natural alignment (LARGE_INTEGER on 8 bytes).
+        import ctypes
+        from ctypes import wintypes
+
+        class Row4(ctypes.Structure):  # MIB_TCPROW_OWNER_MODULE
+            _fields_ = [("dwState", wintypes.DWORD), ("dwLocalAddr", wintypes.DWORD), ("dwLocalPort", wintypes.DWORD),
+                        ("dwRemoteAddr", wintypes.DWORD), ("dwRemotePort", wintypes.DWORD), ("dwOwningPid", wintypes.DWORD),
+                        ("liCreateTimestamp", ctypes.c_int64), ("OwningModuleInfo", ctypes.c_uint64 * 16)]
+
+        class Row6(ctypes.Structure):  # MIB_TCP6ROW_OWNER_MODULE
+            _fields_ = [("ucLocalAddr", ctypes.c_ubyte * 16), ("dwLocalScopeId", wintypes.DWORD),
+                        ("dwLocalPort", wintypes.DWORD), ("ucRemoteAddr", ctypes.c_ubyte * 16),
+                        ("dwRemoteScopeId", wintypes.DWORD), ("dwRemotePort", wintypes.DWORD),
+                        ("dwState", wintypes.DWORD), ("dwOwningPid", wintypes.DWORD),
+                        ("liCreateTimestamp", ctypes.c_int64), ("OwningModuleInfo", ctypes.c_uint64 * 16)]
+
+        class Table4(ctypes.Structure):
+            _fields_ = [("dwNumEntries", wintypes.DWORD), ("table", Row4 * 1)]
+
+        class Table6(ctypes.Structure):
+            _fields_ = [("dwNumEntries", wintypes.DWORD), ("table", Row6 * 1)]
+
+        self.assertEqual((ctypes.sizeof(Row4), ctypes.sizeof(Row6)), (160, 192))
+        self.assertEqual((app._WIN_ROW_SIZE[app._WIN_AF_INET], app._WIN_ROW_SIZE[app._WIN_AF_INET6]), (160, 192))
+        self.assertEqual(Table4.table.offset, app._WIN_TABLE_HEADER)
+        self.assertEqual(Table6.table.offset, app._WIN_TABLE_HEADER)
+        for fam, row in ((app._WIN_AF_INET, Row4), (app._WIN_AF_INET6, Row6)):
+            self.assertEqual(row.dwOwningPid.offset, app._WIN_PID_OFFSET[fam])
+            self.assertEqual(row.liCreateTimestamp.offset, app._WIN_TIME_OFFSET[fam])
+
+    def real_table_finds_own_connection(self, family, host):
+        cli, conn = loopback_pair(family, host)
+        self.addCleanup(cli.close)
+        self.addCleanup(conn.close)
+        peer, local = app._endpoint(conn.getpeername()), app._endpoint(conn.getsockname())
+        fam = app._WIN_AF_INET if family == socket.AF_INET else app._WIN_AF_INET6
+        buf = app._windows_tcp_table(app._win_api(), fam)
+        found = app._scan_windows_table(buf, fam, peer, local)
+        self.assertEqual([pid for pid, _ in found], [os.getpid()])
+        created = found[0][1]
+        self.assertGreater(created, 0)  # the table does give a socket creation time
+        now = int((time.time() + 11644473600) * 10_000_000)  # FILETIME of now
+        self.assertLess(abs(now - created), 60 * 10_000_000)
+        # The two sockets of the pair are two rows: the other one is the server side (peer and local swapped).
+        back = app._scan_windows_table(buf, fam, local, peer)
+        self.assertEqual([pid for pid, _ in back], [os.getpid()])
+
+    def test_the_real_ipv4_table_has_the_documented_layout(self):
+        self.real_table_finds_own_connection(socket.AF_INET, "127.0.0.1")
+
+    def test_the_real_ipv6_table_has_the_documented_layout(self):
+        self.real_table_finds_own_connection(socket.AF_INET6, "::1")
+
+    def test_ports_come_out_of_network_byte_order(self):
+        self.assertEqual(app._win_port(socket.htons(8765)), 8765)
+        self.assertEqual(app._win_port(socket.htons(54321)), 54321)
+        self.assertEqual(app._win_port(0xFFFF0000 | socket.htons(80)), 80)  # only the low 16 bits count
+
+    def test_another_users_process_looks_denied_or_foreign_never_ours(self):
+        # pid 4 is System: an unelevated helper cannot open it, an elevated one reads SYSTEM's SID.
+        api = app._win_api()
+        self.assertIn(app._windows_pid_verdict(api, 4, app._windows_sid()), (app.PEER_DENIED, app.PEER_OTHER))
+
+    def test_a_process_that_is_gone_is_gone_not_ours_and_not_foreign(self):
+        api = app._win_api()
+        self.assertEqual(app._windows_pid_verdict(api, 0x7FFFFFF0, app._windows_sid()), app.PEER_GONE)
+
+    def test_our_own_pid_is_ours(self):
+        api = app._win_api()
+        self.assertEqual(app._windows_pid_verdict(api, os.getpid(), app._windows_sid()), app.PEER_SAME)
+        self.assertEqual(app._windows_pid_verdict(api, os.getpid(), "S-1-5-21-0-0-0-1"), app.PEER_OTHER)
+
+    def test_lookups_do_not_leak_handles(self):
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.GetProcessHandleCount.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+
+        def handles():
+            n = wintypes.DWORD()
+            self.assertTrue(k32.GetProcessHandleCount(k32.GetCurrentProcess(), ctypes.byref(n)))
+            return n.value
+
+        cli, conn = loopback_pair(socket.AF_INET, "127.0.0.1")
+        self.addCleanup(cli.close)
+        self.addCleanup(conn.close)
+        app.lookup_peer(conn.getpeername(), conn.getsockname())  # first call: lazy loads
+        before = handles()
+        for _ in range(300):
+            app.lookup_peer(conn.getpeername(), conn.getsockname())
+        api = app._win_api()
+        for _ in range(100):
+            app._windows_pid_verdict(api, 4, "x")  # the denied path too
+        self.assertLess(handles() - before, 5)
+
+    def test_the_table_buffer_grows_until_it_fits(self):
+        sizes = [100, 5000, None]
+        calls = []
+
+        class FakeIp:
+            def GetExtendedTcpTable(self, buf, size_ref, order, family, table_class, reserved):
+                calls.append((None if buf is None else len(buf), size_ref._obj.value, family, table_class))
+                want = sizes[len(calls) - 1]
+                if want is None:
+                    return 0
+                size_ref._obj.value = want  # the table grew between two calls
+                return 122
+
+        api = types.SimpleNamespace(iphlpapi=FakeIp())
+        buf = app._windows_tcp_table(api, app._WIN_AF_INET6)
+        self.assertEqual([c[0] is None for c in calls], [True, False, False])
+        self.assertGreaterEqual(len(buf), 5000)
+        self.assertEqual({(c[2], c[3]) for c in calls}, {(23, 8)})  # AF_INET6, TCP_TABLE_OWNER_MODULE_CONNECTIONS
+        self.assertIsInstance(buf, bytearray)
+
+    def test_any_other_table_error_raises(self):
+        class FakeIp:
+            def GetExtendedTcpTable(self, *args):
+                return 87
+
+        with self.assertRaises(OSError):
+            app._windows_tcp_table(types.SimpleNamespace(iphlpapi=FakeIp()), app._WIN_AF_INET)
+
+
+# Literal /proc/net text, as a little-endian host prints it. Ports: 0x2223 = 8739 (the helper),
+# 0xD431.. = 54321.. (clients). 127.0.0.1 is 0100007F, ::1 is 00000000000000000000000001000000 and
+# the IPv4-mapped 127.0.0.1 is 0000000000000000FFFF00000100007F.
+PROC_TCP = """\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:2223 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 11111 1 0000000000000000 100 0 0 10 0
+   1: 0100007F:2223 0100007F:D431 01 00000000:00000000 00:00000000 00000000  1000        0 12345 1 0000000000000000 20 4 30 10 -1
+   2: 0100007F:D431 0100007F:2223 01 00000000:00000000 00:00000000 00000000  1000        0 12346 1 0000000000000000 20 4 30 10 -1
+   3: 0100007F:D432 0100007F:2223 01 00000000:00000000 00:00000000 00000000     0        0 12347 1 0000000000000000 20 4 30 10 -1
+   4: 0100007F:D433 0100007F:1F90 01 00000000:00000000 00:00000000 00000000  2000        0 12348 1 0000000000000000 20 4 30 10 -1
+   garbage line that is not a socket
+   5: 0100007F:D434 0100007F:2223 01 00000000:00000000 00:00000000 00000000
+"""
+PROC_TCP6 = """\
+  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000001000000:D437 00000000000000000000000001000000:2223 01 00000000:00000000 00:00000000 00000000  1000        0 22221 1 0000000000000000 20 4 30 10 -1
+   1: 00000000000000000000000001000000:D438 00000000000000000000000001000000:2223 01 00000000:00000000 00:00000000 00000000  1001        0 22222 1 0000000000000000 20 4 30 10 -1
+   2: 0000000000000000FFFF00000100007F:D439 0000000000000000FFFF00000100007F:2223 01 00000000:00000000 00:00000000 00000000  1000        0 22223 1 0000000000000000 20 4 30 10 -1
+   3: 0000000000000000FFFF00000100007F:D43A 0000000000000000FFFF00000100007F:2223 01 00000000:00000000 00:00000000 00000000  1001        0 22224 1 0000000000000000 20 4 30 10 -1
+"""
+
+
+@unittest.skipIf(sys.byteorder != "little", "the samples are little-endian")
+class PeerLinuxParserCase(unittest.TestCase):
+    UID = 1000
+
+    def lookup(self, peer, local, tcp=PROC_TCP, tcp6=PROC_TCP6, uid=UID):
+        def read(name):
+            text = {"tcp": tcp, "tcp6": tcp6}[name]
+            if text is None:
+                raise FileNotFoundError(name)
+            return text
+
+        return app._linux_peer(app._endpoint(peer), app._endpoint(local), read=read, uid=uid)
+
+    def test_rows_are_parsed_and_garbage_is_skipped(self):
+        rows = app.parse_proc_net(PROC_TCP)
+        self.assertEqual(len(rows), 5)  # the header, the garbage line and the line without a uid are not rows
+        lip, lport, rip, rport, uid = rows[1]
+        self.assertEqual((str(lip), lport, str(rip), rport, uid), ("127.0.0.1", 8739, "127.0.0.1", 54321, 1000))
+        rows6 = app.parse_proc_net(PROC_TCP6)
+        self.assertEqual([str(r[0]) for r in rows6], ["::1", "::1", "127.0.0.1", "127.0.0.1"])  # mapped ones come out as IPv4
+
+    def test_our_own_ipv4_peer_is_ours(self):
+        self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739)), (app.PEER_SAME, None))
+
+    def test_a_peer_with_another_uid_is_another_user(self):
+        self.assertEqual(self.lookup(("127.0.0.1", 54322), ("127.0.0.1", 8739)), (app.PEER_OTHER, None))
+
+    def test_the_uid_is_compared_with_ours_not_with_the_listener(self):
+        # The same row from a process that runs as uid 0 (root) is not the user's.
+        self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739), uid=0)[0], app.PEER_OTHER)
+
+    def test_a_peer_that_is_not_in_the_table_is_not_found(self):
+        self.assertEqual(self.lookup(("127.0.0.1", 59999), ("127.0.0.1", 8739)), (app.PEER_NOTFOUND, None))
+        # Same client port, but a connection to another service: not ours to judge.
+        self.assertEqual(self.lookup(("127.0.0.1", 54323), ("127.0.0.1", 8739)), (app.PEER_NOTFOUND, None))
+
+    def test_ipv6_loopback(self):
+        self.assertEqual(self.lookup(("::1", 54327, 0, 0), ("::1", 8739, 0, 0)), (app.PEER_SAME, None))
+        self.assertEqual(self.lookup(("::1", 54328, 0, 0), ("::1", 8739, 0, 0)), (app.PEER_OTHER, None))
+
+    def test_ipv4_mapped_rows_match_a_mapped_or_a_plain_peer(self):
+        for peer, local in (
+            (("::ffff:127.0.0.1", 54329, 0, 0), ("::ffff:127.0.0.1", 8739, 0, 0)),
+            (("127.0.0.1", 54329), ("127.0.0.1", 8739)),
+        ):
+            self.assertEqual(self.lookup(peer, local), (app.PEER_SAME, None))
+        self.assertEqual(self.lookup(("127.0.0.1", 54330), ("127.0.0.1", 8739))[0], app.PEER_OTHER)
+
+    def test_a_missing_tcp6_file_is_fine_a_missing_tcp_file_too_but_not_both(self):
+        self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739), tcp6=None)[0], app.PEER_SAME)
+        self.assertEqual(self.lookup(("::1", 54327, 0, 0), ("::1", 8739, 0, 0), tcp=None)[0], app.PEER_SAME)
+        with self.assertRaises(OSError):
+            self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739), tcp=None, tcp6=None)
+
+    def test_a_row_for_the_peer_of_another_user_in_either_table_wins_over_ours(self):
+        # The same connection in tcp and in tcp6 (a mapped row), with two owners (it should not
+        # happen): one foreign owner is enough.
+        mapped = (
+            "   9: 0000000000000000FFFF00000100007F:D431 0000000000000000FFFF00000100007F:2223 01 "
+            "00000000:00000000 00:00000000 00000000  0 0 1 1 0\n"
+        )
+        self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739), tcp6=PROC_TCP6 + mapped)[0], app.PEER_OTHER)
+
+    def test_the_first_row_of_a_table_is_the_connection(self):
+        dup = PROC_TCP + "   9: 0100007F:D431 0100007F:2223 01 00000000:00000000 00:00000000 00000000  0 0 1 1 0\n"
+        self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739), tcp=dup)[0], app.PEER_SAME)
+
+    # Only the ADDRESS differs from a row in the table (the ports are the same): each address
+    # comparison alone must be enough to turn the row down.
+    def test_a_peer_on_another_address_with_the_same_ports_is_not_the_row(self):
+        text = (
+            "  sl  local_address rem_address   st\n"
+            "   0: 0200007F:D431 0100007F:2223 01 00000000:00000000 00:00000000 00000000  0        0 1 1 0000000000000000 20 4 30 10 -1\n"
+        )
+        self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739), tcp=text, tcp6=None), (app.PEER_NOTFOUND, None))
+        self.assertEqual(self.lookup(("127.0.0.2", 54321), ("127.0.0.1", 8739), tcp=text, tcp6=None)[0], app.PEER_OTHER)
+
+    def test_a_row_for_another_remote_address_with_the_same_ports_is_not_the_row(self):
+        text = (
+            "  sl  local_address rem_address   st\n"
+            "   0: 0100007F:D431 0200007F:2223 01 00000000:00000000 00:00000000 00000000  0        0 1 1 0000000000000000 20 4 30 10 -1\n"
+        )
+        self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739), tcp=text, tcp6=None), (app.PEER_NOTFOUND, None))
+        self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.2", 8739), tcp=text, tcp6=None)[0], app.PEER_OTHER)
+
+    def test_the_same_address_check_holds_for_ipv6_too(self):
+        # ::2 is 00000000000000000000000002000000
+        text = (
+            "  sl  local_address remote_address st\n"
+            "   0: 00000000000000000000000002000000:D437 00000000000000000000000001000000:2223 01 "
+            "00000000:00000000 00:00000000 00000000  0 0 1 1 0000000000000000 20 4 30 10 -1\n"
+        )
+        self.assertEqual(self.lookup(("::1", 54327, 0, 0), ("::1", 8739, 0, 0), tcp=None, tcp6=text), (app.PEER_NOTFOUND, None))
+        self.assertEqual(self.lookup(("::2", 54327, 0, 0), ("::1", 8739, 0, 0), tcp=None, tcp6=text)[0], app.PEER_OTHER)
+
+    def test_lines_without_the_ports_are_skipped_before_they_are_parsed(self):
+        # A line that cannot parse but does not carry the ports costs nothing and breaks nothing.
+        head, _, rows = PROC_TCP.partition("\n")
+        text = head + "\n   7: not-a-row\n   8: 0100007F:D431\n" + rows
+        with mock.patch.object(app, "_proc_row", wraps=app._proc_row) as parsed:
+            self.assertEqual(self.lookup(("127.0.0.1", 54321), ("127.0.0.1", 8739), tcp=text, tcp6=None)[0], app.PEER_SAME)
+        # Only the two lines that carry both ports are parsed (the listener's row does not); the search
+        # stops at the matching one.
+        self.assertEqual(parsed.call_count, 2)
+
+
+class StubLookup:
+    """Stands in for lookup_peer: returns the given results in turn (the last one repeats), raises exceptions."""
+
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = []
+
+    def __call__(self, peer, local):
+        self.calls.append((peer, local))
+        result = self.results.pop(0) if len(self.results) > 1 else self.results[0]
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+
+OTHER = (app.PEER_OTHER, 4242)
+SAME = (app.PEER_SAME, 1)
+NOTFOUND = (app.PEER_NOTFOUND, None)
+
+
+class PeerGateCase(unittest.IsolatedAsyncioTestCase):
+    """Who is allowed to use the helper: only the user it runs as, decided before any role is given."""
+
+    async def asyncSetUp(self):
+        self._saved_state = app.S
+        app.S = app.State()
+        self.log, self.log_lines = make_log()
+        self.capture = StubCapture()
+        self.hooks = RecordingHooks()
+        self.sleeps = []
+        self.relays = []
+
+    async def asyncTearDown(self):
+        for relay, runner in self.relays:
+            await relay.close()
+            await asyncio.wait_for(runner, 3)
+        app.S = self._saved_state
+
+    async def start(self, lookup, strict=True, peer_check=True, clock=None, host="127.0.0.1"):
+        async def sleep(delay):
+            self.sleeps.append(delay)
+
+        relay = app.Relay(host, 0, self.log, self.hooks, self.capture, clock=clock, peer_check=peer_check,
+                          peer_lookup=lookup, peer_strict=strict, peer_sleep=sleep)
+        await relay.start()
+        self.relays.append((relay, asyncio.ensure_future(relay.run())))
+        self.relay = relay
+        self.url = f"ws://{host}:{relay.port}"
+        return relay
+
+    async def refused(self, origin=THEME, status=403):
+        kw = {"origin": origin} if origin else {}
+        with self.assertRaises(InvalidStatus) as cm:
+            async with connect(self.url, **kw):
+                pass
+        response = cm.exception.response
+        self.assertEqual(response.status_code, status)
+        self.assertEqual(response.body, b"Forbidden\n")
+        return response.headers.get(app.PEER_HEADER)
+
+    def count(self, text):
+        return sum(text in line for line in self.log_lines.lines)
+
+    # -- another user
+
+    async def test_another_users_theme_and_control_clients_get_403_other_user_and_no_role(self):
+        await self.start(StubLookup(OTHER))
+        self.assertEqual(await self.refused(THEME), "other-user")
+        self.assertEqual(await self.refused(None), "other-user")
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.relay.clients, set())
+        self.assertFalse(app.S.connected)
+        self.assertEqual(self.capture.calls, [])  # the capture never ran for them
+        self.assertEqual(self.hooks.modes, [])
+        self.assertFalse(self.hooks.exited.is_set())
+        self.assertEqual(self.count("client connected"), 0)
+        self.assertEqual(self.count("rejected peer user=other pid=4242"), 2)
+
+    async def test_the_refusal_is_a_bare_403_on_the_wire_and_carries_the_header(self):
+        await self.start(StubLookup(OTHER))
+        reader, writer = await asyncio.open_connection("127.0.0.1", self.relay.port)
+        try:
+            writer.write(
+                f"GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                f"Origin: {THEME}\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n".encode()
+            )
+            await writer.drain()
+            raw = await asyncio.wait_for(reader.read(65536), 3)
+        finally:
+            writer.close()
+        head, _, body = raw.partition(b"\r\n\r\n")
+        self.assertTrue(head.startswith(b"HTTP/1.1 403 "), head)
+        self.assertIn(b"X-SpoSync: other-user", head)
+        self.assertNotIn(b"101", head.split(b"\r\n")[0])
+        self.assertEqual(body, b"Forbidden\n")
+
+    async def test_the_origin_is_checked_before_the_peer_and_a_hostile_one_costs_no_lookup(self):
+        lookup = StubLookup(OTHER)
+        await self.start(lookup)
+        self.assertIsNone(await self.refused(EVIL))  # plain 403: no X-SpoSync header ...
+        self.assertEqual(lookup.calls, [])  # ... and the connection table was never read
+        self.assertEqual(self.count("rejected origin"), 1)
+        self.assertEqual(self.count("rejected peer"), 0)
+
+    async def test_only_a_missing_or_the_theme_origin_reaches_the_peer_check(self):
+        lookup = StubLookup(SAME)
+        await self.start(lookup)
+        async with connect(self.url) as ws:  # no Origin: a control client
+            await ws.send(json.dumps({"type": "control", "action": "ping"}))
+            await recv_json(ws)
+        self.assertEqual(len(lookup.calls), 1)
+        async with self.theme_client() as ws:
+            await recv_type(ws, "status")
+        self.assertEqual(len(lookup.calls), 2)
+        for origin in (EVIL, "null", "https://xpui.app.spotify.com.evil.example"):
+            await self.refused(origin)
+        self.assertEqual(len(lookup.calls), 2)  # none of the hostile ones was looked up
+
+    async def test_a_refused_peer_with_the_theme_origin_is_refused_by_the_peer_check(self):
+        await self.start(StubLookup(OTHER))
+        self.assertEqual(await self.refused(THEME), "other-user")
+        self.assertEqual(self.count("rejected origin"), 0)
+        self.assertEqual(self.count("rejected peer user=other"), 1)
+
+    async def test_a_process_that_cannot_be_opened_is_refused_like_another_user(self):
+        await self.start(StubLookup((app.PEER_DENIED, 77)))
+        self.assertEqual(await self.refused(), "other-user")
+        self.assertEqual(self.count("rejected peer user=other pid=77"), 1)
+        self.assertEqual(self.sleeps, [])  # no retry: this is an answer, not a missing row
+
+    async def test_the_clients_of_the_user_are_not_disturbed_by_a_refused_one(self):
+        await self.start(StubLookup(SAME, OTHER))
+        async with connect(self.url, origin=THEME) as good:
+            await recv_type(good, "status")
+            await good.send(json.dumps({"type": "update", "title": "mine", "visualizer": True}))
+            self.assertTrue(await until(lambda: self.capture.calls[-1:] == [True]))
+            calls = list(self.capture.calls)
+            self.assertEqual(await self.refused(THEME), "other-user")
+            self.assertEqual(await self.refused(None), "other-user")
+            self.assertEqual(len(self.relay.clients), 1)
+            self.assertEqual(app.S.title, "mine")
+            self.assertEqual(self.capture.calls, calls)  # the refused ones did not touch the capture
+            await self.relay.broadcast({"type": "command", "cmd": "next"})
+            self.assertEqual((await recv_type(good, "command"))["cmd"], "next")
+
+    async def test_a_refusal_never_names_the_user(self):
+        await self.start(StubLookup(OTHER, (app.PEER_DENIED, 5), NOTFOUND))
+        for _ in range(3):
+            await self.refused()
+        text = "\n".join(self.log_lines.lines)
+        self.assertNotRegex(text, r"S-1-5|uid|user=(?!other)|USERNAME")
+        self.assertEqual(self.count("rejected peer"), 3)
+
+    async def test_a_mismatch_is_refused_even_where_a_failed_lookup_is_let_through(self):
+        await self.start(StubLookup(OTHER), strict=False)
+        self.assertEqual(await self.refused(), "other-user")
+        self.assertEqual(self.count("peer check unavailable"), 0)
+
+    async def test_an_unknown_pid_is_logged_as_a_question_mark(self):
+        await self.start(StubLookup((app.PEER_OTHER, None)), strict=False)
+        await self.refused()
+        self.assertIn("rejected peer user=other pid=?", self.log_lines.lines)
+
+    # -- the connection is not in the table
+
+    async def test_a_missing_row_is_looked_up_again_three_times_30_ms_apart_then_refused_as_unknown(self):
+        lookup = StubLookup(NOTFOUND)
+        await self.start(lookup)
+        self.assertEqual(await self.refused(), "peer-unknown")
+        self.assertEqual(len(lookup.calls), 1 + app.PEER_RETRIES)
+        self.assertEqual(self.sleeps, [0.03] * 3)
+        self.assertEqual(self.log_lines.lines.count("rejected peer unknown (connection not found)"), 1)
+        self.assertEqual(self.count("user=other"), 0)
+        self.assertEqual(self.relay.clients, set())
+        self.assertEqual(self.capture.calls, [])
+
+    async def test_a_row_that_shows_up_on_a_retry_lets_the_client_in(self):
+        lookup = StubLookup(NOTFOUND, NOTFOUND, SAME)
+        await self.start(lookup)
+        async with self.theme_client() as ws:
+            await recv_type(ws, "status")
+        self.assertEqual(len(lookup.calls), 3)
+        self.assertEqual(self.sleeps, [0.03, 0.03])
+        self.assertEqual(self.count("rejected peer"), 0)
+
+    async def test_a_row_that_shows_up_as_another_user_on_a_retry_is_refused_as_another_user(self):
+        await self.start(StubLookup(NOTFOUND, OTHER))
+        self.assertEqual(await self.refused(), "other-user")
+        self.assertEqual(self.sleeps, [0.03])
+
+    def theme_client(self):
+        return connect(self.url, origin=THEME)
+
+    # -- the lookup fails
+
+    async def test_a_failed_lookup_is_refused_as_unknown_on_windows_style_platforms(self):
+        lookup = StubLookup(OSError("secret detail"))
+        await self.start(lookup)
+        self.assertEqual(await self.refused(), "peer-unknown")
+        self.assertEqual(len(lookup.calls), 1)  # an error is not retried
+        self.assertEqual(self.sleeps, [])
+        self.assertIn("rejected peer unknown (lookup error)", self.log_lines.lines)
+        self.assertIn("peer lookup failed: OSError", self.log_lines.lines)
+        self.assertNotIn("secret", "\n".join(self.log_lines.lines))
+
+    async def test_a_failed_lookup_is_let_through_with_one_warning_where_not_strict(self):
+        await self.start(StubLookup(OSError("x")), strict=False)
+        for _ in range(3):
+            async with self.theme_client() as ws:
+                await recv_type(ws, "status")
+        self.assertEqual(self.count("peer check unavailable"), 1)
+        self.assertEqual(self.count("rejected peer"), 0)
+
+    async def test_a_row_that_never_shows_up_is_let_through_with_one_warning_where_not_strict(self):
+        lookup = StubLookup(NOTFOUND)
+        await self.start(lookup, strict=False)
+        for _ in range(2):
+            async with self.theme_client() as ws:
+                await recv_type(ws, "status")
+            async with connect(self.url) as ws:
+                await ws.send(json.dumps({"type": "control", "action": "ping"}))
+                self.assertEqual((await recv_json(ws))["app"], "sposync")
+        self.assertEqual(len(lookup.calls), 4 * (1 + app.PEER_RETRIES))
+        self.assertEqual(self.count("peer check unavailable"), 1)
+
+    async def test_an_unsupported_platform_is_let_through_with_one_warning(self):
+        await self.start(StubLookup(app.PeerUnsupported("sunos5")), strict=False)
+        for _ in range(2):
+            async with self.theme_client() as ws:
+                await recv_type(ws, "status")
+        self.assertEqual(self.count("peer check unavailable"), 1)
+        self.assertEqual(self.count("rejected peer"), 0)
+
+    # -- the log
+
+    async def test_rejection_lines_are_capped_per_process_then_counted_every_ten_minutes(self):
+        clock = FakeClock()
+        await self.start(StubLookup(OTHER), clock=clock)
+        for _ in range(app.MAX_PEER_LOGS + 3):
+            await self.refused()
+        self.assertEqual(self.count("rejected peer user=other"), app.MAX_PEER_LOGS)
+        self.assertEqual(self.count("more in the last"), 0)
+        clock.now += app.PEER_LOG_INTERVAL - 1
+        await self.refused()
+        self.assertEqual(self.count("more in the last"), 0)
+        clock.now += 1
+        await self.refused()
+        self.assertIn("rejected peer: 5 more in the last 10 min", self.log_lines.lines)
+        for _ in range(3):
+            await self.refused()
+        self.assertEqual(self.count("more in the last"), 1)  # counted, not logged each time
+        clock.now += app.PEER_LOG_INTERVAL
+        await self.refused()
+        self.assertIn("rejected peer: 4 more in the last 10 min", self.log_lines.lines)
+        self.assertEqual(self.count("rejected peer user=other"), app.MAX_PEER_LOGS)
+
+    async def test_unknown_rejections_share_the_cap_and_live_outside_the_noise_budget(self):
+        await self.start(StubLookup(NOTFOUND))
+        for _ in range(app.NOISE_LINES + 5):  # the noise budget is spent first ...
+            self.relay._noise(logging.INFO, "filler")
+        await self.refused()
+        self.assertIn("rejected peer unknown (connection not found)", self.log_lines.lines)  # ... and the line still comes
+
+    # -- the escape hatch and the real thing
+
+    async def test_no_peer_check_skips_the_lookup_and_says_so_at_start(self):
+        lookup = StubLookup(AssertionError("must not be called"))
+        await self.start(lookup, peer_check=False)
+        self.assertIn("peer check disabled by --no-peer-check", self.log_lines.lines)
+        async with self.theme_client() as ws:
+            await recv_type(ws, "status")
+        async with connect(self.url) as ws:
+            await ws.send(json.dumps({"type": "control", "action": "ping"}))
+            self.assertTrue((await recv_json(ws))["ok"])
+        self.assertEqual(lookup.calls, [])
+        # The origin allowlist still applies.
+        with self.assertRaises(InvalidStatus) as cm:
+            async with connect(self.url, origin=EVIL):
+                pass
+        self.assertIsNone(cm.exception.response.headers.get(app.PEER_HEADER))
+
+    async def test_the_check_is_on_by_default_and_silent_about_it(self):
+        relay = app.Relay("127.0.0.1", 0, self.log, self.hooks, self.capture)
+        self.assertTrue(relay._peer_check)
+        await relay.start()
+        await relay.close()
+        self.assertEqual(self.count("--no-peer-check"), 0)
+
+    @unittest.skipUnless(CAN_LOOKUP, "no peer lookup on this platform")
+    async def test_clients_of_this_user_pass_the_real_check_over_ipv4_and_ipv6(self):
+        for host in ("127.0.0.1", "::1"):
+            try:
+                await self.start(None, host=host)
+            except OSError:
+                self.assertEqual(host, "::1")  # no IPv6 loopback on this machine
+                continue
+            url = f"ws://[{host}]:{self.relay.port}" if ":" in host else self.url
+            async with connect(url, origin=THEME) as ws:
+                self.assertEqual(await recv_json(ws), {"type": "status", "ui": False})
+            async with connect(url) as ws:
+                await ws.send(json.dumps({"type": "control", "action": "ping"}))
+                reply = await recv_json(ws)
+                self.assertEqual((reply["app"], reply["owner"]), ("sposync", app.owner_id()))
+            with self.assertRaises(InvalidStatus) as cm:  # a hostile page of the same user: still 403 by origin
+                async with connect(url, origin=EVIL):
+                    pass
+            self.assertEqual(cm.exception.response.status_code, 403)
+            self.assertIsNone(cm.exception.response.headers.get(app.PEER_HEADER))
+        self.assertEqual(self.count("rejected peer"), 0)
+        self.assertEqual(self.count("peer check unavailable"), 0)
+
+
+class PeerProbeCase(unittest.IsolatedAsyncioTestCase):
+    """What a second helper (or --quit) makes of a refusal at the handshake."""
+
+    async def asyncSetUp(self):
+        self._saved_state = app.S
+        app.S = app.State()
+        self.log, self.log_lines = make_log()
+        self.reached = []
+        self.servers = []
+
+    async def asyncTearDown(self):
+        for server in self.servers:
+            server.close()
+            await server.wait_closed()
+        app.S = self._saved_state
+
+    async def refusing(self, header, status=403):
+        async def handler(ws):
+            self.reached.append(1)
+
+        def process_request(connection, request):
+            response = connection.respond(status, "Forbidden\n")
+            if header is not None:
+                response.headers[app.PEER_HEADER] = header
+            return response
+
+        server = await serve(handler, "127.0.0.1", 0, process_request=process_request)
+        self.servers.append(server)
+        return server.sockets[0].getsockname()[1]
+
+    async def test_a_403_with_other_user_is_another_users_sposync(self):
+        port = await self.refusing("other-user")
+        self.assertEqual(await app.probe("127.0.0.1", port), ("other-user", None))
+        self.assertEqual(await app.probe("127.0.0.1", port, "quit"), ("other-user", None))
+        self.assertEqual(self.reached, [])
+
+    async def test_a_403_with_peer_unknown_is_a_sposync_that_could_not_verify_us(self):
+        port = await self.refusing("peer-unknown")
+        self.assertEqual(await app.probe("127.0.0.1", port), ("unverified", None))
+        self.assertEqual(await app.probe("127.0.0.1", port, "quit"), ("unverified", None))
+        self.assertEqual(self.reached, [])  # no action is ever sent to it
+
+    async def test_plain_403_and_other_statuses_are_foreign(self):
+        for header, status in (("peer-unknown", 401), (None, 403), ("other-user", 401), ("other-user", 500), ("x", 403)):
+            port = await self.refusing(header, status)
+            self.assertEqual(await app.probe("127.0.0.1", port), ("foreign", None), (header, status))
+
+    async def test_quit_never_reaches_another_users_helper_and_exits_busy(self):
+        port = await self.refusing("other-user")
+        code = await asyncio.to_thread(app.quit_running, "127.0.0.1", port, self.log)
+        self.assertEqual(code, app.EXIT_PORT_BUSY)
+        self.assertEqual(self.reached, [])
+        self.assertIn(f"port {port} held by another user's SpoSync; not touching it", self.log_lines.lines)
+
+    async def test_a_second_helper_logs_and_exits_2_when_the_port_is_another_users(self):
+        port = await self.refusing("other-user")
+
+        async def bind():
+            raise OSError(errno.EADDRINUSE, "in use")
+
+        code, state, reply = await app.claim_port("127.0.0.1", port, self.log, bind, "show")
+        self.assertEqual((code, state, reply), (app.EXIT_PORT_BUSY, "other-user", None))
+        self.assertIn(f"port {port} held by another user's SpoSync", self.log_lines.lines)
+        self.assertEqual(app.refusal_text(state, "127.0.0.1", port), f"port {port} is held by another user's SpoSync")
+        self.assertEqual(self.reached, [])
+
+    async def test_a_peer_unknown_refusal_is_a_helper_that_could_not_verify_us_for_a_second_helper_and_for_quit(self):
+        port = await self.refusing("peer-unknown")
+        text = f"port {port} is held by a SpoSync that could not verify this program (see its log; --no-peer-check)"
+
+        async def bind():
+            raise OSError(errno.EADDRINUSE, "in use")
+
+        code, state, reply = await app.claim_port("127.0.0.1", port, self.log, bind)
+        self.assertEqual((code, state, reply), (app.EXIT_PORT_BUSY, "unverified", None))
+        self.assertIn(text, self.log_lines.lines)
+        self.assertEqual(app.refusal_text(state, "127.0.0.1", port), text)
+        self.assertNotIn("in use by another program", app.refusal_text(state, "127.0.0.1", port))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = await asyncio.to_thread(app.quit_running, "127.0.0.1", port, self.log)
+        self.assertEqual(code, app.EXIT_PORT_BUSY)
+        self.assertEqual(out.getvalue().strip(), text)
+        self.assertEqual(self.log_lines.lines.count(text), 2)  # logged by both
+        self.assertEqual(self.reached, [])
+
+    async def test_a_foreign_403_is_still_in_use_by_another_program(self):
+        port = await self.refusing(None)
+
+        async def bind():
+            raise OSError(errno.EADDRINUSE, "in use")
+
+        code, state, _ = await app.claim_port("127.0.0.1", port, self.log, bind)
+        self.assertEqual((code, state), (app.EXIT_PORT_BUSY, "foreign"))
+        self.assertEqual(app.refusal_text(state, "127.0.0.1", port), f"port {port} is in use by another program")
+
+    async def test_the_reply_owner_path_for_older_helpers_still_works(self):
+        async with FakeRelayServer(sposync_reply("someone-else")) as fake:
+            state, _ = await app.probe("127.0.0.1", fake.port, "quit")
+            self.assertEqual((state, fake.actions), ("other-user", ["ping"]))
+        async with FakeRelayServer(sposync_reply(app.owner_id())) as fake:
+            state, _ = await app.probe("127.0.0.1", fake.port)
+            self.assertEqual(state, "sposync")
+
+    async def test_a_real_relay_that_sees_another_user_is_probed_as_other_user_and_keeps_running(self):
+        hooks = RecordingHooks()
+        relay = app.Relay("127.0.0.1", 0, self.log, hooks, StubCapture(), peer_lookup=StubLookup(OTHER), peer_strict=True)
+        await relay.start()
+        runner = asyncio.ensure_future(relay.run())
+        try:
+            self.assertEqual(await app.probe("127.0.0.1", relay.port, "quit"), ("other-user", None))
+            self.assertEqual(await asyncio.to_thread(app.quit_running, "127.0.0.1", relay.port, self.log), app.EXIT_PORT_BUSY)
+            await asyncio.sleep(0.4)  # a quit would call the exit hook after 0.2 s
+            self.assertFalse(hooks.exited.is_set())
+            self.assertNotIn("control action=quit", self.log_lines.lines)
+        finally:
+            await relay.close()
+            await asyncio.wait_for(runner, 3)
+
+
+class PeerFlagCase(unittest.TestCase):
+    def test_the_flag_defaults_to_off_and_is_in_help(self):
+        self.assertFalse(app.parse_args([]).no_peer_check)
+        self.assertTrue(app.parse_args(["--no-peer-check"]).no_peer_check)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            app.parse_args(["--help"])
+        self.assertIn("--no-peer-check", out.getvalue())
+
+    def test_the_background_helper_keeps_the_flag(self):
+        log, _ = make_log()
+        for peer_check, expected in ((True, False), (False, True)):
+            with mock.patch.object(app, "wait_port_free", mock.AsyncMock(return_value=True)), \
+                    mock.patch.object(app.subprocess, "Popen") as popen:
+                app.respawn_headless("127.0.0.1", 18999, log, peer_check)
+            self.assertEqual("--no-peer-check" in popen.call_args.args[0], expected)
+            self.assertIn("--headless", popen.call_args.args[0])
+
+    def test_the_ui_and_headless_runners_hand_the_flag_to_the_relay(self):
+        self.assertFalse(app.SpotuiApp("127.0.0.1", 0, "window", make_log()[0], peer_check=False).relay._peer_check)
+        self.assertTrue(app.SpotuiApp("127.0.0.1", 0, "window", make_log()[0]).relay._peer_check)
+
+    def test_the_version_is_1_2_0(self):
+        self.assertEqual(app.__version__, "1.2.0")
+
+
+# ---------------------------------------------------------------- peer check: scanner, classification, load, self-test
+
+def _ip(text):
+    return ipaddress.ip_address(text).packed
+
+
+def row4(laddr, lport, raddr, rport, pid, ts=0, state=5, lhi=0, rhi=0, modinfo=b""):
+    """One MIB_TCPROW_OWNER_MODULE (160 bytes). lhi/rhi: what sits in the upper 16 bits of the port DWORDs."""
+    return (
+        struct.pack("<I", state) + _ip(laddr) + struct.pack("<I", socket.htons(lport) | (lhi << 16))
+        + _ip(raddr) + struct.pack("<I", socket.htons(rport) | (rhi << 16)) + struct.pack("<I", pid)
+        + struct.pack("<q", ts) + modinfo.ljust(128, b"\0")
+    )
+
+
+def row6(laddr, lport, raddr, rport, pid, ts=0, state=5, lscope=0, rscope=0, lhi=0, rhi=0, modinfo=b""):
+    """One MIB_TCP6ROW_OWNER_MODULE (192 bytes)."""
+    return (
+        _ip(laddr) + struct.pack("<I", lscope) + struct.pack("<I", socket.htons(lport) | (lhi << 16))
+        + _ip(raddr) + struct.pack("<I", rscope) + struct.pack("<I", socket.htons(rport) | (rhi << 16))
+        + struct.pack("<II", state, pid) + struct.pack("<q", ts) + modinfo.ljust(128, b"\0")
+    )
+
+
+def table_of(rows, count=None):
+    return struct.pack("<II", len(rows) if count is None else count, 0) + b"".join(rows)
+
+
+class ScanWindowsTableCase(unittest.TestCase):
+    """The table search on synthetic buffers: no OS needed."""
+    PEER, LOCAL = 50000, 8765
+
+    def scan4(self, buf, peer="127.0.0.1", local="127.0.0.1"):
+        return app._scan_windows_table(
+            buf, app._WIN_AF_INET, app._endpoint((peer, self.PEER)), app._endpoint((local, self.LOCAL)))
+
+    def scan6(self, buf, peer="::1", local="::1", scope=0):
+        return app._scan_windows_table(
+            buf, app._WIN_AF_INET6, app._endpoint((peer, self.PEER, 0, scope)), app._endpoint((local, self.LOCAL, 0, 0)))
+
+    def decoys4(self):
+        a, b = "127.0.0.1", "127.0.0.1"
+        return [
+            row4(a, self.LOCAL, "0.0.0.0", 0, 11, state=2),  # the listening row
+            row4(a, self.PEER, b, self.LOCAL, 0, state=11),  # TIME_WAIT: pid 0
+            row4("127.0.0.2", self.PEER, b, self.LOCAL, 12),  # the same port on another address
+            row4(a, self.PEER, "127.0.0.2", self.LOCAL, 13),  # the same ports, another remote address
+            row4(a, self.PEER, b, 9999, 14),  # the same local port, another remote port
+            row4(a, self.LOCAL, b, self.PEER, 15),  # the server's side of the same connection
+            row4("10.0.0.5", 443, "10.0.0.9", self.PEER, 16),
+        ]
+
+    def test_a_row_is_found_first_in_the_middle_and_last(self):
+        target = row4("127.0.0.1", self.PEER, "127.0.0.1", self.LOCAL, 1234, ts=777)
+        decoys = self.decoys4()
+        for at in (0, 3, len(decoys)):
+            rows = decoys[:at] + [target] + decoys[at:]
+            self.assertEqual(self.scan4(table_of(rows)), [(1234, 777)], at)
+
+    def test_only_the_decoys_find_nothing(self):
+        self.assertEqual(self.scan4(table_of(self.decoys4())), [])
+
+    def test_garbage_in_the_upper_port_bits_is_ignored(self):
+        target = row4("127.0.0.1", self.PEER, "127.0.0.1", self.LOCAL, 1234, ts=5, lhi=0xBEEF, rhi=0xDEAD)
+        self.assertEqual(self.scan4(table_of(self.decoys4() + [target])), [(1234, 5)])
+        self.assertEqual(app._win_port(0xBEEF0000 | socket.htons(self.PEER)), self.PEER)
+
+    def test_two_rows_of_one_connection_are_both_returned_once(self):
+        t1 = row4("127.0.0.1", self.PEER, "127.0.0.1", self.LOCAL, 1, ts=1)
+        t2 = row4("127.0.0.1", self.PEER, "127.0.0.1", self.LOCAL, 2, ts=2)
+        self.assertEqual(self.scan4(table_of([t1, t2, t1])), [(1, 1), (2, 2)])
+
+    def test_bytes_that_look_like_a_row_inside_another_field_are_not_a_row(self):
+        fake = _ip("127.0.0.1") + self.PEER.to_bytes(2, "big") + b"\0\0" + _ip("127.0.0.1") + self.LOCAL.to_bytes(2, "big") + b"\0\0"
+        rows = [row4("10.0.0.1", 1, "10.0.0.2", 2, 99, modinfo=fake)]
+        self.assertEqual(self.scan4(table_of(rows)), [])
+
+    def test_an_empty_or_tiny_table_is_empty(self):
+        for buf in (table_of([]), b"", b"\x01", bytearray(8), struct.pack("<II", 0, 0), struct.pack("<I", 5)):
+            self.assertEqual(self.scan4(buf), [], buf)
+            self.assertEqual(self.scan6(buf), [], buf)
+
+    def test_a_buffer_shorter_than_its_count_is_read_as_far_as_it_goes(self):
+        decoys = self.decoys4()[:2]
+        target = row4("127.0.0.1", self.PEER, "127.0.0.1", self.LOCAL, 7, ts=3)
+        full = table_of(decoys + [target], count=50)  # the header claims 50 rows
+        self.assertEqual(self.scan4(full), [(7, 3)])
+        self.assertEqual(self.scan4(full[:-1]), [])  # the last row is cut: it is not read
+        self.assertEqual(self.scan4(full[:-100]), [])
+
+    def test_rows_beyond_the_count_are_not_read(self):
+        target = row4("127.0.0.1", self.PEER, "127.0.0.1", self.LOCAL, 7)
+        self.assertEqual(self.scan4(table_of(self.decoys4() + [target], count=len(self.decoys4()))), [])
+
+    def test_a_table_may_be_bytes_or_a_bytearray(self):
+        buf = table_of([row4("127.0.0.1", self.PEER, "127.0.0.1", self.LOCAL, 7)])
+        self.assertEqual(self.scan4(bytearray(buf)), [(7, 0)])
+        self.assertEqual(self.scan4(bytes(buf)), [(7, 0)])
+
+    def test_a_timestamp_of_zero_is_returned_as_zero(self):
+        self.assertEqual(self.scan4(table_of([row4("127.0.0.1", self.PEER, "127.0.0.1", self.LOCAL, 7)])), [(7, 0)])
+
+    # -- IPv6
+
+    def decoys6(self):
+        a = "::1"
+        return [
+            row6(a, self.LOCAL, "::", 0, 11, state=2),
+            row6(a, self.PEER, a, self.LOCAL, 0, state=11),
+            row6("::2", self.PEER, a, self.LOCAL, 12),
+            row6(a, self.PEER, "::2", self.LOCAL, 13),
+            row6(a, self.PEER, a, 9999, 14),
+            row6(a, self.LOCAL, a, self.PEER, 15),
+            row6("fe80::1", 443, "fe80::2", self.PEER, 16),
+        ]
+
+    def test_ipv6_rows_are_found_first_in_the_middle_and_last(self):
+        target = row6("::1", self.PEER, "::1", self.LOCAL, 1234, ts=777)
+        decoys = self.decoys6()
+        for at in (0, 3, len(decoys)):
+            self.assertEqual(self.scan6(table_of(decoys[:at] + [target] + decoys[at:])), [(1234, 777)], at)
+        self.assertEqual(self.scan6(table_of(decoys)), [])
+
+    def test_ipv6_garbage_in_the_upper_port_bits_is_ignored(self):
+        target = row6("::1", self.PEER, "::1", self.LOCAL, 1234, ts=5, lhi=0xBEEF, rhi=0xDEAD)
+        self.assertEqual(self.scan6(table_of(self.decoys6() + [target])), [(1234, 5)])
+
+    def test_the_scope_id_of_a_link_local_peer_must_match_when_there_is_one(self):
+        target = row6("fe80::1", self.PEER, "fe80::2", self.LOCAL, 9, lscope=4)
+        buf = table_of([target])
+        self.assertEqual(self.scan6(buf, "fe80::1", "fe80::2", scope=4), [(9, 0)])
+        self.assertEqual(self.scan6(buf, "fe80::1", "fe80::2", scope=7), [])
+        self.assertEqual(self.scan6(buf, "fe80::1", "fe80::2", scope=0), [(9, 0)])  # no scope known: not compared
+
+    def test_ipv6_rows_in_a_truncated_buffer(self):
+        target = row6("::1", self.PEER, "::1", self.LOCAL, 1234)
+        full = table_of(self.decoys6()[:1] + [target], count=9)
+        self.assertEqual(self.scan6(full), [(1234, 0)])
+        self.assertEqual(self.scan6(full[:-1]), [])
+
+
+# A fake of the two Win32 modules _windows_pid_verdict calls.
+class _FakeKernel:
+    def __init__(self, handle):
+        self.handle, self.closed, self.opened = handle, [], []
+
+    def OpenProcess(self, access, inherit, pid):
+        self.opened.append((access, inherit, pid))
+        return self.handle
+
+    def CloseHandle(self, handle):
+        self.closed.append(handle)
+        return 1
+
+
+class _FakeAdvapi:
+    def __init__(self, ok):
+        self.ok, self.calls = ok, []
+
+    def OpenProcessToken(self, process, access, ref):
+        self.calls.append((process, access))
+        return 1 if self.ok else 0
+
+
+@unittest.skipUnless(IS_WIN, "Windows only")
+class PeerClassifyCase(unittest.TestCase):
+    """Which Windows errors say "another user" and which only say "cannot tell"."""
+
+    def verdict(self, handle=1, open_err=0, token_ok=False, token_err=0, sid="S-1", own="S-1", created=0, started=0):
+        kernel, advapi = _FakeKernel(handle), _FakeAdvapi(token_ok)
+        api = types.SimpleNamespace(kernel32=kernel, advapi32=advapi)
+        errors = iter([open_err] if not handle else [token_err])
+        with mock.patch("ctypes.get_last_error", side_effect=lambda: next(errors)), \
+                mock.patch.object(app, "_token_sid", return_value=sid), \
+                mock.patch.object(app, "_process_created", return_value=started):
+            try:
+                result = app._windows_pid_verdict(api, 4321, own, created)
+            except OSError as e:
+                result = e
+        return result, kernel, advapi
+
+    def test_a_process_that_cannot_be_opened_is_another_users(self):
+        verdict, kernel, advapi = self.verdict(handle=0, open_err=5)
+        self.assertEqual(verdict, app.PEER_DENIED)
+        self.assertEqual((advapi.calls, kernel.closed), ([], []))
+        self.assertEqual(kernel.opened, [(0x1000, False, 4321)])
+
+    def test_a_process_whose_token_cannot_be_opened_is_not_proof_of_another_user(self):
+        verdict, kernel, advapi = self.verdict(token_ok=False, token_err=5)
+        self.assertEqual(verdict, app.PEER_NOTOKEN)
+        self.assertNotIn(verdict, (app.PEER_OTHER, app.PEER_DENIED))
+        self.assertEqual(kernel.closed, [1])  # the process handle is closed
+        self.assertEqual(advapi.calls, [(1, 0x0008)])
+
+    def test_a_process_that_is_gone_is_gone(self):
+        verdict, kernel, _ = self.verdict(handle=0, open_err=87)
+        self.assertEqual(verdict, app.PEER_GONE)
+
+    def test_any_other_error_is_an_error(self):
+        for kwargs in ({"handle": 0, "open_err": 1}, {"token_ok": False, "token_err": 6}):
+            verdict, kernel, _ = self.verdict(**kwargs)
+            self.assertIsInstance(verdict, OSError, kwargs)
+            if kwargs.get("handle") != 0:
+                self.assertEqual(kernel.closed, [1])
+
+    def test_a_readable_token_decides(self):
+        self.assertEqual(self.verdict(token_ok=True, sid="S-1", own="S-1")[0], app.PEER_SAME)
+        self.assertEqual(self.verdict(token_ok=True, sid="S-9", own="S-1")[0], app.PEER_OTHER)
+
+    def test_aggregation_puts_anything_unprovable_before_same_and_foreign_before_that(self):
+        for verdicts, expected in (
+            ([app.PEER_SAME, app.PEER_NOTOKEN], app.PEER_NOTOKEN),
+            ([app.PEER_SAME, app.PEER_GONE], app.PEER_GONE),
+            ([app.PEER_NOTOKEN, app.PEER_OTHER], app.PEER_OTHER),
+            ([app.PEER_GONE, app.PEER_DENIED], app.PEER_DENIED),
+            ([app.PEER_SAME, app.PEER_SAME], app.PEER_SAME),
+        ):
+            owners = [(10 + i, 0) for i in range(len(verdicts))]
+            with mock.patch.object(app, "_scan_windows_table", return_value=owners), \
+                    mock.patch.object(app, "_windows_tcp_table", return_value=bytearray()), \
+                    mock.patch.object(app, "_own_sid", return_value="S-1"), \
+                    mock.patch.object(app, "_windows_pid_verdict", side_effect=verdicts):
+                got = app._windows_peer(app._endpoint(("127.0.0.1", 1)), app._endpoint(("127.0.0.1", 2)))
+            self.assertEqual(got[0], expected, verdicts)
+
+
+@unittest.skipUnless(IS_WIN, "Windows only")
+class PeerPidReuseCase(unittest.TestCase):
+    """The table says when a socket was made: a process that started later is not its owner."""
+
+    def setUp(self):
+        cli, self.conn = loopback_pair(socket.AF_INET, "127.0.0.1")
+        self.addCleanup(cli.close)
+        self.addCleanup(self.conn.close)
+        self.peer, self.local = self.conn.getpeername(), self.conn.getsockname()
+        buf = app._windows_tcp_table(app._win_api(), app._WIN_AF_INET)
+        found = app._scan_windows_table(buf, app._WIN_AF_INET, app._endpoint(self.peer), app._endpoint(self.local))
+        self.assertEqual(len(found), 1)
+        self.pid, self.ts = found[0]
+        self.api, self.own = app._win_api(), app._windows_sid()
+
+    def verdict(self, started):
+        with mock.patch.object(app, "_process_created", return_value=started) as created, \
+                mock.patch.object(app, "_CLOCK", FakeClockWatch(0.0)):
+            return app._windows_pid_verdict(self.api, os.getpid(), self.own, self.ts), created
+
+    def test_a_process_created_after_its_socket_is_a_reused_pid(self):
+        for later in (2_000_000, 5 * 10_000_000, 59 * 10_000_000):  # 0.2 s, 5 s, 59 s
+            self.assertEqual(self.verdict(self.ts + later)[0], app.PEER_GONE, later)
+
+    def test_a_process_created_before_or_about_when_its_socket_was_is_the_owner(self):
+        for delta in (-3600 * 10_000_000, -1, 0, 100_000, 400_000):  # up to 0.04 s after: the tolerance (0.05 s)
+            self.assertEqual(self.verdict(self.ts + delta)[0], app.PEER_SAME, delta)
+
+    def test_a_timestamp_of_zero_falls_back_to_no_time_check(self):
+        with mock.patch.object(app, "_process_created", side_effect=AssertionError("not asked")) as created:
+            self.assertEqual(app._windows_pid_verdict(self.api, os.getpid(), self.own, 0), app.PEER_SAME)
+        created.assert_not_called()
+
+    def test_end_to_end_the_lookup_refuses_a_reused_pid_and_accepts_the_real_one(self):
+        self.assertEqual(app.lookup_peer(self.peer, self.local), (app.PEER_SAME, os.getpid()))
+        with mock.patch.object(app, "_process_created", return_value=self.ts + 30 * 10_000_000), \
+                mock.patch.object(app, "_CLOCK", FakeClockWatch(0.0)):
+            self.assertEqual(app.lookup_peer(self.peer, self.local), (app.PEER_GONE, os.getpid()))
+        owners = [(os.getpid(), 0)]
+        with mock.patch.object(app, "_scan_windows_table", return_value=owners), \
+                mock.patch.object(app, "_process_created", side_effect=AssertionError("not asked")):
+            self.assertEqual(app.lookup_peer(self.peer, self.local), (app.PEER_SAME, os.getpid()))
+
+    def test_our_own_process_started_before_every_socket_it_makes(self):
+        api = app._win_api()
+        import ctypes
+        handle = api.kernel32.OpenProcess(0x1000, False, os.getpid())
+        self.addCleanup(api.kernel32.CloseHandle, handle)
+        self.assertLess(app._process_created(api, handle), self.ts)
+
+    def test_end_to_end_a_clock_that_was_set_back_before_the_start_is_noted_and_the_user_decides(self):
+        notes = []
+        with mock.patch.object(app, "_process_created", return_value=self.ts + 3600 * 10_000_000), \
+                mock.patch.object(app, "_CLOCK", FakeClockWatch(0.0)):
+            got = app.lookup_peer(self.peer, self.local, note=lambda *a: notes.append(a))
+        self.assertEqual(got, (app.PEER_SAME, os.getpid()))
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0][0], os.getpid())
+        self.assertAlmostEqual(notes[0][2], 3600.0, places=3)
+
+
+class FakeClockWatch:
+    """Stands in for app._CLOCK: the wall clock was stepped back by `drift` seconds since the start."""
+
+    def __init__(self, drift):
+        self._drift = drift
+        self.largest = max(0.0, drift)
+
+    def drift(self):
+        return max(0.0, self._drift)
+
+
+class ClockWatchCase(unittest.TestCase):
+    def test_a_backward_step_is_seen_a_forward_step_and_ticking_are_not(self):
+        wall, mono = [1000.0], [50.0]
+        with mock.patch.object(app.time, "time", lambda: wall[0]), mock.patch.object(app.time, "monotonic", lambda: mono[0]):
+            watch = app._ClockWatch()
+            wall[0] += 10
+            mono[0] += 10  # both clocks tick
+            self.assertEqual((watch.drift(), watch.largest), (0.0, 0.0))
+            wall[0] += 100  # set forward
+            self.assertEqual((watch.drift(), watch.largest), (0.0, 0.0))
+            wall[0] -= 130  # set back: 30 s behind where it started
+            self.assertAlmostEqual(watch.drift(), 30.0)
+            wall[0] -= 20
+            self.assertAlmostEqual(watch.drift(), 50.0)
+            wall[0] += 70  # corrected: the largest step stays recorded
+            self.assertEqual(watch.drift(), 0.0)
+            self.assertAlmostEqual(watch.largest, 50.0)
+
+
+@unittest.skipUnless(IS_WIN, "Windows only")
+class PeerClockCase(unittest.TestCase):
+    """The start-time check: 0.05 s of tolerance, widened by a clock set back since the start; a huge
+    'negative age' is a clock artefact (accepted on the user's SID, noted), a small one a reused pid."""
+
+    TS = 1_000_000_000_000_000
+
+    def verdict(self, late, drift=0.0, notes=None, sid="S-1"):
+        """The verdict of a process that started `late` seconds after its socket was made."""
+        kernel, advapi = _FakeKernel(1), _FakeAdvapi(True)
+        api = types.SimpleNamespace(kernel32=kernel, advapi32=advapi)
+        started = self.TS + round(late * 10_000_000)
+        note = None if notes is None else (lambda *a: notes.append(a))
+        with mock.patch.object(app, "_token_sid", return_value=sid), \
+                mock.patch.object(app, "_process_created", return_value=started), \
+                mock.patch.object(app, "_CLOCK", FakeClockWatch(drift)):
+            result = app._windows_pid_verdict(api, 4321, "S-1", self.TS, note)
+        self.assertEqual(kernel.closed[-1], 1)  # the process handle is closed last, on every path
+        return result
+
+    def test_the_tolerance_is_fifty_milliseconds(self):
+        self.assertEqual(app._WIN_PID_REUSE_TOLERANCE, 0.05)
+        for late, expected in ((-5.0, app.PEER_SAME), (0.0, app.PEER_SAME), (0.01, app.PEER_SAME), (0.04, app.PEER_SAME),
+                               (0.06, app.PEER_GONE), (0.2, app.PEER_GONE), (1.0, app.PEER_GONE)):
+            with self.subTest(late=late):
+                self.assertEqual(self.verdict(late), expected)
+
+    def test_a_forward_step_changes_nothing(self):
+        # a forward step reads as a negative drift: the allowance is never below zero
+        self.assertEqual(self.verdict(0.2, drift=-30.0), app.PEER_GONE)
+        self.assertEqual(self.verdict(0.01, drift=-30.0), app.PEER_SAME)
+
+    def test_a_clock_set_back_after_the_start_widens_the_tolerance_by_the_step(self):
+        for late, drift, expected in ((4.0, 5.0, app.PEER_SAME), (5.04, 5.0, app.PEER_SAME), (5.2, 5.0, app.PEER_GONE),
+                                      (0.2, 0.0, app.PEER_GONE), (30.0, 40.0, app.PEER_SAME), (45.0, 40.0, app.PEER_GONE)):
+            with self.subTest(late=late, drift=drift):
+                notes = []
+                self.assertEqual(self.verdict(late, drift, notes), expected)
+                self.assertEqual(notes, [])  # inside the allowance, or a race: nothing to note
+
+    def test_a_process_far_younger_than_its_socket_is_a_clock_artefact_judged_by_its_user_and_noted_once(self):
+        for late in (60.5, 3600.0, 86400.0):
+            with self.subTest(late=late):
+                notes = []
+                self.assertEqual(self.verdict(late, notes=notes), app.PEER_SAME)
+                self.assertEqual(len(notes), 1)
+                self.assertEqual(notes[0][:2], (4321, self.TS + round(late * 10_000_000)))
+                self.assertAlmostEqual(notes[0][2], late, places=3)
+                self.assertEqual(self.verdict(late, notes=[], sid="S-9"), app.PEER_OTHER)  # not for another user
+
+    def test_between_the_tolerance_and_a_minute_it_is_still_a_reused_pid(self):
+        for late in (5.0, 30.0, 59.0, 60.0):
+            with self.subTest(late=late):
+                notes = []
+                self.assertEqual(self.verdict(late, notes=notes), app.PEER_GONE)
+                self.assertEqual(notes, [])
+
+    def test_a_missing_note_callback_is_fine(self):
+        self.assertEqual(self.verdict(3600.0), app.PEER_SAME)
+
+
+class ClockNoteLogCase(unittest.TestCase):
+    def test_the_note_is_logged_once_per_process_and_the_default_lookup_carries_it(self):
+        log, lines = make_log()
+        relay = app.Relay("127.0.0.1", 0, log, RecordingHooks(), StubCapture(), peer_check=False)
+        relay._peer_clock_note(7, 111, 3600.4)
+        relay._peer_clock_note(7, 111, 3600.4)
+        relay._peer_clock_note(8, 222, 90.9)
+        relay._peer_clock_note(7, 333, 61.0)  # the same pid, started again
+        self.assertEqual(lines.lines, [
+            "peer time check skipped: clock changed (3600 s)",
+            "peer time check skipped: clock changed (90 s)",
+            "peer time check skipped: clock changed (61 s)",
+        ])
+        self.assertEqual(relay._peer_lookup.func, app.lookup_peer)
+        self.assertEqual(relay._peer_lookup.keywords, {"note": relay._peer_clock_note})
+        stub = StubLookup(SAME)
+        self.assertIs(app.Relay("127.0.0.1", 0, log, peer_lookup=stub)._peer_lookup, stub)  # a stub is called as it is
+
+
+class FakeConn:
+    """A websockets ServerConnection as far as the peer gate looks at it."""
+
+    def __init__(self, port=50000, closing=False):
+        self.remote_address = ("127.0.0.1", port)
+        self.local_address = ("127.0.0.1", 8765)
+        self.closing = closing
+        self.transport = types.SimpleNamespace(is_closing=lambda: self.closing)
+
+    def respond(self, status, text):
+        return types.SimpleNamespace(status=status, headers={}, body=text)
+
+
+class FakeRequest:
+    def __init__(self, origin=None):
+        self.headers = {} if origin is None else {"Origin": origin}
+
+
+class PeerLoadCase(unittest.IsolatedAsyncioTestCase):
+    """Lookups are bounded: four at a time, a waiter that cannot get a slot is refused, a dead
+    connection is not looked up, and the retry pauses are the event loop's."""
+
+    async def asyncSetUp(self):
+        self._saved_state = app.S
+        app.S = app.State()
+        self.log, self.log_lines = make_log()
+        self.release = threading.Event()
+        self.addCleanup(self.release.set)
+
+    async def asyncTearDown(self):
+        app.S = self._saved_state
+
+    def relay(self, lookup, strict=True, sleep=None, clock=None):
+        return app.Relay("127.0.0.1", 0, self.log, RecordingHooks(), StubCapture(), clock=clock, peer_lookup=lookup,
+                         peer_strict=strict, peer_sleep=sleep)
+
+    def slow_lookup(self):
+        state = types.SimpleNamespace(inflight=0, peak=0, calls=0, lock=threading.Lock())
+
+        def lookup(peer, local):
+            with state.lock:
+                state.inflight += 1
+                state.calls += 1
+                state.peak = max(state.peak, state.inflight)
+            self.release.wait(10)
+            with state.lock:
+                state.inflight -= 1
+            return SAME
+
+        return lookup, state
+
+    async def test_at_most_four_lookups_run_at_once_and_the_waiters_past_the_limit_are_refused_as_busy(self):
+        lookup, state = self.slow_lookup()
+        relay = self.relay(lookup)
+        with mock.patch.object(app, "PEER_BUSY_SECONDS", 0.3):
+            tasks = [asyncio.ensure_future(relay._peer_gate(FakeConn(50000 + i))) for i in range(20)]
+            await asyncio.sleep(0.15)
+            self.assertEqual((state.inflight, state.peak), (app.PEER_SLOTS, 4))  # four started, sixteen wait
+            self.assertFalse(any(t.done() for t in tasks))
+            await asyncio.sleep(0.4)  # past the limit
+            done = [t.result() for t in tasks if t.done()]
+            self.assertEqual(done, [("peer-unknown", None, "busy")] * 16)
+            self.release.set()
+            rest = await asyncio.wait_for(asyncio.gather(*[t for t in tasks if not t.done()]), 3)
+        self.assertEqual(rest, [None] * 4)
+        self.assertEqual((state.peak, state.calls), (4, 4))  # nobody else ever got to look
+
+    async def test_a_busy_refusal_is_logged_with_its_reason_and_refuses_even_where_a_failed_lookup_is_let_through(self):
+        lookup, state = self.slow_lookup()
+        relay = self.relay(lookup, strict=False)
+        with mock.patch.object(app, "PEER_BUSY_SECONDS", 0.1):
+            blockers = [asyncio.ensure_future(relay._peer_gate(FakeConn(50000 + i))) for i in range(4)]
+            await asyncio.sleep(0.05)
+            response = await relay._process_request(FakeConn(51000), FakeRequest())
+            self.release.set()
+            await asyncio.gather(*blockers)
+        self.assertEqual(response.headers[app.PEER_HEADER], "peer-unknown")
+        self.assertIn("rejected peer unknown (busy)", self.log_lines.lines)
+        self.assertEqual(sum("peer check unavailable" in line for line in self.log_lines.lines), 0)
+
+    async def test_a_waiter_that_gets_a_slot_in_time_is_looked_up(self):
+        lookup, state = self.slow_lookup()
+        relay = self.relay(lookup)
+        tasks = [asyncio.ensure_future(relay._peer_gate(FakeConn(50000 + i))) for i in range(6)]
+        await asyncio.sleep(0.1)
+        self.assertEqual(state.inflight, 4)
+        self.release.set()
+        self.assertEqual(await asyncio.wait_for(asyncio.gather(*tasks), 3), [None] * 6)
+        self.assertEqual(state.peak, 4)
+
+    async def test_a_connection_that_went_away_is_not_looked_up(self):
+        lookup = StubLookup(SAME)
+        relay = self.relay(lookup)
+        self.assertEqual(await relay._peer_gate(FakeConn(closing=True)), ("peer-unknown", None, "closed"))
+        self.assertEqual(lookup.calls, [])
+        response = await relay._process_request(FakeConn(closing=True), FakeRequest())
+        self.assertEqual(response.headers[app.PEER_HEADER], "peer-unknown")
+        self.assertEqual(self.log_lines.lines, [])  # not even a line: nobody is there
+
+    async def test_a_connection_that_goes_away_while_the_table_lags_stops_the_retries(self):
+        conn = FakeConn()
+        lookup = StubLookup(NOTFOUND)
+
+        async def sleep(delay):
+            conn.closing = True
+
+        relay = self.relay(lookup, sleep=sleep)
+        self.assertEqual(await relay._peer_gate(conn), ("peer-unknown", None, "closed"))
+        self.assertEqual(len(lookup.calls), 1)
+
+    async def test_the_retry_pauses_are_event_loop_sleeps_between_lookups_never_inside_a_lookup(self):
+        events = []
+        threads = set()
+        main = threading.get_ident()
+
+        def lookup(peer, local):
+            events.append("lookup")
+            threads.add(threading.get_ident())
+            return NOTFOUND
+
+        async def sleep(delay):
+            events.append(("sleep", delay, relay._peer_slots._value))
+
+        relay = self.relay(lookup, sleep=sleep)
+        self.assertEqual(await relay._peer_gate(FakeConn()), ("peer-unknown", None, "connection not found"))
+        pause = ("sleep", app.PEER_RETRY_DELAY, app.PEER_SLOTS)  # the slot is free while it sleeps
+        self.assertEqual(events, ["lookup", pause] * app.PEER_RETRIES + ["lookup"])
+        self.assertNotIn(main, threads)  # the lookups ran in the executor, the pauses did not
+        self.assertEqual(relay._peer_slots._value, app.PEER_SLOTS)
+
+    async def test_a_slot_is_given_back_when_a_lookup_fails(self):
+        relay = self.relay(StubLookup(OSError("x")))
+        for _ in range(app.PEER_SLOTS + 2):
+            self.assertEqual(await relay._peer_gate(FakeConn()), ("peer-unknown", None, "lookup error"))
+        self.assertEqual(relay._peer_slots._value, app.PEER_SLOTS)
+
+    async def test_the_accept_queue_is_larger_than_the_default_of_100(self):
+        captured = {}
+        real = app.serve
+
+        async def spy(*args, **kwargs):
+            captured.update(kwargs)
+            return await real(*args, **kwargs)
+
+        relay = app.Relay("127.0.0.1", 0, self.log, RecordingHooks(), StubCapture(), peer_check=False)
+        with mock.patch.object(app, "serve", spy):
+            await relay.start()
+        await relay.close()
+        self.assertEqual(captured["backlog"], app.LISTEN_BACKLOG)
+        self.assertGreater(app.LISTEN_BACKLOG, 100)
+
+    async def test_the_time_a_waiter_waits_is_the_one_in_the_brief(self):
+        self.assertEqual((app.PEER_SLOTS, app.PEER_BUSY_SECONDS), (4, 1.5))
+        self.assertEqual(app.SELFTEST_TIMEOUT, 3.0)
+
+
+class PeerReasonLogCase(unittest.IsolatedAsyncioTestCase):
+    """The refusal lines name a reason; the hint comes once; a token that cannot be read is not 'another user'."""
+
+    async def asyncSetUp(self):
+        self._saved_state = app.S
+        app.S = app.State()
+        self.log, self.log_lines = make_log()
+
+    async def asyncTearDown(self):
+        app.S = self._saved_state
+
+    def relay(self, lookup, clock=None):
+        async def sleep(delay):
+            pass
+
+        return app.Relay("127.0.0.1", 0, self.log, RecordingHooks(), StubCapture(), clock=clock, peer_lookup=lookup,
+                         peer_strict=True, peer_sleep=sleep)
+
+    def by_port(self, results):
+        def lookup(peer, local):
+            result = results[peer[1]]
+            if isinstance(result, BaseException):
+                raise result
+            return result
+
+        return lookup
+
+    async def refuse(self, relay, port):
+        response = await relay._process_request(FakeConn(port), FakeRequest())
+        return response.headers[app.PEER_HEADER]
+
+    def count(self, text):
+        return sum(text in line for line in self.log_lines.lines)
+
+    async def test_each_reason_is_logged_and_the_hint_exactly_once(self):
+        relay = self.relay(self.by_port({
+            1: NOTFOUND, 2: OSError("secret"), 3: (app.PEER_GONE, 5), 4: (app.PEER_NOTOKEN, 5),
+        }))
+        for port in (1, 1, 2, 3, 4, 3, 4):
+            self.assertEqual(await self.refuse(relay, port), "peer-unknown")
+        lines = self.log_lines.lines
+        for reason in ("connection not found", "lookup error", "process gone", "token denied"):
+            self.assertIn(f"rejected peer unknown ({reason})", lines)
+        self.assertEqual(self.count(app.PEER_HINT), 1)
+        self.assertEqual(app.PEER_HINT, "if Spotify cannot connect, start SpoSync with --no-peer-check")
+        self.assertEqual(self.count("user=other"), 0)  # an unreadable token never says "other user"
+        self.assertNotIn("secret", "\n".join(lines))
+        self.assertLess(lines.index("rejected peer unknown (connection not found)"), lines.index(app.PEER_HINT))
+
+    async def test_a_token_that_cannot_be_read_is_refused_as_unknown_not_as_another_user(self):
+        relay = self.relay(self.by_port({1: (app.PEER_NOTOKEN, 77), 2: (app.PEER_DENIED, 78)}))
+        self.assertEqual(await self.refuse(relay, 1), "peer-unknown")
+        self.assertEqual(await self.refuse(relay, 2), "other-user")  # a process that cannot be opened stays foreign
+        self.assertIn("rejected peer unknown (token denied)", self.log_lines.lines)
+        self.assertIn("rejected peer user=other pid=78", self.log_lines.lines)
+        self.assertNotIn("pid=77", "\n".join(self.log_lines.lines))
+
+    async def test_the_pid_reuse_and_token_verdicts_are_answers_not_missing_rows(self):
+        slept = []
+
+        async def sleep(delay):
+            slept.append(delay)
+
+        for verdict in (app.PEER_GONE, app.PEER_NOTOKEN):
+            lookup = StubLookup((verdict, 5))
+            relay = app.Relay("127.0.0.1", 0, self.log, RecordingHooks(), StubCapture(), peer_lookup=lookup,
+                              peer_strict=True, peer_sleep=sleep)
+            await self.refuse(relay, 1)
+            self.assertEqual(len(lookup.calls), 1)
+        self.assertEqual(slept, [])
+
+    async def test_a_new_reason_is_logged_even_after_the_cap_but_a_known_one_is_counted(self):
+        clock = FakeClock()
+        relay = self.relay(self.by_port({1: OTHER, 2: NOTFOUND, 3: NOTFOUND, 4: (app.PEER_GONE, 5)}), clock=clock)
+        for _ in range(app.MAX_PEER_LOGS):
+            await self.refuse(relay, 1)
+        self.assertEqual(self.count("rejected peer user=other"), app.MAX_PEER_LOGS)
+        await self.refuse(relay, 2)
+        self.assertEqual(self.count("rejected peer unknown (connection not found)"), 1)
+        self.assertEqual(self.count(app.PEER_HINT), 1)
+        await self.refuse(relay, 3)  # the same reason again: counted, not logged
+        self.assertEqual(self.count("rejected peer unknown (connection not found)"), 1)
+        await self.refuse(relay, 4)
+        self.assertEqual(self.count("rejected peer unknown (process gone)"), 1)
+        clock.now += app.PEER_LOG_INTERVAL
+        await self.refuse(relay, 3)
+        self.assertEqual(self.count("more in the last 10 min"), 1)
+        self.assertEqual(self.count(app.PEER_HINT), 1)
+
+    async def test_a_flood_of_busy_refusals_never_prints_the_hint_but_the_next_other_reason_does(self):
+        relay = self.relay(self.by_port({1: NOTFOUND}))
+        relay._peer_slots = asyncio.Semaphore(0)  # every lookup waits for a slot that never comes
+        with mock.patch.object(app, "PEER_BUSY_SECONDS", 0.01):
+            for _ in range(3):
+                self.assertEqual(await self.refuse(relay, 1), "peer-unknown")
+        self.assertEqual(self.count("rejected peer unknown (busy)"), 3)
+        self.assertEqual(self.count(app.PEER_HINT), 0)
+        relay._peer_slots = asyncio.Semaphore(app.PEER_SLOTS)
+        self.assertEqual(await self.refuse(relay, 1), "peer-unknown")
+        self.assertEqual(self.count("rejected peer unknown (connection not found)"), 1)
+        self.assertEqual(self.count(app.PEER_HINT), 1)
+
+    async def test_a_user_mismatch_alone_never_prints_the_hint(self):
+        relay = self.relay(self.by_port({1: OTHER}))
+        for _ in range(3):
+            self.assertEqual(await self.refuse(relay, 1), "other-user")
+        self.assertEqual(self.count(app.PEER_HINT), 0)
+
+
+class PeerSelfTestCase(unittest.IsolatedAsyncioTestCase):
+    """The start-up self-test: connect to ourselves and ask the lookup who that is."""
+
+    async def asyncSetUp(self):
+        self._saved_state = app.S
+        app.S = app.State()
+        self.log, self.log_lines = make_log()
+        self.relays = []
+        self.release = threading.Event()
+        self.addCleanup(self.release.set)
+        self.delays = []  # the pauses the self-test asked for between its attempts
+        self.hold_retries = None  # an asyncio.Event: the pause lasts until it is set
+
+    async def asyncTearDown(self):
+        self.release.set()
+        if self.hold_retries is not None:
+            self.hold_retries.set()
+        for relay, runner in self.relays:
+            await relay.close()
+            await asyncio.wait_for(runner, 3)
+        app.S = self._saved_state
+
+    def make(self, lookup=None, peer_check=True, selftest=True, timeout=None, hooks=None):
+        async def sleep(delay):
+            pass
+
+        async def retry_sleep(delay):
+            self.delays.append(delay)
+            if self.hold_retries is not None:
+                await self.hold_retries.wait()
+            await asyncio.sleep(0)
+
+        relay = app.Relay("127.0.0.1", 0, self.log, hooks or RecordingHooks(), StubCapture(), peer_check=peer_check,
+                          peer_lookup=lookup, peer_strict=True, peer_sleep=sleep, peer_selftest=selftest)
+        relay._selftest_sleep = retry_sleep
+        if timeout is not None:
+            relay._selftest_timeout = timeout
+        return relay
+
+    async def start(self, **kw):
+        relay = self.make(**kw)
+        await relay.start()
+        self.relays.append((relay, asyncio.ensure_future(relay.run())))
+        self.url = f"ws://127.0.0.1:{relay.port}"
+        return relay
+
+    async def settled(self, relay):
+        await asyncio.wait_for(asyncio.shield(relay._selftest_task), 5)
+
+    def count(self, text):
+        return sum(text in line for line in self.log_lines.lines)
+
+    async def theme_status(self):
+        async with connect(self.url, origin=THEME) as ws:
+            return await recv_type(ws, "status")
+
+    async def control_ping(self):
+        async with connect(self.url) as ws:
+            await ws.send(json.dumps({"type": "control", "action": "ping"}))
+            return await recv_json(ws)
+
+    @unittest.skipUnless(CAN_LOOKUP, "no peer lookup on this platform")
+    async def test_the_real_lookup_passes_on_this_machine_and_the_check_stays_on(self):
+        relay = await self.start(lookup=None)
+        await self.settled(relay)
+        self.assertTrue(relay._peer_check)
+        self.assertEqual(self.count("peer check on"), 1)
+        self.assertEqual(self.count("self-test"), 0)
+        lines = self.log_lines.lines
+        self.assertLess(next(i for i, s in enumerate(lines) if s.startswith("listening on")), lines.index("peer check on"))
+        self.assertEqual((await self.theme_status())["type"], "status")
+        self.assertEqual((await self.control_ping())["app"], "sposync")
+        self.assertEqual(self.count("rejected peer"), 0)
+
+    async def test_a_passing_self_test_leaves_the_check_on_for_real_clients(self):
+        def lookup(peer, local):
+            return SAME_OWN if local[1] != relay.port else OTHER
+
+        SAME_OWN = (app.PEER_SAME, os.getpid())
+        relay = await self.start(lookup=lookup)
+        await self.settled(relay)
+        self.assertIn("peer check on", self.log_lines.lines)
+        with self.assertRaises(InvalidStatus) as cm:
+            async with connect(self.url, origin=THEME):
+                pass
+        self.assertEqual(cm.exception.response.headers.get(app.PEER_HEADER), "other-user")
+
+    async def test_a_broken_machinery_logs_one_warning_and_switches_the_check_off_visibly(self):
+        # The lookup works but does not recognise our own connection.
+        cases = (
+            (StubLookup(OTHER), "other", []),
+            (StubLookup((app.PEER_DENIED, 4)), "other", []),
+            (StubLookup((app.PEER_SAME, 99999999)), "wrong pid", []),
+            (StubLookup((app.PEER_GONE, 1)), "process gone", []),
+            (StubLookup((app.PEER_NOTOKEN, 1)), "token denied", []),
+            (StubLookup(app.PeerUnsupported("sunos5")), "unsupported platform", []),
+            (StubLookup(NOTFOUND), "connection not found", [2.0, 4.0]),  # the third attempt in a row is a verdict
+        )
+        for lookup, label, delays in cases:
+            with self.subTest(label=label):
+                self.log_lines.lines.clear()
+                self.delays.clear()
+                hooks = RecordingHooks()
+                relay = self.make(lookup=lookup, hooks=hooks)
+                await relay.start()
+                self.relays.append((relay, asyncio.ensure_future(relay.run())))
+                self.url = f"ws://127.0.0.1:{relay.port}"
+                await self.settled(relay)
+                warning = f"peer check self-test failed ({label}); peer check off for this run"
+                self.assertEqual([s for s in self.log_lines.lines if "self-test" in s and "retrying" not in s], [warning])
+                self.assertNotIn("peer check on", self.log_lines.lines)
+                self.assertFalse(relay._peer_check)
+                self.assertEqual(hooks.peer_checks, [False])  # the UI is told: the tray title says so
+                self.assertEqual(self.delays, delays)
+                calls = len(lookup.calls)
+                # A same-user client (the lookup would say otherwise) is accepted, and nobody asks the lookup again.
+                self.assertEqual((await self.theme_status())["type"], "status")
+                self.assertEqual((await self.control_ping())["app"], "sposync")
+                self.assertEqual(len(lookup.calls), calls)
+                self.assertEqual(self.count("rejected peer"), 0)
+
+    async def test_missing_connection_is_a_verdict_only_three_attempts_in_a_row(self):
+        results = [NOTFOUND] * 4 + [OSError("x")] + [NOTFOUND] * 100  # missing, then a load failure, then missing again
+        outcomes = []
+        real = app.Relay._selftest_outcome
+
+        def record(res):
+            outcomes.append(real(res))
+            return outcomes[-1]
+
+        relay = self.make(lookup=StubLookup(*results))
+        with mock.patch.object(app.Relay, "_selftest_outcome", staticmethod(record)):
+            await relay.start()
+            self.relays.append((relay, asyncio.ensure_future(relay.run())))
+            await self.settled(relay)
+        kinds = [o for o, _ in outcomes]
+        # The load failure in the second attempt restarts the count: the verdict comes with the fifth attempt.
+        self.assertEqual(kinds, ["missing", "inconclusive", "missing", "missing", "missing"])
+        self.assertFalse(relay._peer_check)
+        self.assertEqual(self.delays, [2.0, 4.0, 8.0, 16.0])
+        self.assertIn("peer check self-test failed (connection not found); peer check off for this run", self.log_lines.lines)
+
+    async def _inconclusive(self, relay, why, hooks=None):
+        """A self-test that stays inconclusive on every attempt: what it says and does."""
+        self.assertTrue(relay._peer_check)
+        self.assertEqual(self.delays, [2.0, 4.0, 8.0, 16.0])  # ~30 s of retries
+        self.assertEqual([s for s in self.log_lines.lines if "self-test" in s], [
+            f"peer check self-test inconclusive ({why}); retrying",
+            f"peer check self-test inconclusive after retries ({why}); peer check stays on",
+        ])
+        self.assertNotIn("peer check on", self.log_lines.lines)
+        self.assertEqual(self.count("peer check self-test failed"), 0)
+        if hooks is not None:
+            self.assertEqual(hooks.peer_checks, [])  # nothing to tell the UI
+
+    async def test_a_self_test_that_could_not_be_made_leaves_the_check_on_and_retries_in_the_background(self):
+        real_pair = app._loopback_pair
+        foreign_made = []
+
+        def foreign_pair(family, host):
+            pair = real_pair(family, host)
+            if pair is None:
+                return None
+            cli, conn = pair
+
+            class Other:  # a client that is not the one the listener accepted
+                getsockname = staticmethod(lambda: ("127.0.0.1", 1))
+                close = staticmethod(cli.close)
+
+            foreign_made.append(cli)
+            return Other(), conn
+
+        async def closed_peer(*args, **kwargs):
+            return app.PeerResult("closed", None, None, None)
+
+        cases = (
+            ("OSError", {"lookup": StubLookup(OSError("secret"))}, None),
+            ("ValueError", {"lookup": StubLookup(ValueError("x"))}, None),
+            ("timeout", {"lookup": None, "timeout": 0.05}, None),
+            ("no loopback", {"lookup": StubLookup(SAME)}, lambda f, h: None),
+            ("foreign connection", {"lookup": StubLookup(SAME)}, foreign_pair),
+            ("busy", {"lookup": StubLookup(SAME)}, "busy"),
+            ("closed", {"lookup": StubLookup(SAME)}, "closed"),
+        )
+        for why, kw, patch in cases:
+            with self.subTest(why=why):
+                self.log_lines.lines.clear()
+                self.delays.clear()
+                self.release.clear()
+                hooks = RecordingHooks()
+                lookup = kw["lookup"]
+                if why == "timeout":
+                    def lookup(peer, local):
+                        self.release.wait(10)
+                        return (app.PEER_SAME, os.getpid())
+                relay = self.make(lookup=lookup, timeout=kw.get("timeout"), hooks=hooks)
+                with contextlib.ExitStack() as stack:
+                    if callable(patch):
+                        stack.enter_context(mock.patch.object(app, "_loopback_pair", patch))
+                    elif patch == "busy":
+                        relay._peer_slots = asyncio.Semaphore(0)
+                        stack.enter_context(mock.patch.object(app, "PEER_BUSY_SECONDS", 0.01))
+                    elif patch == "closed":
+                        relay._peer_resolve = closed_peer
+                    await relay.start()
+                    self.relays.append((relay, asyncio.ensure_future(relay.run())))
+                    self.url = f"ws://127.0.0.1:{relay.port}"
+                    await self.settled(relay)
+                await self._inconclusive(relay, why, hooks)
+                self.release.set()
+                self.assertNotIn("secret", "\n".join(self.log_lines.lines))
+        for sock in foreign_made:
+            self.assertEqual(sock.fileno(), -1)  # the real ends were closed too
+
+    async def test_while_inconclusive_the_gate_stays_strict_and_nobody_waits_for_a_retry(self):
+        self.hold_retries = asyncio.Event()
+        relay = await self.start(lookup=StubLookup(OSError("x")))
+        await asyncio.wait_for(relay._selftest_first.wait(), 5)  # the first attempt is over, a retry pauses
+        self.assertFalse(relay._selftest_task.done())
+        self.assertTrue(relay._peer_check)
+        start = time.monotonic()
+        with self.assertRaises(InvalidStatus) as cm:
+            async with connect(self.url, origin=THEME):
+                pass
+        self.assertLess(time.monotonic() - start, 1.0)
+        self.assertEqual(cm.exception.response.headers.get(app.PEER_HEADER), "peer-unknown")
+        self.assertIn("rejected peer unknown (lookup error)", self.log_lines.lines)
+        self.assertEqual(self.delays, [2.0])  # still waiting for its first retry
+        self.hold_retries.set()
+        await self.settled(relay)
+        self.assertTrue(relay._peer_check)
+
+    async def test_a_retry_that_passes_ends_with_the_check_on_and_one_inconclusive_line(self):
+        own = (app.PEER_SAME, os.getpid())
+        lookup = StubLookup(OSError("x"), own)  # the first lookup fails, every later one answers
+        relay = await self.start(lookup=lookup)
+        await self.settled(relay)
+        self.assertTrue(relay._peer_check)
+        self.assertEqual(self.delays, [2.0])
+        self.assertEqual([s for s in self.log_lines.lines if "self-test" in s or s == "peer check on"], [
+            "peer check self-test inconclusive (OSError); retrying", "peer check on"])
+
+    async def test_a_hung_first_attempt_holds_a_client_for_the_wait_only_then_the_lookup_is_strict(self):
+        self.assertEqual(app.SELFTEST_WAIT, 1.5)
+        self.assertLess(app.SELFTEST_WAIT, app.CONTROL_TIMEOUT)  # below websockets' open_timeout
+        def lookup(peer, local):
+            if local[1] != relay.port:
+                self.release.wait(10)  # the self-test's own lookups hang
+                return (app.PEER_SAME, os.getpid())
+            return OTHER
+
+        relay = await self.start(lookup=lookup)
+        relay._selftest_wait = 0.3
+        start = time.monotonic()
+        with self.assertRaises(InvalidStatus) as cm:
+            async with connect(self.url, origin=THEME):
+                pass
+        took = time.monotonic() - start
+        self.assertGreaterEqual(took, 0.25)
+        self.assertLess(took, 1.2)
+        self.assertEqual(cm.exception.response.headers.get(app.PEER_HEADER), "other-user")  # looked up, not waved through
+        self.assertFalse(relay._selftest_first.is_set())  # the first attempt is still hanging
+        self.assertTrue(relay._peer_check)
+        self.assertNotIn("peer check on", self.log_lines.lines)
+        self.release.set()
+
+    async def test_a_hung_self_test_times_out_inconclusive_and_the_check_stays_on(self):
+        def lookup(peer, local):
+            if local[1] != relay.port:
+                self.release.wait(10)  # the self-test's own lookups hang
+            return OTHER
+
+        relay = await self.start(lookup=lookup, timeout=0.2)
+        relay._selftest_wait = 0.1
+        with self.assertRaises(InvalidStatus):
+            async with connect(self.url, origin=THEME):  # after the wait: looked up like any other
+                pass
+        await self.settled(relay)
+        await self._inconclusive(relay, "timeout")
+        self.release.set()
+
+    async def test_the_tray_title_says_when_the_check_is_off(self):
+        tray = app.Tray(types.SimpleNamespace())
+        self.assertEqual(tray.title, "SpoSync")
+        tray.set_title("SpoSync - connected to Spotify")
+        tray.icon = types.SimpleNamespace(title=None)
+        tray.set_peer_check(False)
+        self.assertEqual(tray.title, "SpoSync - connected to Spotify – peer check off")
+        self.assertEqual(tray.icon.title, tray.title)
+        tray.set_title("SpoSync - waiting for Spotify")  # the presence text changes, the note stays
+        self.assertEqual(tray.icon.title, "SpoSync - waiting for Spotify – peer check off")
+        tray.set_peer_check(True)
+        self.assertEqual(tray.icon.title, "SpoSync - waiting for Spotify")
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        app.AppHooks(tui).on_peer_check(False)
+        self.assertTrue(tui.tray.title.endswith(" – peer check off"))
+
+    async def test_no_peer_check_tells_the_ui_too(self):
+        hooks = RecordingHooks()
+        relay = self.make(lookup=StubLookup(SAME), peer_check=False, hooks=hooks)
+        await relay.start()
+        self.relays.append((relay, asyncio.ensure_future(relay.run())))
+        self.assertEqual(hooks.peer_checks, [False])
+
+    async def test_a_cancelled_or_timed_out_self_test_leaves_no_socket_behind(self):
+        made, entered, finished = [], threading.Event(), threading.Event()
+        real_pair = app._loopback_pair
+
+        def slow_pair(family, host):
+            entered.set()
+            self.release.wait(10)
+            pair = real_pair(family, host)
+            if pair is not None:
+                made.extend(pair)
+            finished.set()
+            return pair
+
+        for how in ("cancel", "timeout"):
+            with self.subTest(how=how):
+                made.clear()
+                entered.clear()
+                finished.clear()
+                self.release.clear()
+                relay = self.make(lookup=StubLookup(SAME), selftest=False)
+                relay._selftest_timeout = 0.05
+                with mock.patch.object(app, "_loopback_pair", slow_pair):
+                    if how == "cancel":
+                        task = asyncio.ensure_future(relay._peer_selftest_body())
+                        self.assertTrue(await until(entered.is_set))
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                    else:
+                        self.assertEqual(await relay._peer_selftest_attempt(), ("inconclusive", "timeout"))
+                    self.release.set()  # the executor job finishes after nobody waits for it any more
+                    self.assertTrue(await until(finished.is_set))
+                    self.assertTrue(made)
+                    self.assertTrue(await until(lambda: all(s.fileno() == -1 for s in made)))
+
+    async def test_a_failed_pair_closes_what_it_opened(self):
+        opened = []
+        real_socket = socket.socket
+
+        def sock(*args, **kwargs):
+            if len(opened) == 1:
+                raise OSError("no more sockets")
+            opened.append(real_socket(*args, **kwargs))
+            return opened[-1]
+
+        with mock.patch.object(app.socket, "socket", sock):
+            self.assertIsNone(app._loopback_pair(socket.AF_INET, "127.0.0.1"))
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(opened[0].fileno(), -1)
+
+    async def test_a_closing_relay_leaves_no_self_test_socket_open(self):
+        before = len(self.open_sockets())
+        for _ in range(10):
+            relay = self.make(lookup=StubLookup(SAME))
+            await relay.start()
+            await relay.close()
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.2)  # the executor jobs that were still building a pair
+        self.assertLessEqual(len(self.open_sockets()), before)
+
+    @staticmethod
+    def open_sockets():
+        import gc
+        gc.collect()
+        return [o for o in gc.get_objects() if isinstance(o, socket.socket) and o.fileno() != -1]
+
+    async def test_a_failing_ipv6_loopback_alone_switches_the_check_off(self):
+        pair = await asyncio.get_running_loop().run_in_executor(None, app._loopback_pair, socket.AF_INET6, "::1")
+        if pair is None:
+            self.skipTest("no ::1 loopback")
+        for s in pair:
+            s.close()
+
+        def lookup(peer, local):
+            return (app.PEER_SAME, os.getpid()) if ":" not in peer[0] else OTHER
+
+        relay = await self.start(lookup=lookup)
+        await self.settled(relay)
+        self.assertIn("peer check self-test failed (other); peer check off for this run", self.log_lines.lines)
+        self.assertFalse(relay._peer_check)
+
+    async def test_no_peer_check_skips_the_self_test_altogether(self):
+        lookup = StubLookup(AssertionError("must not be called"))
+        relay = await self.start(lookup=lookup, peer_check=False)
+        self.assertIsNone(relay._selftest_task)
+        self.assertEqual((await self.theme_status())["type"], "status")
+        self.assertEqual(lookup.calls, [])
+        self.assertIn("peer check disabled by --no-peer-check", self.log_lines.lines)
+        self.assertEqual(self.count("peer check on"), 0)
+        self.assertEqual(self.count("self-test"), 0)
+
+    async def test_the_self_test_is_for_the_real_lookup_unless_asked_for(self):
+        self.assertTrue(app.Relay("127.0.0.1", 0, self.log)._peer_selftest)
+        self.assertFalse(app.Relay("127.0.0.1", 0, self.log, peer_lookup=StubLookup(SAME))._peer_selftest)
+        self.assertEqual(app.Relay("127.0.0.1", 0, self.log)._selftest_timeout, 3.0)
+
+    async def test_listening_is_not_delayed_and_a_client_during_the_test_waits_and_is_then_handled(self):
+        started = []
+
+        def lookup(peer, local):
+            started.append(local)
+            self.release.wait(10)
+            return (app.PEER_SAME, os.getpid())
+
+        relay = await self.start(lookup=lookup)  # returns while the first lookup is still blocked
+        self.assertIsNotNone(listening_port(self.log_lines.lines))
+        self.assertNotIn("peer check on", self.log_lines.lines)
+        theme = asyncio.ensure_future(self.theme_status())
+        control = asyncio.ensure_future(self.control_ping())
+        await asyncio.sleep(0.4)
+        self.assertFalse(theme.done() or control.done())  # neither refused nor let in unchecked
+        self.assertEqual(self.count("rejected peer"), 0)
+        self.assertEqual(len(relay.clients), 0)
+        self.release.set()
+        self.assertEqual((await asyncio.wait_for(theme, 4))["type"], "status")
+        self.assertEqual((await asyncio.wait_for(control, 4))["app"], "sposync")
+        await self.settled(relay)
+        self.assertEqual(self.count("peer check on"), 1)
+        self.assertGreaterEqual(len(started), 3)  # the self-test (IPv4, IPv6 when there is one) and the two clients
+
+    async def test_closing_during_the_self_test_cancels_it(self):
+        def lookup(peer, local):
+            self.release.wait(10)
+            return SAME
+
+        relay = self.make(lookup=lookup)  # not run(): that would start the server again after the close
+        await relay.start()
+        task = relay._selftest_task
+        await relay.close()
+        await asyncio.wait({task}, timeout=2)
+        self.assertTrue(task.cancelled())
+        self.assertEqual(self.count("self-test"), 0)
+        self.release.set()
+
+
+# ---------------------------------------------------------------- search echo
+
+class SearchEchoCase(unittest.IsolatedAsyncioTestCase):
+    """The search view: what the user types is the source of truth, and only the answer to the latest query is shown."""
+
+    async def asyncSetUp(self):
+        self._saved_state = app.S
+        app.S = app.State()
+        self.log, self.log_lines = make_log()
+        self.client = app.Client(None, "theme")
+        # The tests send by hand (flush_search): the 0.35 s debounce timer must not fire meanwhile.
+        patcher = mock.patch.object(app.SpotuiApp, "schedule_search", lambda self: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def asyncTearDown(self):
+        app.S = self._saved_state
+
+    def echo(self, tui, query, results=()):
+        tui.relay._apply(self.client, {"type": "search", "query": query, "results": list(results)})
+
+    @staticmethod
+    def hit(name):
+        return {"type": "Track", "name": name, "uri": "spotify:track:" + name}
+
+    async def open_search(self, pilot, tui):
+        await pilot.pause()
+        tui.set_mode("search")
+        await pilot.pause()
+
+    async def test_the_echo_of_an_older_query_never_rewrites_what_is_being_typed(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            await pilot.press("a", "b")
+            tui.flush_search()  # the debounce ran: "ab" was sent
+            await pilot.press("c")
+            self.assertEqual(app.S.search_q, "abc")
+            self.echo(tui, "ab")  # the theme answers "ab" while the user is at "abc"
+            self.assertEqual(app.S.search_q, "abc")
+            self.assertIn("abc", plain(tui.query_one(app.SearchList).render()))
+            tui.flush_search()  # "abc" sent
+            self.echo(tui, "ab", [self.hit("old")])  # a late result for "ab"
+            self.assertEqual(app.S.search_results, [])
+            self.assertEqual(app.S.search_q, "abc")
+            self.echo(tui, "abc", [self.hit("new")])
+            self.assertEqual([r["name"] for r in app.S.search_results], ["new"])
+            self.assertEqual(app.S.search_q, "abc")
+            self.assertIn("new", plain(tui.query_one(app.SearchList).render()))
+            self.assertIn("abc", plain(tui.query_one(app.SearchList).render()))
+        self.assertIsNone(tui._exception)
+
+    async def test_keys_typed_before_the_echo_arrives_are_kept(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            await pilot.press("a", "b")
+            tui.flush_search()
+            await pilot.press("c", "d")  # typed after the debounce, before the echo
+            self.echo(tui, "ab", [self.hit("ab-hit")])  # the answer to the latest SENT query is applied ...
+            self.assertEqual([r["name"] for r in app.S.search_results], ["ab-hit"])
+            self.assertEqual(app.S.search_q, "abcd")  # ... and the input is not
+            await pilot.press("e")
+            self.assertEqual(app.S.search_q, "abcde")
+
+    async def test_the_comparison_uses_the_form_the_theme_echoes(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            app.S.search_q = "  the   cure \t"  # the theme trims and joins the words with one space
+            tui.flush_search()
+            self.assertEqual(app.S.search_sent, "the cure")
+            self.echo(tui, "the cure", [self.hit("x")])
+            self.assertEqual(len(app.S.search_results), 1)
+            self.assertEqual(app.S.search_q, "  the   cure \t")
+            app.S.search_q = "the cur"
+            tui.flush_search()
+            app.S.search_q = "the cure"
+            tui.flush_search()
+            self.echo(tui, "the cur", [self.hit("y"), self.hit("z")])  # a sent query that is not the latest
+            self.assertEqual(len(app.S.search_results), 1)
+            self.echo(tui, " the   cur ", [self.hit("y"), self.hit("z")])  # whatever its blanks
+            self.assertEqual(len(app.S.search_results), 1)
+            self.echo(tui, "the cure", [self.hit("w")])
+            self.assertEqual([r["name"] for r in app.S.search_results], ["w"])
+
+    async def test_enter_and_the_search_command_remember_what_was_sent_too(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        sent = []
+        tui.ws_send = sent.append
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            app.S.search_q = "enter q"
+            await pilot.press("enter")
+            self.assertEqual(sent[-1], {"type": "command", "cmd": "search enter q"})
+            self.assertEqual(app.S.search_sent, "enter q")
+            self.assertEqual(list(app.S.search_recent), ["enter q"])
+            self.echo(tui, "enter q", [self.hit("e")])
+            self.assertEqual([r["name"] for r in app.S.search_results], ["e"])
+            tui.set_mode("lyrics")
+            await pilot.pause()
+            inp = tui.query_one(app.Input)
+            inp.value = "search  cmd   q"
+            await inp.action_submit()
+            await pilot.pause()
+            self.assertEqual(sent[-1]["cmd"], "search  cmd   q")
+            self.assertEqual((app.S.search_sent, app.S.search_q), ("cmd q", "cmd   q"))
+            inp.value = "search"
+            await inp.action_submit()
+            await pilot.pause()
+            self.assertIsNone(app.S.search_sent)  # nothing sent: no latest query
+            self.assertEqual(list(app.S.search_recent), ["enter q", "cmd q"])  # the older ones are still recognised
+
+    async def test_a_message_with_no_query_is_ignored_while_a_search_is_pending(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            await pilot.press("a")
+            tui.flush_search()
+            tui.relay._apply(self.client, {"type": "search", "results": [self.hit("x")]})
+            self.assertEqual(app.S.search_results, [])
+
+    async def test_with_no_search_sent_the_theme_still_opens_the_search_view(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            self.assertIsNone(app.S.search_sent)
+            self.echo(tui, "from theme", [self.hit("t")])
+            self.assertEqual(app.S.mode, "search")
+            self.assertEqual(app.S.search_q, "from theme")
+            self.assertEqual([r["name"] for r in app.S.search_results], ["t"])
+            self.assertEqual(app.S.search_i, 0)
+
+    # -- L1 / M-b: a reply is never a new search
+
+    async def test_audit_one_a_late_reply_of_an_older_query_after_esc_does_not_reopen_the_view(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            await pilot.press("a", "b", "c")
+            tui.flush_search()  # "abc" sent
+            await pilot.press("d")
+            tui.flush_search()  # "abcd" sent: the latest
+            await pilot.press("escape")
+            self.assertEqual(app.S.mode, "lyrics")
+            self.echo(tui, "abc")  # the immediate empty echo of the older query
+            self.echo(tui, "abc", [self.hit("late")])  # its results
+            await pilot.pause()
+            self.assertEqual(app.S.mode, "lyrics")
+            self.assertFalse(tui.query_one("#search").display)
+            self.assertTrue(tui.query_one("#lyrics").display)
+            self.assertEqual(app.S.search_results, [])
+            self.assertEqual(app.S.search_q, "abcd")  # the input is not rewritten
+            self.echo(tui, "abcd", [self.hit("latest")])  # the answer to the latest one: view still closed
+            await pilot.pause()
+            self.assertEqual(app.S.mode, "lyrics")
+            self.assertEqual(app.S.search_results, [])
+        self.assertIsNone(tui._exception)
+
+    async def test_audit_two_esc_before_the_immediate_echo_leaves_the_view_closed_for_the_results_too(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            await pilot.press("a", "b")
+            tui.flush_search()
+            await pilot.press("escape")  # before the theme's empty echo
+            for results in ([], [self.hit("x")]):  # the echo does not use the entry up: the results are a reply too
+                self.echo(tui, "ab", results)
+                await pilot.pause()
+                self.assertEqual(app.S.mode, "lyrics")
+                self.assertEqual(app.S.search_results, [])
+            self.assertTrue(tui.query_one("#lyrics").display)
+        self.assertIsNone(tui._exception)
+
+    async def test_the_plain_case_both_answers_are_applied_and_the_view_stays_as_it_is(self):
+        modes = []
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            await pilot.press("a", "b")
+            tui.flush_search()
+            relay_call = tui.relay._call
+            tui.relay._call = lambda fn, *a, **k: (modes.append(a), relay_call(fn, *a, **k))[1]
+            self.echo(tui, "ab")  # the immediate empty echo
+            self.assertEqual(app.S.search_results, [])
+            self.echo(tui, "ab", [self.hit("now")])
+            self.assertEqual([r["name"] for r in app.S.search_results], ["now"])
+            self.echo(tui, "ab", [self.hit("again"), self.hit("more")])  # entries are not used up by a match
+            self.assertEqual(len(app.S.search_results), 2)
+            self.assertEqual(modes, [])  # a reply never changes the mode
+            self.assertEqual(app.S.mode, "search")
+            self.assertTrue(tui.query_one("#search").display)
+            self.assertEqual(app.S.search_q, "ab")
+        self.assertIsNone(tui._exception)
+
+    async def test_a_search_of_the_theme_opens_the_view_while_the_user_is_elsewhere(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            await pilot.press("a", "b")
+            tui.flush_search()
+            await pilot.press("escape")
+            self.assertEqual(app.S.mode, "lyrics")
+            self.echo(tui, "something else", [self.hit("x")])  # not a query the TUI sent
+            await pilot.pause()
+            self.assertEqual(app.S.mode, "search")
+            self.assertTrue(tui.query_one("#search").display)
+            self.assertEqual(app.S.search_q, "something else")
+            self.assertEqual([r["name"] for r in app.S.search_results], ["x"])
+        self.assertIsNone(tui._exception)
+
+    def test_the_relay_calls_on_mode_only_for_the_theme_s_own_search(self):
+        hooks = RecordingHooks()
+        relay = app.Relay("127.0.0.1", 0, self.log, hooks, StubCapture(), peer_check=False)
+        reply = {"type": "search", "query": "ab", "results": [self.hit("x")]}
+        app.S.search_remember("ab")
+        for mode in ("lyrics", "search", "playlist"):
+            app.S.mode = mode
+            relay._apply(self.client, reply)
+        self.assertEqual(hooks.modes, [])
+        self.assertEqual(len(app.S.search_results), 1)  # applied once, in the search view only
+        app.S.mode = "lyrics"
+        relay._apply(self.client, {"type": "search", "query": "cd", "results": []})  # nothing sent for "cd"
+        self.assertEqual(hooks.modes, ["search"])
+        relay._apply(self.client, {"type": "search", "results": [self.hit("y")]})  # no query, an answer pending
+        self.assertEqual(hooks.modes, ["search"])
+        app.S.search_forget()
+        relay._apply(self.client, {"type": "search", "results": [self.hit("y")]})  # no query, nothing pending
+        self.assertEqual(hooks.modes, ["search", "search"])
+
+    def test_only_the_latest_query_is_shown_and_an_older_one_is_still_a_reply(self):
+        hooks = RecordingHooks()
+        relay = app.Relay("127.0.0.1", 0, self.log, hooks, StubCapture(), peer_check=False)
+        app.S.mode = "search"
+        app.S.search_remember("abc")
+        app.S.search_remember("abcd")
+        relay._apply(self.client, {"type": "search", "query": "abc", "results": [self.hit("old")]})
+        self.assertEqual((app.S.search_results, hooks.modes), ([], []))
+        relay._apply(self.client, {"type": "search", "query": "abcd", "results": [self.hit("new")]})
+        self.assertEqual(([r["name"] for r in app.S.search_results], hooks.modes), (["new"], []))
+        app.S.search_remember("abc")  # sent again: the latest now
+        relay._apply(self.client, {"type": "search", "query": "abc", "results": [self.hit("again")]})
+        self.assertEqual([r["name"] for r in app.S.search_results], ["again"])
+
+    def test_a_sent_query_is_remembered_for_fifteen_seconds(self):
+        now = [100.0]
+        app.S.clock = lambda: now[0]
+        hooks = RecordingHooks()
+        relay = app.Relay("127.0.0.1", 0, self.log, hooks, StubCapture(), peer_check=False)
+        app.S.search_remember("ab")
+        now[0] += 14.9
+        relay._apply(self.client, {"type": "search", "query": "ab", "results": [self.hit("x")]})
+        self.assertEqual(hooks.modes, [])  # still a reply
+        app.S.search_remember("cd")
+        now[0] += 0.2  # "ab" is 15.1 s old, "cd" 0.2 s
+        relay._apply(self.client, {"type": "search", "query": "ab", "results": [self.hit("y")]})
+        self.assertEqual(hooks.modes, ["search"])  # expired: the theme's own search
+        self.assertEqual(list(app.S.search_recent), ["cd"])
+        relay._apply(self.client, {"type": "search", "query": "cd", "results": []})
+        self.assertEqual(hooks.modes, ["search"])
+        app.S.search_remember("cd")  # sending it again renews it
+        now[0] += 14.0
+        self.assertTrue(app.S.search_recent_has("cd"))
+        now[0] += 1.1
+        self.assertFalse(app.S.search_recent_has("cd"))
+
+    def test_at_most_sixteen_queries_are_remembered_the_oldest_go_first(self):
+        for i in range(20):
+            app.S.search_remember(f"q{i}")
+        self.assertEqual(list(app.S.search_recent), [f"q{i}" for i in range(4, 20)])
+        self.assertEqual(len(app.S.search_recent), app.SEARCH_RECENT_MAX)
+        self.assertEqual((app.SEARCH_RECENT_MAX, app.SEARCH_RECENT_SECONDS), (16, 15.0))
+        self.assertEqual(app.S.search_sent, "q19")
+        app.S.search_remember("q4")  # sent again: the newest, not a second entry
+        self.assertEqual(list(app.S.search_recent)[-2:], ["q19", "q4"])
+        self.assertEqual(len(app.S.search_recent), 16)
+        self.assertFalse(app.S.search_recent_has("q0"))
+
+    async def test_a_theme_disconnect_forgets_what_was_sent(self):
+        hooks = RecordingHooks()
+        relay = app.Relay("127.0.0.1", 0, hooks=hooks, log=self.log, capture=StubCapture(), peer_check=False)
+        await relay.start()
+        runner = asyncio.ensure_future(relay.run())
+        try:
+            app.S.search_remember("ab")
+            app.S.search_remember("cd")
+            async with connect(f"ws://127.0.0.1:{relay.port}", origin=THEME) as ws:
+                await recv_type(ws, "status")
+                self.assertEqual((app.S.search_sent, list(app.S.search_recent)), ("cd", ["ab", "cd"]))  # connecting changes nothing
+            self.assertTrue(await until(lambda: app.S.search_sent is None and not app.S.search_recent))
+        finally:
+            await relay.close()
+            await asyncio.wait_for(runner, 3)
+
+    # -- L2: the space bar
+
+    async def test_space_is_typed_into_the_search(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            await pilot.press("t", "h", "e", "space", "c", "u", "r", "e")
+            self.assertEqual(app.S.search_q, "the cure")
+            await pilot.press("space")
+            self.assertEqual(app.S.search_q, "the cure ")
+            await pilot.press("backspace", "backspace")
+            self.assertEqual(app.S.search_q, "the cur")
+            await pilot.press("é", "1", "-")  # other characters the key names spell out or abbreviate
+            self.assertEqual(app.S.search_q, "the curé1-")
+            await pilot.press("tab", "f1", "left")  # keys with no printable character add nothing
+            self.assertEqual(app.S.search_q, "the curé1-")
+        self.assertIsNone(tui._exception)
+
+    async def test_the_typed_character_goes_through_clean(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+            for char in ("\ud83d", "\x1b", "​", "ab", "", None, "\t", "\n"):
+                event = types.SimpleNamespace(key="x", character=char, prevent_default=lambda: None, stop=lambda: None)
+                await tui.on_key(event)
+            self.assertEqual(app.S.search_q, "")
+            event = types.SimpleNamespace(key="space", character=" ", prevent_default=lambda: None, stop=lambda: None)
+            with mock.patch.object(app, "clean", wraps=app.clean) as cleaned:
+                await tui.on_key(event)
+            cleaned.assert_called_with(" ", 1)
+            self.assertEqual(app.S.search_q, " ")
+
+    async def test_blanks_that_are_not_printable_are_typed_too(self):
+        tui = app.SpotuiApp("127.0.0.1", 0, "window", self.log)
+        async with tui.run_test(size=(100, 30)) as pilot:
+            await self.open_search(pilot, tui)
+
+            async def type_(char):
+                event = types.SimpleNamespace(key="x", character=char, prevent_default=lambda: None, stop=lambda: None)
+                await tui.on_key(event)
+
+            for char in ("a", "　", " ", "b", " "):  # ideographic space, no-break space, em space
+                await type_(char)
+            self.assertEqual(app.S.search_q, "a　 b ")
+            self.assertEqual(app.norm_query(app.S.search_q), "a b")  # the theme sees them as the blanks they are
+            for char in ("​", "\x00", " ", " ", "\x85"):  # zero width, control, line and paragraph breaks
+                await type_(char)
+            self.assertEqual(app.S.search_q, "a　 b ")
+        self.assertIsNone(tui._exception)
+
+    # -- L3: the query as the theme echoes it
+
+    def test_norm_query_collapses_the_blanks_before_it_applies_the_cap(self):
+        self.assertEqual(app.norm_query("  the   cure \t"), "the cure")
+        self.assertEqual(app.norm_query(" " * 1500 + "needle"), "needle")  # the blanks do not eat the cap
+        self.assertEqual(app.norm_query("a" + " " * 300 + "b"), "a b")
+        self.assertEqual(app.norm_query("word " * 100), " ".join(["word"] * 40))  # 40 words = 199 characters
+        self.assertEqual(len(app.norm_query("x" * 500)), app.LIMIT_QUERY)
+        self.assertEqual(app.norm_query("a ​ b"), "a b")  # an invisible character between blanks
+        self.assertEqual(app.norm_query("a\x1b[31m b"), "a[31m b")
+        self.assertEqual(app.norm_query("w " * 150), " ".join(["w"] * 100))
+        self.assertEqual(app.norm_query("ab" + " " * 198 + "c"), "ab c")
+        self.assertIsNone(app.norm_query(None))
+        self.assertIsNone(app.norm_query(5))
+        self.assertEqual(app.norm_query(""), "")
+
+    def test_the_cap_never_leaves_a_trailing_blank(self):
+        text = ("x" * 199) + " tail"
+        got = app.norm_query(text)
+        self.assertEqual(got, "x" * 199)
+        self.assertFalse(got.endswith(" "))
+
+
+# ---------------------------------------------------------------- spectrum pacing
+
+class PumpClock:
+    """A clock and a sleep that move together; `quantum` rounds each wake-up up to a timer tick."""
+
+    def __init__(self, relay, quantum=0.0, limit=None):
+        self.now = 100.0
+        self.start = self.now
+        self.quantum = quantum
+        self.limit = limit
+        self.reads = 0
+        self.sleeps = []
+        self.frames = []
+        self.done = asyncio.Event()
+        self.on_frame = None
+        relay._pump_clock = self.clock
+        relay._pump_sleep = self.sleep
+        relay.broadcast = self.broadcast
+
+    def clock(self):
+        self.reads += 1
+        return self.now
+
+    async def broadcast(self, obj, *, viz_only=False):
+        assert obj["type"] == "spectrum" and viz_only
+        self.frames.append(self.now)
+        if self.on_frame:
+            self.on_frame(len(self.frames))
+
+    async def sleep(self, delay):
+        self.sleeps.append(delay)
+        self.now += delay
+        if self.quantum:
+            self.now = math.ceil(self.now / self.quantum - 1e-9) * self.quantum
+        await asyncio.sleep(0)
+        if self.limit is not None and self.now - self.start >= self.limit:
+            self.done.set()
+            await asyncio.Event().wait()
+
+    def gaps(self, frames=None):
+        f = self.frames if frames is None else frames
+        return [b - a for a, b in zip(f, f[1:])]
+
+
+class SpectrumPaceCase(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self._saved_state = app.S
+        app.S = app.State()
+        self.log, _ = make_log()
+        self.relay = app.Relay("127.0.0.1", 0, self.log, RecordingHooks(), StubCapture())
+        self.pump = None
+
+    async def asyncTearDown(self):
+        if self.pump is not None:
+            self.pump.cancel()
+            await asyncio.gather(self.pump, return_exceptions=True)
+        app.S = self._saved_state
+
+    def run_pump(self):
+        self.pump = asyncio.ensure_future(self.relay.spectrum_pump())
+
+    async def test_an_exact_timer_gives_30_frames_per_second(self):
+        clock = PumpClock(self.relay, limit=10.0)
+        self.relay._viz_event.set()
+        self.run_pump()
+        await asyncio.wait_for(clock.done.wait(), 5)
+        self.assertEqual(app.SPECTRUM_FPS, 30)
+        self.assertAlmostEqual(len(clock.frames) / 10.0, 30, delta=0.2)
+        for gap in clock.gaps():
+            self.assertAlmostEqual(gap, 1 / 30, places=6)
+
+    async def test_a_coarse_timer_tick_does_not_slow_the_rate(self):
+        # Windows wakes a sleep at the next 15.6 ms tick: a fixed sleep(0.033) lasts 47 ms there (21 fps).
+        clock = PumpClock(self.relay, quantum=0.015625, limit=10.0)
+        self.relay._viz_event.set()
+        self.run_pump()
+        await asyncio.wait_for(clock.done.wait(), 5)
+        self.assertAlmostEqual(len(clock.frames) / 10.0, 30, delta=0.2)
+        gaps = clock.gaps()
+        self.assertLessEqual(max(gaps), 3 * 0.015625 + 1e-9)  # never more than 3 ticks (47 ms) between two frames
+        self.assertGreaterEqual(min(gaps), 0.015625 - 1e-9)
+        # What the old pacing did on the same timer, for contrast: 47 ms per frame.
+        now, count = 0.0, 0
+        while now < 10:
+            now = math.ceil((now + 0.033) / 0.015625 - 1e-9) * 0.015625
+            count += 1
+        self.assertLess(count / 10.0, 22)
+
+    async def test_the_time_a_frame_takes_counts_against_the_next_wait(self):
+        clock = PumpClock(self.relay, limit=2.0)
+
+        async def slow_broadcast(obj, *, viz_only=False):
+            clock.frames.append(clock.now)
+            clock.now += 0.010  # sending takes 10 ms
+
+        self.relay.broadcast = slow_broadcast
+        self.relay._viz_event.set()
+        self.run_pump()
+        await asyncio.wait_for(clock.done.wait(), 5)
+        self.assertAlmostEqual(len(clock.frames) / 2.0, 30, delta=0.6)
+        self.assertAlmostEqual(clock.sleeps[3], 1 / 30 - 0.010, places=6)
+
+    async def test_far_behind_resynchronises_instead_of_bursting(self):
+        clock = PumpClock(self.relay, limit=8.0)
+
+        def stall(n):
+            if n == 10:
+                clock.now += 5.0  # the loop was blocked for 5 s
+
+        clock.on_frame = stall
+        self.relay._viz_event.set()
+        self.run_pump()
+        await asyncio.wait_for(clock.done.wait(), 5)
+        after = clock.frames[10:]
+        self.assertAlmostEqual(after[0] - clock.frames[9], 5.0, places=6)  # one frame the moment it is back
+        for gap in clock.gaps(after):
+            self.assertAlmostEqual(gap, 1 / 30, places=6)  # no catch-up burst
+
+    async def test_a_small_delay_is_caught_up_within_three_frames(self):
+        clock = PumpClock(self.relay, limit=2.0)
+
+        def stall(n):
+            if n == 10:
+                clock.now += 2.5 / 30  # 2.5 frames late: below the resync limit
+
+        clock.on_frame = stall
+        self.relay._viz_event.set()
+        self.run_pump()
+        await asyncio.wait_for(clock.done.wait(), 5)
+        # Frames 11 and 12 follow at once, then the schedule is the original one: no frame was lost.
+        self.assertAlmostEqual(clock.frames[10] - clock.frames[9], 2.5 / 30, places=6)
+        self.assertLess(clock.frames[11] - clock.frames[10], 1 / 30 / 2)
+        self.assertAlmostEqual(clock.frames[-1] - clock.frames[0], (len(clock.frames) - 1) / 30, places=6)
+
+    async def test_a_clock_that_steps_back_does_not_park_the_pump(self):
+        clock = PumpClock(self.relay, limit=1.0)
+        def step_back(n):
+            if n == 5:
+                clock.now -= 3600
+                clock.start -= 3600
+
+        clock.on_frame = step_back
+        self.relay._viz_event.set()
+        self.run_pump()
+        await asyncio.wait_for(clock.done.wait(), 5)
+        self.assertLessEqual(max(clock.sleeps), 1 / 30 + 1e-9)
+
+    async def test_idle_means_no_wakeups_at_all(self):
+        clock = PumpClock(self.relay)
+        self.run_pump()
+        await asyncio.sleep(0.1)
+        self.assertEqual((clock.reads, clock.sleeps, clock.frames), (0, [], []))
+        self.assertFalse(self.pump.done())
+
+    async def test_clearing_the_event_parks_the_pump_and_a_new_viz_client_restarts_a_fresh_schedule(self):
+        clock = PumpClock(self.relay)
+        clock.on_frame = lambda n: self.relay._viz_event.clear() if n == 5 else None
+        self.relay._viz_event.set()
+        self.run_pump()
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(clock.frames), 5)
+        sleeps, reads = len(clock.sleeps), clock.reads
+        await asyncio.sleep(0.1)
+        self.assertEqual((len(clock.sleeps), clock.reads, len(clock.frames)), (sleeps, reads, 5))  # parked
+        clock.now += 600  # a long idle, then a client wants the bars again
+        clock.on_frame = None
+        self.relay._viz_event.set()
+        await asyncio.sleep(0.1)
+        self.assertGreater(len(clock.frames), 7)
+        self.assertAlmostEqual(clock.frames[5] - clock.frames[4], 600 + 1 / 30, places=6)  # first frame at once ...
+        self.assertAlmostEqual(clock.frames[6] - clock.frames[5], 1 / 30, places=6)  # ... then the normal pace
+
+    async def test_the_bars_are_rounded_to_three_decimals_and_the_frame_gets_smaller(self):
+        import random
+        rng = random.Random(7)
+        for bars in (48, 256):
+            raw = [rng.random() for _ in range(bars)]
+            app.S.spectrum = raw
+            sent = []
+
+            async def broadcast(obj, *, viz_only=False):
+                sent.append(obj)
+
+            self.relay.broadcast = broadcast
+            self.relay._viz_event.set()
+            self.run_pump()
+            self.assertTrue(await until(lambda: sent))
+            self.pump.cancel()
+            await asyncio.gather(self.pump, return_exceptions=True)
+            self.relay._viz_event.clear()
+            frame = sent[0]
+            self.assertEqual(frame["type"], "spectrum")
+            self.assertEqual(frame["bars"], [round(v, 3) for v in raw])
+            self.assertTrue(all(isinstance(v, float) for v in frame["bars"]))
+            for text in json.dumps(frame["bars"]).strip("[]").split(", "):
+                self.assertLessEqual(len(text.partition(".")[2]), 3, text)
+            before, after = len(json.dumps({"type": "spectrum", "bars": raw})), len(json.dumps(frame))
+            self.assertLess(after, before * 0.6, (bars, before, after))
+        self.assertEqual(app.S.spectrum, raw)  # the state itself is not rounded
+
+    async def test_a_real_viz_client_gets_frames_through_the_real_pump(self):
+        await self.relay.start()
+        runner = asyncio.ensure_future(self.relay.run())
+        try:
+            async with connect(f"ws://127.0.0.1:{self.relay.port}", origin=THEME, max_queue=None) as ws:
+                await recv_type(ws, "status")
+                await ws.send(json.dumps({"type": "update", "visualizer": True}))
+                for _ in range(3):
+                    self.assertEqual(len((await recv_type(ws, "spectrum"))["bars"]), app.S.bars)
+        finally:
+            await self.relay.close()
+            await asyncio.wait_for(runner, 3)
 
 
 if __name__ == "__main__":

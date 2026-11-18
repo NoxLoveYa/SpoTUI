@@ -17,11 +17,14 @@ import pathlib
 import re
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
 import time
 import traceback
+import types
+import unicodedata
 
 from rich.panel import Panel
 from rich.text import Text
@@ -30,9 +33,9 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Static
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 # The theme runs inside Spotify's page, whose Origin is fixed. Never widen this.
 THEME_ORIGINS = frozenset({"https://xpui.app.spotify.com"})
@@ -46,6 +49,10 @@ LOG_MAX_BYTES = 256 * 1024
 MAX_REJECTED_ORIGINS = 50
 # One client that stops reading must not delay the others.
 SEND_TIMEOUT = 1.0
+SPECTRUM_FPS = 30
+SPECTRUM_INTERVAL = 1.0 / SPECTRUM_FPS
+# Further behind than this many frames: restart the schedule instead of sending a burst.
+SPECTRUM_RESYNC_FRAMES = 3
 SPECTRUM_SKIP_BUFFER = 64 * 1024
 WRITE_LIMIT = (256 * 1024, 64 * 1024)  # (high, low): above the spectrum skip level
 SLOW_DROP_SECONDS = 10.0
@@ -61,6 +68,9 @@ DROP_LOG_INTERVAL = 10.0
 SHOW_LOG_INTERVAL = 10.0
 # A "show" for a window that is already up re-raises it at most this often.
 SHOW_DEBOUNCE = 1.0
+# The accept queue: asyncio's default of 100 overflows under a local flood and the theme's own SYN is
+# then dropped and retried a second later (measured: a 1.5 s connect with 200 hostile clients).
+LISTEN_BACKLOG = 1024
 # A refused bind may be a start-up race or a slow probe: retry this long before giving up.
 BIND_RETRY_SECONDS = 10.0
 
@@ -348,41 +358,70 @@ def fmt(ms):
     return f"{s // 60:02d}:{s % 60:02d}"
 
 
+@functools.lru_cache(maxsize=1)
+def _win_api():
+    """The Win32 entry points the identity and peer checks use, typed for 64-bit once."""
+    import ctypes
+    from ctypes import wintypes
+    api = types.SimpleNamespace(
+        advapi32=ctypes.WinDLL("advapi32", use_last_error=True),
+        kernel32=ctypes.WinDLL("kernel32", use_last_error=True),
+        iphlpapi=ctypes.WinDLL("iphlpapi", use_last_error=True),
+    )
+    k, a, ip = api.kernel32, api.advapi32, api.iphlpapi
+    k.GetCurrentProcess.restype = wintypes.HANDLE
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    k.CloseHandle.restype = wintypes.BOOL
+    k.LocalFree.argtypes = [ctypes.c_void_p]
+    k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k.OpenProcess.restype = wintypes.HANDLE
+    k.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    k.GetProcessTimes.restype = wintypes.BOOL
+    a.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    a.OpenProcessToken.restype = wintypes.BOOL
+    a.GetTokenInformation.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)
+    ]
+    a.GetTokenInformation.restype = wintypes.BOOL
+    a.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+    a.ConvertSidToStringSidW.restype = wintypes.BOOL
+    ip.GetExtendedTcpTable.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), wintypes.BOOL, wintypes.ULONG, ctypes.c_int, wintypes.ULONG
+    ]
+    ip.GetExtendedTcpTable.restype = wintypes.ULONG
+    return api
+
+
+def _token_sid(api, token):
+    """The user SID string of an open token (TOKEN_QUERY is enough)."""
+    import ctypes
+    from ctypes import wintypes
+    size = wintypes.DWORD(0)
+    api.advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))  # TokenUser
+    buf = ctypes.create_string_buffer(size.value)
+    if not api.advapi32.GetTokenInformation(token, 1, buf, size, ctypes.byref(size)):
+        raise OSError("GetTokenInformation")
+    sid = ctypes.c_void_p.from_buffer(buf).value  # TOKEN_USER starts with the SID pointer
+    out = wintypes.LPWSTR()
+    if not api.advapi32.ConvertSidToStringSidW(sid, ctypes.byref(out)):
+        raise OSError("ConvertSidToStringSid")
+    try:
+        return out.value
+    finally:
+        api.kernel32.LocalFree(ctypes.cast(out, ctypes.c_void_p))
+
+
 def _windows_sid():
     import ctypes
     from ctypes import wintypes
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
-    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
-    advapi32.OpenProcessToken.restype = wintypes.BOOL
-    advapi32.GetTokenInformation.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)
-    ]
-    advapi32.GetTokenInformation.restype = wintypes.BOOL
-    advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
-    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    api = _win_api()
     token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+    if not api.advapi32.OpenProcessToken(api.kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
         raise OSError("OpenProcessToken")
     try:
-        size = wintypes.DWORD(0)
-        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))  # TokenUser
-        buf = ctypes.create_string_buffer(size.value)
-        if not advapi32.GetTokenInformation(token, 1, buf, size, ctypes.byref(size)):
-            raise OSError("GetTokenInformation")
-        sid = ctypes.c_void_p.from_buffer(buf).value  # TOKEN_USER starts with the SID pointer
-        out = wintypes.LPWSTR()
-        if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(out)):
-            raise OSError("ConvertSidToStringSid")
-        try:
-            return out.value
-        finally:
-            kernel32.LocalFree(ctypes.cast(out, ctypes.c_void_p))
+        return _token_sid(api, token)
     finally:
-        kernel32.CloseHandle(token)
+        api.kernel32.CloseHandle(token)
 
 
 @functools.lru_cache(maxsize=1)
@@ -400,6 +439,387 @@ def owner_id():
     if not ident:
         ident = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME') or os.environ.get('USER') or ''}"
     return hashlib.sha256(("sposync:" + ident).encode("utf-8", "replace")).hexdigest()[:16]
+
+
+# --- Who is on the other end of a connection -------------------------------------------------
+# Loopback is shared by every user signed in on the machine and the Origin header is the same for
+# all of them, so the handshake also checks which user owns the PEER PROCESS of the TCP connection.
+# Verdicts of one lookup: the peer is this user's, another user's, a process this one may not even
+# open (what another user's process looks like to an unelevated helper), not in the table (yet), or
+# in the table but not provable either way: its process is gone (or the pid was reused after the
+# socket was made), or its token cannot be read (an elevated process of this very user looks so).
+PEER_SAME, PEER_OTHER, PEER_DENIED, PEER_NOTFOUND = "same", "other", "denied", "notfound"
+PEER_GONE, PEER_NOTOKEN = "gone", "notoken"
+# The reason word each unprovable verdict is logged with.
+PEER_WHY = {PEER_NOTFOUND: "connection not found", PEER_GONE: "process gone", PEER_NOTOKEN: "token denied"}
+PEER_RETRIES = 3  # lookups repeated this often when the connection is not in the table yet
+PEER_RETRY_DELAY = 0.03
+# Lookups walk the system's connection table: at most this many run at once, and a handshake that
+# cannot get a slot within PEER_BUSY_SECONDS is refused instead of queueing behind a flood.
+PEER_SLOTS = 4
+PEER_BUSY_SECONDS = 1.5
+# The start-up self-test. One attempt gets SELFTEST_TIMEOUT. Connections wait for the FIRST attempt
+# only, and never longer than SELFTEST_WAIT (below the 2 s open_timeout of the handshake); after that
+# they are looked up like any other. An attempt that could not be set up or ran into load is repeated
+# in the background after these delays.
+SELFTEST_TIMEOUT = 3.0
+SELFTEST_WAIT = 1.5
+SELFTEST_BACKOFF = (2.0, 4.0, 8.0, 16.0)
+SELFTEST_NOTFOUND_LIMIT = 3  # attempts in a row that do not find their own connection: that is a verdict
+# Where a failed lookup refuses the client (Windows) instead of letting it through (Linux, others).
+PEER_STRICT = sys.platform == "win32"
+MAX_PEER_LOGS = 20  # "rejected peer" lines per process; after that one count per interval
+PEER_LOG_INTERVAL = 600.0
+PEER_HEADER = "X-SpoSync"
+PEER_HINT = "if Spotify cannot connect, start SpoSync with --no-peer-check"
+_WIN_TCP_TABLE_OWNER_MODULE_CONNECTIONS = 8
+_WIN_AF_INET, _WIN_AF_INET6 = 2, 23
+_WIN_ERROR_ACCESS_DENIED, _WIN_ERROR_INVALID_PARAMETER, _WIN_ERROR_INSUFFICIENT_BUFFER = 5, 87, 122
+# MIB_TCPTABLE_OWNER_MODULE / MIB_TCP6TABLE_OWNER_MODULE: a DWORD row count, 4 bytes of padding (the
+# rows hold a LARGE_INTEGER, so they start on an 8-byte boundary), then the rows. Row = the
+# OWNER_PID fields, then liCreateTimestamp (a FILETIME, UTC) and ULONGLONG OwningModuleInfo[16]:
+#   v4  dwState dwLocalAddr dwLocalPort dwRemoteAddr dwRemotePort dwOwningPid | 8 | 128 = 160 bytes
+#   v6  ucLocalAddr[16] dwLocalScopeId dwLocalPort ucRemoteAddr[16] dwRemoteScopeId dwRemotePort
+#       dwState dwOwningPid | 8 | 128 = 192 bytes
+# Ports are network byte order in the LOW 16 bits of their DWORD; the high 16 bits are not defined.
+_WIN_TABLE_HEADER = 8
+_WIN_ROW_SIZE = {_WIN_AF_INET: 160, _WIN_AF_INET6: 192}
+_WIN_PID_OFFSET = {_WIN_AF_INET: 20, _WIN_AF_INET6: 52}
+_WIN_TIME_OFFSET = {_WIN_AF_INET: 24, _WIN_AF_INET6: 56}
+# A process that started more than this after the socket was made is not its owner. Seconds: the stamps
+# are exact to well under a millisecond, so this only absorbs rounding, plus whatever the wall clock
+# stepped backward since the helper started (_ClockWatch).
+_WIN_PID_REUSE_TOLERANCE = 0.05
+# Both stamps are wall-clock FILETIMEs. A pid that is reused needs the new process to appear within the
+# handshake window (about 2 s), so a process "younger than its socket" by more than this is a clock
+# that stepped back before the helper started, not a race.
+_WIN_CLOCK_ANOMALY = 60.0
+_WIN_TICKS = 10_000_000  # FILETIME ticks per second
+
+
+class _ClockWatch:
+    """Has the wall clock been set back since this helper started? The wall clock minus the monotonic
+    clock is constant until somebody steps the wall clock."""
+
+    def __init__(self):
+        self.offset0 = time.time() - time.monotonic()
+        self.largest = 0.0  # the largest backward step seen, seconds
+
+    def drift(self):
+        """Seconds the wall clock was stepped backward since start (0 when it was not, or forward)."""
+        step = self.offset0 - (time.time() - time.monotonic())
+        if step > self.largest:
+            self.largest = step
+        return max(0.0, step)
+
+
+_CLOCK = _ClockWatch()
+
+
+class PeerUnsupported(Exception):
+    """No way to tell who owns the peer on this platform."""
+
+
+class PeerResult(types.SimpleNamespace):
+    """What the relay made of one peer: kind ("same" | "other" | "unknown" | "closed"), pid, why, err."""
+
+    def __init__(self, kind, pid, why, err):
+        super().__init__(kind=kind, pid=pid, why=why, err=err)
+
+
+def _loopback_pair(family, host):
+    """A connected TCP pair on loopback, (client, accepted side), or None when that cannot be made
+    here (no such loopback). Blocking: run it in an executor."""
+    srv = cli = None
+    try:
+        srv = socket.socket(family)
+        cli = socket.socket(family)
+        srv.settimeout(1.0)
+        cli.settimeout(1.0)
+        srv.bind((host, 0))
+        srv.listen(1)
+        cli.connect(srv.getsockname()[:2])
+        conn, _ = srv.accept()
+    except OSError:
+        if cli is not None:
+            cli.close()
+        return None
+    finally:
+        if srv is not None:
+            srv.close()
+    return cli, conn
+
+
+def _close_pair(pair):
+    for s in pair or ():
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+class _PairBox:
+    """A loopback pair made in an executor thread for an awaiter that may give up before it is
+    made (cancelled, timed out): whoever is late closes it, so no socket is left behind."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._abandoned = False
+        self._pair = None
+
+    def make(self, family, host):
+        pair = _loopback_pair(family, host)
+        with self._lock:
+            if self._abandoned:
+                _close_pair(pair)
+                return None
+            self._pair = pair
+        return pair
+
+    def abandon(self):
+        with self._lock:
+            self._abandoned = True
+            pair, self._pair = self._pair, None
+        _close_pair(pair)
+
+
+def _norm_ip(value):
+    """An address as an ipaddress object: scope id dropped, IPv4-mapped IPv6 turned into IPv4."""
+    if isinstance(value, (bytes, bytearray)):
+        ip = ipaddress.ip_address(bytes(value))
+    else:
+        ip = ipaddress.ip_address(str(value).split("%")[0])
+    return getattr(ip, "ipv4_mapped", None) or ip
+
+
+def _endpoint(sockname):
+    """(ip, port, scope id) of an asyncio socket name: ('127.0.0.1', p) or ('::1', p, flow, scope)."""
+    if not isinstance(sockname, (tuple, list)) or len(sockname) < 2:
+        raise ValueError("not an inet socket name")
+    scope = sockname[3] if len(sockname) >= 4 and isinstance(sockname[3], int) else 0
+    return _norm_ip(sockname[0]), int(sockname[1]), scope
+
+
+def _win_port(dword):
+    """A port from a table row: network byte order in the low 16 bits of a DWORD."""
+    return ((dword & 0xFF) << 8) | ((dword >> 8) & 0xFF)
+
+
+def _windows_tcp_table(api, family):
+    """The raw MIB_TCPTABLE_OWNER_MODULE / MIB_TCP6TABLE_OWNER_MODULE as a bytearray. The table can
+    grow between the size query and the read."""
+    import ctypes
+    from ctypes import wintypes
+    size = wintypes.DWORD(0)
+    data = None
+    buf = None
+    for _ in range(8):
+        rc = api.iphlpapi.GetExtendedTcpTable(buf, ctypes.byref(size), False, family, _WIN_TCP_TABLE_OWNER_MODULE_CONNECTIONS, 0)
+        if rc == 0:
+            buf = None  # the bytearray is exported to ctypes until this reference goes
+            return data if data is not None else bytearray()
+        if rc != _WIN_ERROR_INSUFFICIENT_BUFFER:
+            raise OSError(f"GetExtendedTcpTable {rc}")
+        buf = None
+        data = bytearray(size.value + 16384)
+        buf = (ctypes.c_char * len(data)).from_buffer(data)
+        size.value = len(data)
+    raise OSError("GetExtendedTcpTable: table kept growing")
+
+
+def _scan_windows_table(buf, family, peer, local):
+    """[(owning pid, socket creation FILETIME or 0)] of the rows whose LOCAL end is the peer's
+    address+port and whose REMOTE end is our listening address+port: those are the peer's own sockets.
+    The table is searched as bytes (no object per row): find the peer's port, keep the hits that sit
+    exactly on a row's local port field, then compare the other fields of that row. Rows of pid 0
+    (TIME_WAIT and the like) are skipped. A buffer shorter than its row count says is read as far as it goes."""
+    (peer_ip, peer_port, peer_scope), (local_ip, local_port, _) = peer, local
+    v4 = family == _WIN_AF_INET
+    size = _WIN_ROW_SIZE[family]
+    if len(buf) < _WIN_TABLE_HEADER:
+        return []
+    count = min(struct.unpack_from("<I", buf, 0)[0], (len(buf) - _WIN_TABLE_HEADER) // size)
+    end = _WIN_TABLE_HEADER + count * size
+    peer_b, local_b = peer_ip.packed, local_ip.packed
+    pport, lport = peer_port.to_bytes(2, "big"), local_port.to_bytes(2, "big")
+    # v4: laddr@4 lport@8 raddr@12 rport@16; v6: laddr@0 scope@16 lport@20 raddr@24 rport@44.
+    needle, at_row = (peer_b + pport, 4) if v4 else (pport, 20)
+    out = []
+    pos = _WIN_TABLE_HEADER + at_row
+    while True:
+        hit = buf.find(needle, pos, end)
+        if hit < 0:
+            break
+        pos = hit + 1
+        row = hit - at_row
+        if (row - _WIN_TABLE_HEADER) % size:
+            continue  # the bytes matched across fields or rows
+        if v4:
+            same = buf[row + 12:row + 16] == local_b and buf[row + 16:row + 18] == lport
+        else:
+            same = (
+                buf[row:row + 16] == peer_b
+                and (not peer_scope or struct.unpack_from("<I", buf, row + 16)[0] == peer_scope)
+                and buf[row + 24:row + 40] == local_b
+                and buf[row + 44:row + 46] == lport
+            )
+        if not same:
+            continue
+        pid = struct.unpack_from("<I", buf, row + _WIN_PID_OFFSET[family])[0]
+        if pid:
+            out.append((pid, struct.unpack_from("<q", buf, row + _WIN_TIME_OFFSET[family])[0]))
+    return list(dict.fromkeys(out))
+
+
+@functools.lru_cache(maxsize=1)
+def _own_sid():
+    return _windows_sid()
+
+
+def _process_created(api, handle):
+    """When the process of this handle started: a FILETIME (UTC, 100 ns ticks)."""
+    from ctypes import byref, wintypes
+    created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    if not api.kernel32.GetProcessTimes(handle, byref(created), byref(exited), byref(kernel), byref(user)):
+        raise OSError("GetProcessTimes")
+    return (created.dwHighDateTime << 32) | created.dwLowDateTime
+
+
+def _windows_pid_verdict(api, pid, own, socket_created=0, note=None):
+    """Is this process the user's own? Every handle opened here is closed here.
+    `socket_created` is when the table says the socket was made (0: it does not say). A process that
+    started after its socket cannot be the one that made it: the pid was reused. Both stamps are wall
+    clock: a clock stepped back since the helper started widens the tolerance, and a process "younger
+    than its socket" by more than _WIN_CLOCK_ANOMALY seconds is a clock artefact, not a race: it is
+    judged by its user alone and `note(pid, created, seconds)` is called (if given)."""
+    import ctypes
+    from ctypes import wintypes
+    handle = api.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        err = ctypes.get_last_error()
+        if err == _WIN_ERROR_ACCESS_DENIED:
+            return PEER_DENIED  # what another user's process looks like
+        if err == _WIN_ERROR_INVALID_PARAMETER:
+            return PEER_GONE  # the process ended after the table was read
+        raise OSError(f"OpenProcess {err}")
+    try:
+        if socket_created:
+            created = _process_created(api, handle)
+            late = (created - socket_created) / _WIN_TICKS  # seconds the process is younger than its socket
+            if late > _WIN_PID_REUSE_TOLERANCE + _CLOCK.drift():
+                if late <= _WIN_CLOCK_ANOMALY:
+                    return PEER_GONE
+                if note is not None:
+                    note(pid, created, late)
+        token = wintypes.HANDLE()
+        if not api.advapi32.OpenProcessToken(handle, 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+            err = ctypes.get_last_error()
+            if err == _WIN_ERROR_ACCESS_DENIED:
+                # The process opened, so it is not another user's (that is denied at OpenProcess): an
+                # elevated process of this very user also looks like this. Not proof of anything.
+                return PEER_NOTOKEN
+            raise OSError(f"OpenProcessToken {err}")
+        try:
+            sid = _token_sid(api, token)
+        finally:
+            api.kernel32.CloseHandle(token)
+    finally:
+        api.kernel32.CloseHandle(handle)
+    return PEER_SAME if sid == own else PEER_OTHER
+
+
+def _windows_peer(peer, local, note=None):
+    api = _win_api()
+    family = _WIN_AF_INET if peer[0].version == 4 else _WIN_AF_INET6
+    owners = _scan_windows_table(_windows_tcp_table(api, family), family, peer, local)
+    if not owners:
+        return PEER_NOTFOUND, None
+    own = _own_sid()
+    seen = {}
+    for pid, created in owners:
+        seen.setdefault(_windows_pid_verdict(api, pid, own, created, note), pid)
+    # One foreign owner is enough; after that anything unprovable beats "same".
+    for verdict in (PEER_OTHER, PEER_DENIED, PEER_NOTOKEN, PEER_GONE, PEER_SAME):
+        if verdict in seen:
+            return verdict, seen[verdict]
+    return PEER_NOTFOUND, None
+
+
+def _read_proc_net(name):
+    with open(f"/proc/net/{name}", encoding="ascii", errors="replace") as f:
+        return f.read()
+
+
+def _proc_ip(text):
+    """/proc/net/tcp addresses: 32-bit words in host byte order, as hex."""
+    raw = bytes.fromhex(text)
+    if sys.byteorder == "little":
+        raw = b"".join(raw[i:i + 4][::-1] for i in range(0, len(raw), 4))
+    return _norm_ip(raw)
+
+
+def _proc_row(line):
+    fields = line.split()
+    lhost, lport = fields[1].rsplit(":", 1)
+    rhost, rport = fields[2].rsplit(":", 1)
+    return _proc_ip(lhost), int(lport, 16), _proc_ip(rhost), int(rport, 16), int(fields[7])
+
+
+def parse_proc_net(text):
+    """[(local ip, local port, remote ip, remote port, uid)] of one /proc/net/tcp or tcp6 text.
+    A line that does not parse is skipped."""
+    rows = []
+    for line in text.splitlines()[1:]:
+        try:
+            rows.append(_proc_row(line))
+        except (IndexError, ValueError):
+            continue
+    return rows
+
+
+def _linux_peer(peer, local, read=None, uid=None):
+    # The uid in /proc/net/tcp belongs to the socket itself, not to a process id we would open later:
+    # nothing can be reused between the read and the verdict, so there is no pid-reuse check here.
+    read = read or _read_proc_net
+    uid = os.getuid() if uid is None else uid
+    (peer_ip, peer_port, _), (local_ip, local_port, _) = peer, local
+    # Both ports as they are printed: a line without them is skipped before it is parsed.
+    lport_hex, rport_hex = f":{peer_port:04X}", f":{local_port:04X}"
+    readable = 0
+    owners = []
+    for name in ("tcp", "tcp6"):
+        try:
+            text = read(name)
+        except OSError:
+            continue  # tcp6 is missing where IPv6 is off
+        readable += 1
+        for line in text.splitlines()[1:]:  # not the header
+            if lport_hex not in line or rport_hex not in line:
+                continue
+            try:
+                lip, lport, rip, rport, owner = _proc_row(line)
+            except (IndexError, ValueError):
+                continue
+            if lip == peer_ip and lport == peer_port and rport == local_port and rip == local_ip:
+                owners.append(owner)
+                break  # a connection is one row per table: the first is the peer's
+    if not readable:
+        raise OSError("/proc/net/tcp is not readable")
+    if not owners:
+        return PEER_NOTFOUND, None
+    return (PEER_SAME if all(o == uid for o in owners) else PEER_OTHER), None  # a process id is not in this table
+
+
+def lookup_peer(peer_name, local_name, note=None):
+    """One lookup of who owns the process at the other end of a connection: (verdict, pid or None).
+    Arguments are the connection's remote and local socket names. Raises on a failed lookup.
+    `note(pid, created, seconds)` hears of a peer whose start time the wall clock cannot be trusted for."""
+    peer, local = _endpoint(peer_name), _endpoint(local_name)
+    if sys.platform == "win32":
+        return _windows_peer(peer, local, note)
+    if sys.platform.startswith("linux"):
+        return _linux_peer(peer, local)
+    raise PeerUnsupported(sys.platform)
 
 
 def _console_hwnd():
@@ -510,14 +930,26 @@ class Tray:
         self.app = app
         self.icon = None
         self.color = None
-        self.title = "SpoSync"
+        self.base_title = "SpoSync"
+        self.peer_off = False  # the peer check is off for this run: the tooltip says so
         self.error = ""
 
+    @property
+    def title(self):
+        return self.base_title + (" – peer check off" if self.peer_off else "")
+
     def set_title(self, text):
-        self.title = text
+        self.base_title = text
+        self._push_title()
+
+    def set_peer_check(self, on):
+        self.peer_off = not on
+        self._push_title()
+
+    def _push_title(self):
         if self.icon is not None:
             try:
-                self.icon.title = text
+                self.icon.title = self.title
             except Exception:
                 pass
 
@@ -589,6 +1021,10 @@ class Tray:
         return worker
 
 
+SEARCH_RECENT_MAX = 16  # queries the TUI sent that are remembered
+SEARCH_RECENT_SECONDS = 15.0  # for this long
+
+
 class State:
     def __init__(self):
         self.title = ""
@@ -612,6 +1048,12 @@ class State:
         self.song_i = 0
         self.pane = "playlist"
         self.search_q = ""
+        self.search_sent = None  # normalised query of the latest search command the TUI sent; None: none
+        # The theme answers every search command twice (an empty echo, then the results), so what the TUI
+        # sent is remembered a while: {normalised query: when it was sent}, oldest first. A search message
+        # for one of these is a reply to the TUI; any other is the theme's own search.
+        self.search_recent = {}
+        self.clock = time.monotonic
         self.search_results = []
         self.search_i = 0
         self.search_focus = "input"
@@ -624,6 +1066,26 @@ class State:
         self.spectrum = [0.0] * self.bars
         self.confirm_close = False
         self.confirm_sel = 0
+
+    def search_remember(self, query):
+        """The TUI sent this (normalised) query: it is the latest, and its replies are recognised for a while."""
+        now = self.clock()
+        self.search_recent.pop(query, None)
+        self.search_recent[query] = now
+        while len(self.search_recent) > SEARCH_RECENT_MAX:
+            del self.search_recent[next(iter(self.search_recent))]
+        self.search_sent = query
+
+    def search_recent_has(self, query):
+        """Did the TUI send this query within SEARCH_RECENT_SECONDS? Older entries are dropped."""
+        now = self.clock()
+        for old in [q for q, sent in self.search_recent.items() if now - sent > SEARCH_RECENT_SECONDS]:
+            del self.search_recent[old]
+        return query in self.search_recent
+
+    def search_forget(self):
+        self.search_sent = None
+        self.search_recent.clear()
 
     def pos(self):
         if not self.is_playing:
@@ -664,6 +1126,9 @@ class UiHooks:
     def on_theme_presence(self, connected):
         pass
 
+    def on_peer_check(self, on):
+        """The peer check is off for this run (--no-peer-check, or the self-test found it broken)."""
+
     def on_update(self):
         pass
 
@@ -681,7 +1146,8 @@ class UiHooks:
 class Relay:
     """UI-free websocket relay between the theme, the capture worker and an optional UI."""
 
-    def __init__(self, host, port, log, hooks=None, capture=None, clock=None):
+    def __init__(self, host, port, log, hooks=None, capture=None, clock=None, peer_check=True,
+                 peer_lookup=None, peer_strict=None, peer_sleep=None, peer_selftest=None):
         self.host = host
         self.port = port
         self.log = log
@@ -707,6 +1173,30 @@ class Relay:
         self._drop_skipped = 0  # drops since that line
         self._show_at = None  # when the hook last re-raised the window
         self._show_ok = True
+        self._peer_check = peer_check
+        self._peer_lookup = peer_lookup or functools.partial(lookup_peer, note=self._peer_clock_note)
+        self._peer_clock_seen = set()  # (pid, process start) of peers whose clock anomaly was logged
+        self._peer_strict = PEER_STRICT if peer_strict is None else peer_strict
+        self._peer_sleep = peer_sleep or asyncio.sleep
+        self._peer_logged = 0  # "rejected peer" lines written
+        self._peer_skipped = 0  # rejections since the last count line
+        self._peer_window = None  # when the current count window began
+        self._peer_unavailable_logged = False
+        self._peer_errors = set()
+        self._peer_reasons = set()  # reasons an unknown peer was refused for, each logged once at least
+        self._peer_hint_logged = False
+        self._peer_slots = asyncio.Semaphore(PEER_SLOTS)
+        # The start-up self-test runs only for the real lookup unless a test asks for it.
+        self._peer_selftest = (peer_lookup is None) if peer_selftest is None else peer_selftest
+        self._selftest_task = None
+        self._selftest_first = None  # set when the FIRST self-test attempt is over (any outcome)
+        self._selftest_timeout = SELFTEST_TIMEOUT
+        self._selftest_wait = SELFTEST_WAIT
+        self._selftest_backoff = SELFTEST_BACKOFF
+        self._selftest_sleep = asyncio.sleep
+        # Spectrum pacing: a monotonic deadline per frame. Own clock and sleep so a test can drive them.
+        self._pump_clock = time.monotonic
+        self._pump_sleep = asyncio.sleep
 
     def _noise_window(self, now):
         """Start a new budget window once the last one ended; say what it suppressed."""
@@ -752,6 +1242,7 @@ class Relay:
             max_size=MAX_MESSAGE,
             logger=self._ws_log,
             write_limit=WRITE_LIMIT,
+            backlog=LISTEN_BACKLOG,
             close_timeout=CLOSE_TIMEOUT,
             # A half-open connection (no request, or a partial one) must not hold close() for the
             # default 10 s: the abort in close() only covers clients that finished the handshake.
@@ -759,6 +1250,13 @@ class Relay:
         )
         self.port = self._server.sockets[0].getsockname()[1]
         self.log.info("listening on host=%s port=%s", self.host, self.port)
+        if not self._peer_check:
+            self.log.warning("peer check disabled by --no-peer-check")
+            self._call(self.hooks.on_peer_check, False)
+        elif self._peer_selftest:
+            # Not awaited: the helper is up now. Connections wait for the first attempt in _peer_gate.
+            self._selftest_first = asyncio.Event()
+            self._selftest_task = asyncio.ensure_future(self._peer_selftest_run())
 
     async def run(self):
         if self._server is None:
@@ -775,6 +1273,8 @@ class Relay:
         # First and synchronous: textual cancels the relay worker without waiting for it, so a
         # close that is cut short while it waits for the clients must not leave the audio device open.
         self.capture.stop()
+        if self._selftest_task is not None and not self._selftest_task.done():
+            self._selftest_task.cancel()
         server, self._server = self._server, None
         if server is not None:
             server.close()
@@ -877,10 +1377,20 @@ class Relay:
         self.send_soon({"type": "status", "ui": self._ui_visible()})
 
     async def spectrum_pump(self):
+        """One frame per SPECTRUM_INTERVAL, paced against a monotonic deadline: a plain sleep of the
+        interval rounds up to the next timer tick on Windows (about 47 ms for 33 ms) and drifts.
+        Parked on the viz event while no client wants the bars: no wakeups when idle."""
+        next_at = None
         while True:
             await self._viz_event.wait()
-            await self.broadcast({"type": "spectrum", "bars": S.spectrum}, viz_only=True)
-            await asyncio.sleep(0.033)
+            now = self._pump_clock()
+            if next_at is None or now - next_at > SPECTRUM_RESYNC_FRAMES * SPECTRUM_INTERVAL:
+                next_at = now  # first frame, or far behind (a stall, or a long idle): no burst to catch up
+            # 3 decimals: the theme draws bars a few hundred pixels high; more digits only cost bandwidth.
+            await self.broadcast({"type": "spectrum", "bars": [round(v, 3) for v in S.spectrum]}, viz_only=True)
+            next_at += SPECTRUM_INTERVAL
+            # min(): a clock that stepped back must not park the pump for long.
+            await self._pump_sleep(max(0.0, min(SPECTRUM_INTERVAL, next_at - self._pump_clock())))
 
     def _recompute(self):
         S.connected = bool(self.clients)
@@ -903,15 +1413,240 @@ class Relay:
         # origin. MAX_REJECTED_ORIGINS bounds these lines.
         self.log.warning("rejected origin %s", shown)
 
-    def _process_request(self, connection, request):
+    def _note_peer(self, other, pid, reason=None):
+        """A refused peer: the first MAX_PEER_LOGS per process get a line, then one count per
+        PEER_LOG_INTERVAL. Outside the noise budget, never the other user's name or SID. The first
+        refusal for each distinct reason is always written (a handful of words), and the first
+        unknown peer (other than a "busy" one) also gets the hint how to switch the check off."""
+        first_reason = not other and reason not in self._peer_reasons
+        if first_reason:
+            self._peer_reasons.add(reason)
+        if self._peer_logged < MAX_PEER_LOGS or first_reason:
+            self._peer_logged += 1
+            if other:
+                self.log.warning("rejected peer user=other pid=%s", "?" if pid is None else pid)
+            else:
+                self.log.warning("rejected peer unknown (%s)", reason)
+        else:
+            now = self._clock()
+            if self._peer_window is None:
+                self._peer_window = now
+            self._peer_skipped += 1
+            if now - self._peer_window >= PEER_LOG_INTERVAL:
+                self.log.warning("rejected peer: %s more in the last %s min", self._peer_skipped, int(PEER_LOG_INTERVAL // 60))
+                self._peer_skipped, self._peer_window = 0, now
+        if not other and reason != "busy" and not self._peer_hint_logged:
+            # Not for "busy": a flood of connections must not nudge the user to switch the check off.
+            self._peer_hint_logged = True
+            self.log.warning(PEER_HINT)
+
+    def _peer_unavailable(self, why):
+        if not self._peer_unavailable_logged:
+            self._peer_unavailable_logged = True
+            self.log.warning("peer check unavailable (%s); local clients are accepted unchecked", why)
+
+    async def _peer_resolve(self, peer_name, local_name, connection=None, quiet=False):
+        """One peer, looked up: PeerResult(kind, pid, why, err). kind is "same", "other" (another user's,
+        or not openable), "unknown" (why: the reason word; err: the exception class of a failed lookup)
+        or "closed" (the connection went away before the lookup began). At most PEER_SLOTS lookups run
+        at once; the table can lag a connect by a moment, so a missing row is looked up again."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + PEER_BUSY_SECONDS
+        why = PEER_WHY[PEER_NOTFOUND]
+        for attempt in range(PEER_RETRIES + 1):
+            transport = getattr(connection, "transport", None)
+            if transport is not None and transport.is_closing():
+                return PeerResult("closed", None, None, None)  # nobody is left to answer
+            try:
+                if self._peer_slots.locked():
+                    await asyncio.wait_for(self._peer_slots.acquire(), max(0.0, deadline - loop.time()))
+                else:
+                    await self._peer_slots.acquire()
+            except asyncio.TimeoutError:
+                return PeerResult("unknown", None, "busy", None)
+            try:
+                verdict, pid = await loop.run_in_executor(None, self._peer_lookup, peer_name, local_name)
+            except PeerUnsupported:
+                return PeerResult("unknown", None, "unsupported platform", None)
+            except Exception as e:
+                err = type(e).__name__
+                if not quiet and err not in self._peer_errors and len(self._peer_errors) < 5:
+                    self._peer_errors.add(err)
+                    self.log.warning("peer lookup failed: %s", err)
+                return PeerResult("unknown", None, "lookup error", err)
+            finally:
+                self._peer_slots.release()
+            if verdict == PEER_SAME:
+                return PeerResult("same", pid, None, None)
+            if verdict in (PEER_OTHER, PEER_DENIED):
+                return PeerResult("other", pid, None, None)
+            why = PEER_WHY.get(verdict, why)
+            if verdict != PEER_NOTFOUND:
+                break  # an answer (process gone, token denied), not a missing row
+            if attempt < PEER_RETRIES:
+                await self._peer_sleep(PEER_RETRY_DELAY)
+        return PeerResult("unknown", None, why, None)
+
+    def _peer_clock_note(self, pid, created, seconds):
+        """A peer process that the wall clock says started `seconds` after its own socket was made:
+        a clock that was set back, not a reused pid. Once per process."""
+        key = (pid, created)
+        if key in self._peer_clock_seen:
+            return
+        if len(self._peer_clock_seen) >= 256:
+            self._peer_clock_seen.clear()
+        self._peer_clock_seen.add(key)
+        self.log.warning("peer time check skipped: clock changed (%d s)", seconds)
+
+    def _peer_check_off(self):
+        self._peer_check = False
+        self._call(self.hooks.on_peer_check, False)
+
+    async def _peer_selftest_run(self):
+        """Is the lookup able to recognise this very process? Connect to ourselves and ask about that
+        connection: the answer must be "same" with our own pid. One attempt ends as
+        - pass: the check stays on;
+        - broken: the machinery works but does not recognise our own connection (another user's, gone,
+          token denied, a wrong pid, or the connection missing in 3 attempts in a row). The check would
+          lock the user out or let anyone in, so it is switched off for this run, loudly;
+        - inconclusive: the attempt could not be made or ran into load (no loopback, timeout, busy,
+          closed, a failed lookup). That says nothing about the machinery: the check stays on, and
+          the gate stays strict, while the self-test is repeated in the background after the
+          SELFTEST_BACKOFF delays."""
+        delays = list(self._selftest_backoff)
+        missing = 0  # attempts in a row that did not find their own connection
+        announced = False
+        try:
+            while True:
+                outcome, why = await self._peer_selftest_attempt()
+                if self._selftest_first is not None:
+                    self._selftest_first.set()  # from now on connections no longer wait
+                missing = missing + 1 if outcome == "missing" else 0
+                if outcome == "pass":
+                    self.log.info("peer check on")
+                    return
+                if outcome == "broken" or missing >= SELFTEST_NOTFOUND_LIMIT:
+                    self._peer_check_off()
+                    self.log.warning("peer check self-test failed (%s); peer check off for this run", why)
+                    return
+                if not delays:
+                    self.log.warning("peer check self-test inconclusive after retries (%s); peer check stays on", why)
+                    return
+                if not announced:
+                    announced = True
+                    self.log.info("peer check self-test inconclusive (%s); retrying", why)
+                await self._selftest_sleep(delays.pop(0))
+        finally:
+            if self._selftest_first is not None:
+                self._selftest_first.set()
+
+    async def _peer_selftest_attempt(self):
+        """One attempt: (outcome, reason), outcome "pass" | "broken" | "inconclusive" | "missing"."""
+        try:
+            return await asyncio.wait_for(self._peer_selftest_body(), self._selftest_timeout)
+        except asyncio.TimeoutError:
+            return "inconclusive", "timeout"
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            return "inconclusive", type(e).__name__
+
+    @staticmethod
+    def _selftest_outcome(res):
+        """What one lookup of our own connection means: (outcome, reason)."""
+        if res.kind == "same":
+            return ("pass", None) if res.pid in (os.getpid(), None) else ("broken", "wrong pid")
+        if res.kind == "other":
+            return "broken", "other"
+        if res.kind == "closed":
+            return "inconclusive", "closed"
+        if res.why == "lookup error":
+            return "inconclusive", res.err
+        if res.why == "busy":
+            return "inconclusive", "busy"
+        if res.why == PEER_WHY[PEER_NOTFOUND]:
+            return "missing", res.why
+        return "broken", res.why or res.kind  # process gone, token denied, unsupported platform
+
+    async def _selftest_pair(self, family, host):
+        """A loopback pair made in an executor. If this task is cancelled (or times out) while the
+        executor still builds it, the pair is closed when it is done."""
+        box = _PairBox()
+        try:
+            return await asyncio.get_running_loop().run_in_executor(None, box.make, family, host)
+        except BaseException:
+            box.abandon()
+            raise
+
+    async def _peer_selftest_body(self):
+        for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+            pair = await self._selftest_pair(family, host)
+            if pair is None:
+                if family == socket.AF_INET:
+                    return "inconclusive", "no loopback"
+                continue  # no IPv6 loopback here: nothing to check
+            client, accepted = pair
+            try:
+                if accepted.getpeername()[:2] != client.getsockname()[:2]:
+                    return "inconclusive", "foreign connection"  # not our own client that got accepted
+                res = await self._peer_resolve(accepted.getpeername(), accepted.getsockname(), quiet=True)
+            finally:
+                client.close()
+                accepted.close()
+            outcome, why = self._selftest_outcome(res)
+            if outcome != "pass":
+                return outcome, why
+        return "pass", None
+
+    async def _peer_gate(self, connection):
+        """Does the process at the other end of this connection run as the user of this helper?
+        Returns None to let it through, else (X-SpoSync header value, pid or None, reason) to refuse it.
+        A different user, or a process this helper may not open, is refused. A lookup that fails is
+        refused where PEER_STRICT (Windows) and accepted elsewhere, with one warning per run. Too many
+        lookups at once is refused everywhere: that is load, not a failed lookup.
+        A connection that arrives while the FIRST self-test attempt runs waits for it, at most
+        SELFTEST_WAIT (below the handshake's open_timeout): neither refused nor let through unchecked
+        before the test said whether the check works. After that, or once the first attempt is over
+        (a later retry never holds anybody up), it is looked up like any other: strictly."""
+        if not self._peer_check:
+            return None
+        first = self._selftest_first
+        if first is not None and not first.is_set():
+            try:
+                await asyncio.wait_for(first.wait(), self._selftest_wait)
+            except asyncio.TimeoutError:
+                pass
+            if not self._peer_check:
+                return None
+        res = await self._peer_resolve(connection.remote_address, connection.local_address, connection)
+        if res.kind == "same":
+            return None
+        if res.kind == "other":
+            return "other-user", res.pid, None
+        if res.kind == "closed" or self._peer_strict or res.why == "busy":
+            return "peer-unknown", None, "closed" if res.kind == "closed" else res.why
+        self._peer_unavailable(res.err or res.why)
+        return None
+
+    async def _process_request(self, connection, request):
+        # The Origin first: it costs nothing, and a hostile page must not be able to make the helper
+        # walk the connection table. Other users' probes send no Origin, so they are still checked.
         try:
             origin = request.headers.get("Origin")
         except LookupError:
             origin = ""  # repeated Origin header
-        if origin is None or origin in THEME_ORIGINS:
+        if origin is not None and origin not in THEME_ORIGINS:
+            self._note_rejected(origin)
+            return connection.respond(http.HTTPStatus.FORBIDDEN, "Forbidden\n")
+        refused = await self._peer_gate(connection)
+        if refused is None:
             return None
-        self._note_rejected(origin)
-        return connection.respond(http.HTTPStatus.FORBIDDEN, "Forbidden\n")
+        header, pid, reason = refused
+        if reason != "closed":
+            self._note_peer(header == "other-user", pid, reason)
+        response = connection.respond(http.HTTPStatus.FORBIDDEN, "Forbidden\n")
+        response.headers[PEER_HEADER] = header
+        return response
 
     async def handler(self, ws):
         try:
@@ -999,6 +1734,7 @@ class Relay:
                     self._bad_message(c, data, e)
         finally:
             self.clients.discard(c)
+            S.search_forget()  # the answers to the searches will not come any more
             self._noise(logging.INFO, "client disconnected role=theme")
             self._recompute()
 
@@ -1038,6 +1774,21 @@ class Relay:
             results = _items(data.get("results"), MAX_RESULTS, _result)
             if query is None and results is None:
                 return
+            asked = norm_query(data.get("query"))
+            if asked is None:
+                if S.search_recent_has(S.search_sent):
+                    return  # no query to tell whose it is, while the TUI is waiting for answers
+            elif S.search_recent_has(asked):
+                # A reply to a search the TUI sent (the theme answers each twice, and the reply to an
+                # older query can come late): never the theme's own search, so never a change of view,
+                # and an entry is not used up by a match. What the user typed is the source of truth: the
+                # reply never rewrites the input, and only the answer to the latest query, with the
+                # search view open, is shown.
+                if asked == S.search_sent and S.mode == "search" and results is not None:
+                    S.search_results = results
+                    S.search_i = 0
+                return
+            # The theme's own search: it opens the search view.
             if query:
                 S.search_q = query
             if results is not None:
@@ -1125,6 +1876,16 @@ def _text(value, limit):
     return clean(value, limit) if isinstance(value, str) else None
 
 
+def norm_query(value):
+    """A search query as the theme echoes it: it trims the command and joins the words with one
+    space. The sent text and the echoed text are compared in this form."""
+    if not isinstance(value, str):
+        return None
+    # Words first, then the cap: a long run of blanks must not eat the characters that count. clean()
+    # can remove invisible characters that sat between two blanks, so the words are joined again.
+    return " ".join(clean(" ".join(value.split()), LIMIT_QUERY).split())
+
+
 def _items(value, cap, build):
     """A list of dicts run through `build`, capped; None when not a list. Other items are dropped."""
     if not isinstance(value, list):
@@ -1172,7 +1933,10 @@ async def probe(host, port, action="ping", timeout=None):
     Returns (state, reply). The state is one of:
       "none"        nothing listens
       "sposync"     a SpoSync relay of this user (a reply without "owner" counts: older helpers)
-      "other-user"  a SpoSync relay of another signed-in user; no action is sent to it
+      "other-user"  a SpoSync relay of another signed-in user (it said so in its reply, or refused
+                    this connection at the handshake with X-SpoSync: other-user); no action is sent to it
+      "unverified"  a SpoSync relay that refused this connection with X-SpoSync: peer-unknown: it
+                    could not tell who we are (a broken peer check there); no action is sent to it
       "foreign"     anything else that answers
       "timeout"     something accepted the connection but did not answer in time
     """
@@ -1185,7 +1949,7 @@ async def probe(host, port, action="ping", timeout=None):
     except OSError:
         addrs = [host]
     results = await asyncio.gather(*[_probe_one(a, port, "ping", timeout) for a in addrs])
-    for wanted in ("sposync", "other-user", "foreign", "timeout"):
+    for wanted in ("sposync", "other-user", "unverified", "foreign", "timeout"):
         for state, reply, addr in results:
             if state != wanted:
                 continue
@@ -1209,6 +1973,14 @@ async def _probe_one(addr, port, action, timeout):
         return "timeout", None, addr
     except OSError:
         return "none", None, addr
+    except InvalidStatus as e:
+        # A helper of 1.2.0 or later refuses a client it cannot place at the handshake and says so;
+        # no action is ever sent to it. Any other refusal (a plain 403) is not a SpoSync to us.
+        try:
+            said = e.response.headers.get(PEER_HEADER) if e.response.status_code == 403 else None
+        except Exception:
+            said = None
+        return {"other-user": "other-user", "peer-unknown": "unverified"}.get(said, "foreign"), None, addr
     except Exception:
         return "foreign", None, addr
     if isinstance(reply, dict) and reply.get("app") == "sposync":
@@ -1280,6 +2052,9 @@ async def claim_port(host, port, log, bind, action="ping"):
         if state == "other-user":
             log.error("port %s held by another user's SpoSync", port)
             return EXIT_PORT_BUSY, state, reply
+        if state == "unverified":
+            log.error("port %s is held by a SpoSync that could not verify this program (see its log; --no-peer-check)", port)
+            return EXIT_PORT_BUSY, state, None
         if state == "foreign":
             log.error("port %s in use by another program", port)
             return EXIT_PORT_BUSY, state, None
@@ -1309,6 +2084,8 @@ def refusal_text(state, host, port):
         return text
     if state == "other-user":
         return f"port {port} is held by another user's SpoSync"
+    if state == "unverified":
+        return f"port {port} is held by a SpoSync that could not verify this program (see its log; --no-peer-check)"
     if state == "timeout":
         return f"port {port} is busy and does not answer"
     return f"port {port} is in use by another program"
@@ -1347,6 +2124,12 @@ def quit_running(host, port, log=None):
                 log.error("port %s held by another user's SpoSync; not touching it", port)
             say(f"port {port} is held by another user's SpoSync")
             return EXIT_PORT_BUSY
+        if state == "unverified":
+            text = refusal_text(state, host, port)
+            if log is not None:
+                log.error(text)
+            say(text)
+            return EXIT_PORT_BUSY
         if state in ("foreign", "timeout"):
             return EXIT_PORT_BUSY
         return EXIT_OK if await wait_port_free(host, port, 10.0) else EXIT_PORT_BUSY
@@ -1354,7 +2137,7 @@ def quit_running(host, port, log=None):
     return asyncio.run(go())
 
 
-async def run_headless(host, port, log):
+async def run_headless(host, port, log, peer_check=True):
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -1362,7 +2145,7 @@ async def run_headless(host, port, log):
         def request_exit(self):
             stop.set()
 
-    relay = Relay(host, port, log, Hooks())
+    relay = Relay(host, port, log, Hooks(), peer_check=peer_check)
     code, state, _ = await claim_port(host, port, log, relay.start)
     if code is not None:
         if state != "sposync":
@@ -1604,8 +2387,9 @@ class SpotuiApp(App):
     """
     BINDINGS = [("escape", "leave", "back")]
 
-    def __init__(self, host, port, mode="window", log=None):
+    def __init__(self, host, port, mode="window", log=None, peer_check=True):
         super().__init__()
+        self.peer_check = peer_check
         self.host = host
         self.port = port
         self.run_mode = mode  # "window" | "tray"
@@ -1619,7 +2403,7 @@ class SpotuiApp(App):
         self._exiting = False  # set before the first exit step; the widget tree may be gone from then on
         self._ui_ready = False  # set when on_mount has the widgets in place
         self.tray = Tray(self)
-        self.relay = Relay(host, port, self.slog, AppHooks(self))
+        self.relay = Relay(host, port, self.slog, AppHooks(self), peer_check=peer_check)
         # Per instance: the class list is only the default and is never written to.
         self.close_options = [*ClosePrompt.OPTIONS[:2], "Hide to tray" if tray_capable() else "Run in background"]
 
@@ -1712,7 +2496,7 @@ class SpotuiApp(App):
         return "shown" if self.run_mode == "tray" else "window"
 
     def set_mode(self, mode):
-        S.mode = mode
+        S.mode = mode  # what was sent stays remembered: late replies are recognised in _apply, whatever the mode
         if not self.ui_alive():
             return  # a relay hook after the exit began (or before the widgets exist)
         self.query_one("#lyrics").display = mode == "lyrics"
@@ -1865,11 +2649,16 @@ class SpotuiApp(App):
             self.search_timer.stop()
         self.search_timer = self.set_timer(0.35, self.flush_search)
 
+    def send_search(self, query):
+        """Ask the theme to search, and remember what for: only the answer to the latest query is shown."""
+        S.search_remember(norm_query(query))
+        self.ws_send({"type": "command", "cmd": "search " + query})
+
     def flush_search(self):
         self.search_timer = None
         if S.mode != "search":
             return
-        self.ws_send({"type": "command", "cmd": "search " + S.search_q})
+        self.send_search(S.search_q)
 
     async def on_input_submitted(self, event: Input.Submitted):
         cmd = event.value.strip()
@@ -1897,8 +2686,10 @@ class SpotuiApp(App):
             S.search_results = []
             S.search_i = 0
             S.search_focus = "input"
+            S.search_sent = None
             self.set_mode("search")
             if arg:
+                S.search_remember(norm_query(arg))
                 self.ws_send({"type": "command", "cmd": cmd})
             return
         self.ws_send({"type": "command", "cmd": cmd})
@@ -1988,7 +2779,7 @@ class SpotuiApp(App):
                     if self.search_timer is not None:
                         self.search_timer.stop()
                         self.search_timer = None
-                    self.ws_send({"type": "command", "cmd": "search " + S.search_q})
+                    self.send_search(S.search_q)
                 elif S.search_results:
                     self.ws_send({"type": "play", "uri": S.search_results[S.search_i].get("uri")})
                     self.set_mode("lyrics")
@@ -2000,11 +2791,15 @@ class SpotuiApp(App):
                     S.search_q = S.search_q[:-1]
                     self.schedule_search()
                     return
-                if len(key) == 1:
+                # The typed character, not the key name: textual calls the space bar "space".
+                char = getattr(event, "character", None)
+                # Blanks that are not printable() (U+3000, no-break space) are typed too: clean() and
+                # norm_query() treat them as the blanks they are.
+                if isinstance(char, str) and len(char) == 1 and (char.isprintable() or unicodedata.category(char) == "Zs"):
                     event.prevent_default()
                     event.stop()
                     # Through clean(): a lone surrogate from the console input must not reach the screen.
-                    S.search_q += clean(key, 1)
+                    S.search_q += clean(char, 1)
                     self.schedule_search()
                     return
 
@@ -2020,6 +2815,9 @@ class AppHooks(UiHooks):
 
     def on_theme_presence(self, connected):
         self.app.tray.set_title("SpoSync - connected to Spotify" if connected else "SpoSync - waiting for Spotify")
+
+    def on_peer_check(self, on):
+        self.app.tray.set_peer_check(on)
 
     def on_update(self):
         if self.app.ui_hidden:
@@ -2057,7 +2855,7 @@ def self_cmd():
     return [sys.executable, os.path.abspath(__file__)]
 
 
-def respawn_headless(host, port, log):
+def respawn_headless(host, port, log, peer_check=True):
     if not asyncio.run(wait_port_free(host, port, 3.0)):
         log.warning("port %s still busy; not starting the background helper", port)
         return
@@ -2067,7 +2865,7 @@ def respawn_headless(host, port, log):
     else:
         kwargs["start_new_session"] = True
     subprocess.Popen(
-        self_cmd() + ["--headless", "--host", host, "--port", str(port)],
+        self_cmd() + ["--headless", "--host", host, "--port", str(port)] + ([] if peer_check else ["--no-peer-check"]),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -2085,12 +2883,19 @@ def parse_args(argv=None):
     p.add_argument("--headless", action="store_true", help="run the relay with no window and no tray")
     p.add_argument("--quit", action="store_true", help="ask the running SpoSync to exit")
     p.add_argument("--replace", action="store_true", help="quit the running SpoSync, then start")
+    p.add_argument(
+        "--no-peer-check",
+        action="store_true",
+        help="accept clients without checking that they run as the same user (containers, sandboxed "
+        "Spotify, forwarded ports); any user on this computer can then use the helper",
+    )
     p.add_argument("--version", action="store_true", help="print the version and exit")
     return p.parse_args(argv)
 
 
 def _main(args, log):
     host, port = args.host, args.port
+    peer_check = not args.no_peer_check
     mode = "window"
     if args.headless:
         mode = "headless"
@@ -2116,7 +2921,7 @@ def _main(args, log):
             return code
 
     if mode == "headless":
-        return asyncio.run(run_headless(host, port, log))
+        return asyncio.run(run_headless(host, port, log, peer_check))
 
     # Bind first: a free port costs one local bind test, not a probe. Only a held port is asked who holds it.
     async def free_port():
@@ -2137,7 +2942,7 @@ def _main(args, log):
     if mode == "window" and os.name == "nt" and _console_hwnd() and not _console_is_pseudo() and not _console_visible():
         # The release build hides its console at startup; an Explorer launch needs it back.
         _show_console()
-    app = SpotuiApp(host, port, mode, log)
+    app = SpotuiApp(host, port, mode, log, peer_check)
     try:
         app.run()
     finally:
@@ -2146,7 +2951,7 @@ def _main(args, log):
     if app.crashed or code == 1:
         code = EXIT_FATAL  # 1 is reserved for "--quit found nothing"
     if app.respawn_headless:
-        respawn_headless(host, port, log)
+        respawn_headless(host, port, log, peer_check)
     log.info("exited code=%s", code)
     return code
 

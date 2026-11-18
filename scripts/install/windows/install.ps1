@@ -717,7 +717,13 @@ function Install-SpoSync {
         $script:SpoSyncStatus = "running"
     }
     elseif ($owner) {
-        Write-Host ("  " + $RedAnsi + "!" + $Reset + "  Port $SpoSyncPort is used by " + $owner.ProcessName + " (PID " + $owner.Id + "). SpoSync will start at the next sign-in once it is free.")
+        if ($owner.ProcessName -eq 'sposync') {
+            # Not the installed exe (that is $mine): another user's SpoSync, or a copy from somewhere else.
+            Write-Host ("  " + $RedAnsi + "!" + $Reset + "  Port $SpoSyncPort is held by another SpoSync (PID " + $owner.Id + "), another user's or a copy outside this install. SpoSync will start at the next sign-in once it is free.")
+        }
+        else {
+            Write-Host ("  " + $RedAnsi + "!" + $Reset + "  Port $SpoSyncPort is used by " + $owner.ProcessName + " (PID " + $owner.Id + "). SpoSync will start at the next sign-in once it is free.")
+        }
         $script:SpoSyncStatus = "notrunning"
     }
     else {
