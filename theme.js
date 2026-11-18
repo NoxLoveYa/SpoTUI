@@ -65,6 +65,7 @@
     const HISTORY_ENTRY_MAX = 500;
     const ACTIONS_STORAGE_KEY = "spotui:actions";
     const DISCORD_INVITE_URL = "https://discord.gg/WTzBEKDeKg";
+    const SPOSYNC_GUIDE_URL = "https://github.com/NoxLoveYa/SpoTUI/tree/live#sposync";
     const LAUNCHED_KEY = "spotui:launched";
 
     // Theme IDs shown in first-boot onboarding
@@ -548,6 +549,8 @@ body.spotui-spotify-enabled, body {
         lyricsObserver: null,
         syncIconTimer: null,
         sposyncConnected: false,
+        // SpoSync window visibility: null = unknown, false = hidden, true = visible.
+        sposyncUi: null,
         djObserver: null,
         djMode: false,
         djPanelOpen: false,
@@ -2337,7 +2340,7 @@ body.spotui-spotify-enabled, body {
                 popup.style.display = "flex";
                 popup.style.flexDirection = "column";
                 popup.style.gap = "12px";
-                popup.innerHTML = `<div>Unable to enable visualizer because you do not have SpoSync.<br><br>SpoSync lets SpoTUI fetch live audio data and gives you the full TUI experience.<br><br>Download it from:<br>GitHub: <a href="https://github.com/SkenSMasteR/SpoTUI" target="_blank" rel="noopener" style="color:inherit">https://github.com/SkenSMasteR/SpoTUI</a><br>Discord: <a href="${DISCORD_INVITE_URL}" target="_blank" rel="noopener" style="color:inherit">${DISCORD_INVITE_URL}</a></div>`;
+                popup.innerHTML = `<div>Unable to enable the visualizer: SpoSync is not running.<br><br>SpoSync is a small helper that feeds SpoTUI live audio. Install it with the SpoTUI installer's optional SpoSync step; it then starts with your computer.<br><br>Already installed? It starts at sign-in, or run it once from<br><code>%LOCALAPPDATA%\\SpoTUI\\sposync\\sposync.exe</code> (Windows) or <code>~/.local/share/sposync/sposync --headless</code> (Linux).<br><br>Guide: <a href="${SPOSYNC_GUIDE_URL}" target="_blank" rel="noopener" style="color:inherit">${SPOSYNC_GUIDE_URL}</a><br>Discord: <a href="${DISCORD_INVITE_URL}" target="_blank" rel="noopener" style="color:inherit">${DISCORD_INVITE_URL}</a></div>`;
                 popup.appendChild(createButton("", "spotui-control-btn", "OK", () => popup.remove()));
                 return;
             }
@@ -9409,6 +9412,7 @@ body.spotui-standby .Root__now-playing-bar {
     const HEARTBEAT_MS = 1000;
     const RECONNECT_MS = 3000;
     const RECONNECT_MAX_MS = 30000;
+    const STATUS_WAIT_MS = 1000;
     const SYNC_ICON_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path><circle cx="18.5" cy="18.5" r="4.5" fill="#ef4444" stroke="none"></circle><path d="m16.8 16.8 3.4 3.4m0-3.4-3.4 3.4" stroke="#fff" stroke-width="1.5"></path></svg>`;
     const SYNC_ICON_ON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path><circle cx="18.5" cy="18.5" r="4.5" fill="#22c55e" stroke="none"></circle><path d="m16.3 18.5 1.4 1.4 3-3" stroke="#fff" stroke-width="1.5"></path></svg>`;
 
@@ -9417,6 +9421,7 @@ body.spotui-standby .Root__now-playing-bar {
     let socket = null;
     let reconnectTimer = null;
     let heartbeatTimer = null;
+    let statusTimer = null;
     let lyricsToken = 0;
     let lyricsCache = { uri: "", lines: [], synced: false, instrumental: false, error: "", loading: false };
 
@@ -9675,34 +9680,63 @@ body.spotui-standby .Root__now-playing-bar {
     function connect() {
         // Never strand a live socket: close before replacing.
         try { if (socket) socket.close(); } catch {}
+        let ws;
         try {
-            socket = new WebSocket(WS_URL);
+            ws = new WebSocket(WS_URL);
         } catch {
             scheduleReconnect();
             return;
         }
-        socket.onopen = () => {
+        socket = ws;
+        // A replaced socket still fires its events: only the live one may act.
+        ws.onopen = () => {
+            if (ws !== socket) return;
             reconnectDelay = RECONNECT_MS;
             app.sposyncConnected = true;
             paintSyncIcon();
+            // Lyrics are fetched only while the helper's window is visible, which
+            // its "status" message reports. A helper that never sends one (older
+            // versions) is treated as visible after a short wait.
+            app.sposyncUi = null;
+            clearTimeout(statusTimer);
+            statusTimer = setTimeout(() => {
+                if (app.sposyncUi !== null) return;
+                app.sposyncUi = true;
+                refreshLyrics();
+            }, STATUS_WAIT_MS);
+            // A helper that connects after boot turns the saved visualizer back on
+            // (the boot restore ran while it was still offline). Before send() so
+            // the first update already carries the flag.
+            restoreVisualizer();
             send();
-            refreshLyrics();
         };
-        socket.onclose = () => {
+        ws.onclose = () => {
+            if (ws !== socket) return;
+            clearTimeout(statusTimer);
+            app.sposyncUi = null;
             app.sposyncConnected = false;
             paintSyncIcon();
             scheduleReconnect();
         };
-        socket.onerror = () => {
-            try { socket.close(); } catch {}
+        ws.onerror = () => {
+            if (ws !== socket) return;
+            try { ws.close(); } catch {}
         };
-        socket.onmessage = (event) => {
+        ws.onmessage = (event) => {
+            if (ws !== socket) return;
             let data;
             try { data = JSON.parse(event.data); } catch { return; }
             // The relay is an unauthenticated localhost socket: playback stays,
             // but guests keep their restrictions and sensitive commands
             // (binds, secrets, destructive/theme-defacing ops) never run remote.
             const guestAllowed = getAllowedJamGuestCommands();
+            if (data?.type === "status") {
+                clearTimeout(statusTimer);
+                const was = app.sposyncUi;
+                app.sposyncUi = data.ui === true;
+                if (app.sposyncUi && was !== true) refreshLyrics();
+                return;
+            }
             if (data?.type === "spectrum") {
                 setVisualizerBars(data.bars);
                 return;
@@ -9752,9 +9786,11 @@ body.spotui-standby .Root__now-playing-bar {
             send();
             // refreshLyrics only feeds the SpoSync relay (the in-app lyrics panel
             // loads its own via lyrics.js), so without a connection nothing
-            // consumes the result and no lyric request should leave the app. On
-            // connect, onopen fetches for the current track.
-            if (app.sposyncConnected) refreshLyrics();
+            // consumes the result and no lyric request should leave the app. The
+            // helper may also stay connected all day, so lyrics for it are fetched
+            // only while its window is visible (app.sposyncUi). When it becomes
+            // visible, the status handler fetches for the current track.
+            if (app.sposyncConnected && app.sposyncUi === true) refreshLyrics();
         });
         Spicetify.Player.addEventListener("onplaypause", send);
         // onprogress fires many times per second; the 1s heartbeat already

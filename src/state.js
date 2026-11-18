@@ -6,6 +6,8 @@ export const app = {
     lyricsObserver: null,
     syncIconTimer: null,
     sposyncConnected: false,
+    // SpoSync window visibility: null = unknown, false = hidden, true = visible.
+    sposyncUi: null,
     djObserver: null,
     djMode: false,
     djPanelOpen: false,

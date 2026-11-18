@@ -62,6 +62,7 @@ export const HISTORY_LIMIT = 50;
 export const HISTORY_ENTRY_MAX = 500;
 export const ACTIONS_STORAGE_KEY = "spotui:actions";
 export const DISCORD_INVITE_URL = "https://discord.gg/WTzBEKDeKg";
+export const SPOSYNC_GUIDE_URL = "https://github.com/NoxLoveYa/SpoTUI/tree/live#sposync";
 export const LAUNCHED_KEY = "spotui:launched";
 
 // Theme IDs shown in first-boot onboarding

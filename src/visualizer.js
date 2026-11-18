@@ -1,5 +1,5 @@
 import { showRestartPopup } from "./banner.js";
-import { DISCORD_INVITE_URL, VISUALIZER_BARS, VISUALIZER_GAP, VISUALIZER_STORAGE_KEY } from "./constants.js";
+import { DISCORD_INVITE_URL, SPOSYNC_GUIDE_URL, VISUALIZER_BARS, VISUALIZER_GAP, VISUALIZER_STORAGE_KEY } from "./constants.js";
 import { getSpotuiAccentColor } from "./jam.js";
 import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
@@ -85,7 +85,7 @@ export function handleVisualizerCommand(arg, silent) {
             popup.style.display = "flex";
             popup.style.flexDirection = "column";
             popup.style.gap = "12px";
-            popup.innerHTML = `<div>Unable to enable visualizer because you do not have SpoSync.<br><br>SpoSync lets SpoTUI fetch live audio data and gives you the full TUI experience.<br><br>Download it from:<br>GitHub: <a href="https://github.com/SkenSMasteR/SpoTUI" target="_blank" rel="noopener" style="color:inherit">https://github.com/SkenSMasteR/SpoTUI</a><br>Discord: <a href="${DISCORD_INVITE_URL}" target="_blank" rel="noopener" style="color:inherit">${DISCORD_INVITE_URL}</a></div>`;
+            popup.innerHTML = `<div>Unable to enable the visualizer: SpoSync is not running.<br><br>SpoSync is a small helper that feeds SpoTUI live audio. Install it with the SpoTUI installer's optional SpoSync step; it then starts with your computer.<br><br>Already installed? It starts at sign-in, or run it once from<br><code>%LOCALAPPDATA%\\SpoTUI\\sposync\\sposync.exe</code> (Windows) or <code>~/.local/share/sposync/sposync --headless</code> (Linux).<br><br>Guide: <a href="${SPOSYNC_GUIDE_URL}" target="_blank" rel="noopener" style="color:inherit">${SPOSYNC_GUIDE_URL}</a><br>Discord: <a href="${DISCORD_INVITE_URL}" target="_blank" rel="noopener" style="color:inherit">${DISCORD_INVITE_URL}</a></div>`;
             popup.appendChild(createButton("", "spotui-control-btn", "OK", () => popup.remove()));
             return;
         }
