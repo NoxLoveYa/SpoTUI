@@ -370,7 +370,7 @@ function connect() {
                 dbg("[SpoTUI-sync] refused remote sensitive command.");
                 return;
             }
-            execute(cleaned).then(send);
+            execute(cleaned, { fromRemote: true }).then(send);
         }
     };
 }

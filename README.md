@@ -64,6 +64,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui actions disable <name>` | Disable an action |
 | `tui actions delete <name>` | Delete an action |
 | `tui -wp off` | Remove wallpaper |
+| `tui -wp -allow [<host>]` \| `tui -wp -deny <host>` \| `tui -wp -hosts` | Wallpapers from a feed theme load only from hosts you approved; otherwise the theme applies without its wallpaper and a toast offers to allow the host. `-allow` approves the host name (any path and port) of the wallpaper that was just skipped, or the host you name, and loads it, `-deny` removes a host, `-hosts` lists them. A wallpaper you set yourself with `tui -wp <url>` approves its host. See [Wallpaper hosts](#wallpaper-hosts) |
 | `tui -shade <#hex\|off>` | Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare `tui -shade` shows current |
 | `tui -video <on/off/toggle>` | Video mode: while a song plays, its Spotify Canvas (the short looping clip) replaces your background; paused, stopped, ads, podcasts or songs without a Canvas bring your wallpaper/posters back. Off by default, saved with your look; bare `tui -video` shows what it is doing |
 | `tui -debug <on/off>` | Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print) |
@@ -101,7 +102,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -inputs off` | Reset input colors |
 | `tui -panel -bg <#hex> -border <#hex> -text <#hex>` | Set help/playlist/theme/about panel colors |
 | `tui -panel off` | Reset panel colors |
-| `tui restore [-full]` | Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, saved themes and the onboarding and banner flags; `-full` removes every SpoTUI setting stored in Spotify). Only `spotui:*` keys are touched: Spotify's own settings and other extensions' data stay as they are |
+| `tui restore [-full]` | Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, approved wallpaper hosts, saved themes and the onboarding and banner flags; `-full` removes every SpoTUI setting stored in Spotify). Only `spotui:*` keys are touched: Spotify's own settings and other extensions' data stay as they are |
 | `playlist` / `list` `<playlist-name>` | Open playlist viewer or play a specific playlist |
 | `add2list` | Add the current song to a playlist |
 | `queue` | View and reorder the play queue |
@@ -164,6 +165,36 @@ often blocked, so same-origin `https://xpui.app.spotify.com/videos/...` or any
 The token never leaves your machine (localStorage only). Something
 misbehaving? `tui -debug on`, reproduce, and read the `[SpoTUI-*]` console
 lines.
+
+## Wallpaper hosts
+
+A wallpaper stays: its host sees your IP address and when you start Spotify,
+every time. So a theme from the theme feed may only load a wallpaper from a
+host you approved. For any other host the theme applies without its
+wallpaper, and a message names the host with an **Allow** button (or type
+`tui -wp -allow`). Hosts that are not offered at all: non-`https` addresses,
+IP addresses, `localhost`, `.local`/`.lan`/`.internal`/`.home.arpa` names,
+names without a dot, addresses with a user name or password, and addresses
+longer than 2000 characters. Your own `tui -wp <url>` is never restricted, and
+approves its host. The list is personal: it is kept by `tui restore`, removed
+by `tui restore -full`, and never saved in or changed by a saved theme or a
+feed theme. Your current wallpaper's host is approved the first time this
+version runs.
+
+Approval is per host name: any path and port on that host. On a shared host
+(an image hoster, say) that means any theme can use any image there. It covers
+wallpapers only: theme preview images in the theme panel still load from their
+hosts when the panel opens. The first theme you pick during onboarding offers
+the same **Allow** on its "Theme applied" screen. An offer ends when you
+dismiss it, set your own wallpaper (`tui -wp <url>` or `off`), apply a saved
+theme or run `tui restore`.
+
+```bash
+tui -wp -allow                          # allow the host of the wallpaper just skipped, and load it
+tui -wp -allow cdn.example.com          # allow a host (a full https URL works too)
+tui -wp -deny cdn.example.com           # remove it (a wallpaper already shown stays until changed)
+tui -wp -hosts                          # list approved hosts
+```
 
 ## UI shade
 
@@ -291,7 +322,7 @@ SpoSync is an optional helper program that runs next to Spotify. The theme talks
 
 The theme works without it. Only the `visualizer` command needs it.
 
-> **No prebuilt SpoSync binary is published yet.** Until one is, the installer step needs either **Python 3.12 to 3.15** (it then builds SpoSync from source in a private virtual environment, about 150 MB of downloads and a few minutes), or a SpoSync binary you already have and pass with `-SpoSyncExe` / `--sposync-bin`. The build step only works when you run the installer from a clone of this repository, not through a one-line download: a one-line download has no source to build, so it needs the binary.
+> **Where the installer gets SpoSync, in this order:** a binary you pass with `-SpoSyncExe` / `--sposync-bin`; the release binary pinned in the installer (see "Prebuilt binary" under Install), once a release is pinned there; otherwise a build from source, which needs **Python 3.12 to 3.15** (a private virtual environment, about 150 MB of downloads and a few minutes) and a clone of this repository. If none of these is possible, the installer skips SpoSync and says why.
 
 ### Privacy
 
@@ -315,7 +346,13 @@ The installers ask `Install SpoSync? [y/N]` after the normal SpoTUI CLI install.
 
 Flags win over environment variables. On Windows, `-NoSpoSync` together with `-SpoSync` or `-SpoSyncOnly` is a contradiction: the installer says so and does nothing.
 
-**From a clone (works today, builds from source if you have Python 3.12 to 3.15; it asks `[y/N]` before the build, and with no terminal the answer is No):**
+#### Prebuilt binary
+
+A GitHub Actions workflow (`.github/workflows/build-sposync.yml`) builds SpoSync when a `sposync-vX.Y.Z` tag is pushed, tests every binary, and publishes a release with `sposync-win64.exe`, `sposync-linux-amd64` and `sposync-linux-arm64` (the Linux ones are built on Ubuntu 22.04, so they need a 64-bit system with glibc 2.35 or newer), a `SHA256SUMS` file, a `pip freeze` list of each build environment (`sposync-*-requirements.txt`) and a build attestation for every one of these files.
+
+A release is used by the installers only after it is **pinned** in them: the constants at the top of the SpoSync section of `scripts/install/windows/install.ps1` and `scripts/install/linux/install.sh` hold the release tag and the SHA256 of each binary. When they are set, the installer downloads the file for your system over HTTPS from that release, compares its SHA256 with the pinned value **before** it copies or runs anything, and stops without installing on a mismatch. When the tag is empty, the installer uses a local binary or a source build as described below. The Linux installer supports x86_64 and aarch64 only: on another CPU it stops with "SpoSync cannot be built for this CPU architecture", it does not try a source build. If the downloaded file does not run on your Linux (a 32-bit system, or glibc older than 2.35), the installer says so; pass `--sposync-bin <path>` with a binary you built, or build from a clone of this repository. Look at those constants to see which release, if any, your installer would download.
+
+**From a clone (uses the pinned release when there is one, otherwise builds from source if you have Python 3.12 to 3.15; it asks `[y/N]` before a build, and with no terminal the answer is No):**
 
 ```powershell
 git clone -b live https://github.com/NoxLoveYa/SpoTUI.git
@@ -339,9 +376,20 @@ bash scripts/install/linux/install.sh --sposync-only
 curl -fsSL https://raw.githubusercontent.com/NoxLoveYa/SpoTUI/live/scripts/install/linux/install.sh | bash -s -- --sposync-only --sposync-bin /path/to/sposync-linux-amd64
 ```
 
-A one-line download has no source to build from, so it always needs a binary. On Windows you can pass it with the environment variables instead of flags: `$env:SPOTUI_SPOSYNC='1'; $env:SPOTUI_SPOSYNC_EXE='C:\path\to\sposync-win64.exe'; irm https://raw.githubusercontent.com/NoxLoveYa/SpoTUI/live/scripts/install/windows/install.ps1 | iex`. That also installs the SpoTUI CLI; without `SPOTUI_SPOSYNC_EXE` it ends in "SpoSync skipped". On Linux, run the installer as your normal user, not with `sudo`: it refuses to install SpoSync as root, because SpoSync is a per-user helper. The Linux installer exits `2` on an unknown argument or on contradicting flags (`--sposync` or `--sposync-only` together with `--no-sposync`) and `1` when the CLI install fails; with `--sposync-only` it also exits `1` unless SpoSync ends up installed, running or not.
+When a release is pinned in the installer (see "Prebuilt binary"), these one-liners do not need a binary of your own: leave out `-SpoSyncExe` / `--sposync-bin` and the installer downloads and checks the release binary. Without a pinned release, a one-line download has no source to build from, so it needs a binary. On Windows you can pass it with the environment variables instead of flags: `$env:SPOTUI_SPOSYNC='1'; $env:SPOTUI_SPOSYNC_EXE='C:\path\to\sposync-win64.exe'; irm https://raw.githubusercontent.com/NoxLoveYa/SpoTUI/live/scripts/install/windows/install.ps1 | iex`. That also installs the SpoTUI CLI; without `SPOTUI_SPOSYNC_EXE` and without a pinned release it ends in "SpoSync skipped". On Linux, run the installer as your normal user, not with `sudo`: it refuses to install SpoSync as root, because SpoSync is a per-user helper. The Linux installer exits `2` on an unknown argument or on contradicting flags (`--sposync` or `--sposync-only` together with `--no-sposync`) and `1` when the CLI install fails; with `--sposync-only` it also exits `1` unless SpoSync ends up installed, running or not.
 
 Run the installer again to update. It asks the old helper to exit, replaces the binary and starts the new one.
+
+#### Verify a download yourself
+
+Every release has a `SHA256SUMS` file. `SHA256SUMS` and each binary have a build attestation, made by this repository's workflow (`gh attestation verify <file> -R NoxLoveYa/SpoTUI`). The maintainer's pin script, `scripts/release/pin-sposync.ps1`, checks both the hashes and the attestations before it writes the pins into the installers. Download the binary and `SHA256SUMS` from the release page, then:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify sposync-linux-amd64 -R NoxLoveYa/SpoTUI
+```
+
+On Windows, compare `(Get-FileHash .\sposync-win64.exe -Algorithm SHA256).Hash` with the line for `sposync-win64.exe` in `SHA256SUMS`, and run `gh attestation verify .\sposync-win64.exe -R NoxLoveYa/SpoTUI`. The attestation proves the file was built by this repository's workflow; the installer itself needs no `gh`, it only compares the pinned SHA256. The builds are not reproducible, so a build of your own never matches a release hash.
 
 ### Where files go
 
@@ -375,7 +423,7 @@ sposync\build-win.cmd
 bash sposync/build-linux.sh
 ```
 
-Both create a private virtual environment under `sposync/venv`, install the packages from `sposync/requirements-build.txt`, run PyInstaller, and print the SHA256 of the result as the last line. Only the top-level packages are pinned; their dependencies are not, so two builds made at different times can differ and builds are not reproducible. Output goes to `sposync/bin/` (`sposync-win64.exe` or `sposync-linux-<arch>`). They need Python 3.12 to 3.15: the pinned numpy, pillow and websockets need 3.12 or newer, and PyInstaller does not support 3.16 yet. On Debian and Ubuntu the Linux build also needs `python3-venv` (or `python3.X-venv` for the version used). Both scripts recreate a venv that was made with a Python outside that range. A Linux binary runs on the glibc it was built against or newer, so build on the oldest system you want to support.
+Both create a private virtual environment under `sposync/venv`, install the packages from `sposync/requirements-build.txt` (wheels only, `pip --only-binary=:all:`), run PyInstaller, and print the SHA256 of the result as the last line. Only the top-level packages are pinned; their dependencies are not, so two builds made at different times can differ and builds are not reproducible. Output goes to `sposync/bin/` (`sposync-win64.exe` or `sposync-linux-<arch>`). They need Python 3.12 to 3.15: the pinned numpy, pillow and websockets need 3.12 or newer, and PyInstaller does not support 3.16 yet. On Debian and Ubuntu the Linux build also needs `python3-venv` (or `python3.X-venv` for the version used). Both scripts recreate a venv that was made with a Python outside that range. A Linux binary runs on the glibc it was built against or newer, so build on the oldest system you want to support.
 
 ### Uninstall
 

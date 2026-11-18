@@ -5,6 +5,7 @@ import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
 import { safeHttpsUrl } from "./themefeed.js";
 import { applyThemeByName, getCachedThemes, getThemeSelectionList, loadThemeChannel } from "./themes.js";
+import { appendOnboardingConsent, flushDeferredConsent } from "./wpconsent.js";
 
 // Mark that the user has launched SpoTUI at least once
 export function markLaunched() {
@@ -28,6 +29,8 @@ export function closeOnboardingPanel() {
     if (input) input.focus();
     document.removeEventListener("keydown", handleGlobalEsc);
     if (wasFirstBoot) initUpdateBanner();
+    // A theme wallpaper skipped during onboarding is offered now, not under the dialog.
+    flushDeferredConsent();
 }
 export function openOnboardingPanel() {
     if (app.onboardingPanelOpen) return;
@@ -143,6 +146,9 @@ export function renderOnboardingStage(panel) {
             app.onboardingStage = "done";
             renderOnboardingPanel();
         });
+        // The theme's wallpaper was skipped (no approved host yet): offer it here.
+        const copy = panel.querySelector(".spotui-onboarding-copy");
+        if (copy) appendOnboardingConsent(copy);
     } else {
         markLaunched();
         panel.innerHTML = `

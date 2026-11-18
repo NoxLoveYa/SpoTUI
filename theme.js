@@ -9,13 +9,14 @@
         live: `${THEME_HOST}themes.js`,
     };
 
-    // Feeds are fetched as data (never executed) unless the host sends no
-    // Access-Control-Allow-Origin, which blocks fetch from the Spotify page. Those
-    // channels still load as a script, and the result is validated the same way.
+    // Feeds are fetched as data. A channel listed here whose fetch is blocked
+    // (no Access-Control-Allow-Origin, so the page cannot read it) is retried in a
+    // sandboxed frame; feed code never runs in the Spotify page. The result is
+    // validated the same way either way.
     // live: spotui.root.sx sends no CORS header (checked with curl); stable on
     // jsDelivr sends `access-control-allow-origin: *`. Drop "live" from this set
-    // once the server allows the Spotify origin and the script loader can go.
-    const THEME_SCRIPT_CHANNELS = new Set(["live"]);
+    // once the server allows the Spotify origin and the frame loader can go.
+    const THEME_FRAME_CHANNELS = new Set(["live"]);
 
     // LocalStorage keys for user preferences
     const ANIMATION_KEY = "spotui:ascii-animation";
@@ -25,6 +26,9 @@
     const WP_FIT_KEY = "spotui:wp-fit";
     const WP_POS_KEY = "spotui:wp-pos";
     const WP_RICH_KEY = "spotui:wp-rich";
+    // Hosts the user approved for wallpapers that come from a feed theme: a
+    // JSON array of lowercase hostnames. Personal config, not a look.
+    const WP_HOSTS_KEY = "spotui:wp-hosts";
     const SHADE_KEY = "spotui:shade";
     // Video mode (Spotify Canvas as background): a look key, "1" = on, absent = off.
     const VIDEO_MODE_KEY = "spotui:video-mode";
@@ -139,6 +143,9 @@
     ]);
     // Poster-wall words a theme may not use: they add remote images or delete the user's pins.
     const THEME_BLOCKED_POSTER_WORDS = new Set(["add", "clear"]);
+    // Wallpaper-host consent forms (tui -wp -allow/-deny/-hosts): user only. A theme
+    // must not approve a host or read the list, wherever in its command the word is.
+    const WP_HOST_FLAGS = new Set(["-allow", "-deny", "-hosts"]);
 
     // Pinterest API token: a secret, personal config rather than a look.
     const PIN_TOKEN_KEY = "spotui:pin-token";
@@ -156,6 +163,7 @@
         { cmd: "tui -l -a &lt;on/off&gt;", desc: "Toggle ASCII animation" },
         { cmd: "tui -wp &lt;url&gt; [-o &lt;0-1&gt;] [-fit &lt;cover/contain/fill/none&gt;] [-pos &lt;center/top/bottom/left/right&gt;] [-rich &lt;0-200&gt;]", desc: "Set wallpaper — bare tui -wp shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off)" },
         { cmd: "tui -wp off", desc: "Remove wallpaper" },
+        { cmd: "tui -wp -allow [&lt;host&gt;] | tui -wp -deny &lt;host&gt; | tui -wp -hosts", desc: "Wallpapers from a feed theme load only from hosts you approved, otherwise the theme applies without its wallpaper. -allow approves the host of the wallpaper that was just skipped (or the host you name) and loads it, -deny removes a host, -hosts lists them. A wallpaper you set yourself with tui -wp &lt;url&gt; approves its host" },
         { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare tui -shade shows current" },
         { cmd: "tui -video &lt;on/off/toggle&gt;", desc: "Video mode: while a song plays, its Spotify Canvas (the short looping clip) replaces your background; paused, stopped, ads, podcasts or songs without a Canvas bring your wallpaper/posters back. Off by default, saved with your look; bare tui -video shows what it is doing" },
         { cmd: "tui -debug &lt;on/off&gt;", desc: "Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print)" },
@@ -164,7 +172,7 @@
         { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
         { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
         { cmd: "tui bind clear", desc: "Remove all keybinds" },
-        { cmd: "tui restore [-full]", desc: "Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, saved themes and the onboarding and banner flags; -full removes every SpoTUI setting stored in Spotify). Spotify's own settings and other extensions' data are never touched" },
+        { cmd: "tui restore [-full]", desc: "Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, approved wallpaper hosts, saved themes and the onboarding and banner flags; -full removes every SpoTUI setting stored in Spotify). Spotify's own settings and other extensions' data are never touched" },
         { cmd: "Ctrl+R", desc: "Reverse-search persistent command history (typing filters, Ctrl+R cycles older matches, Enter fills the bar, Esc aborts; unknown commands stay session-only)" },
         { cmd: "Tab", desc: "Accept the ghost fill suggestion in the command bar (repeat to cycle matches); also completes the last word of any known command, e.g. tui -viz -ga + Tab → tui -viz -gap" },
         { cmd: "Esc", desc: "Abort history search, or leave the command bar so Spotify gets its keys back" },
@@ -368,12 +376,14 @@
         } catch (e) {}
     }
 
+    // Border follows --spotui-accent (what -shade re-points) with the panel
+    // border as fallback. The toast lives on document.body, outside the
+    // TUI container, so the var reads as the exact target color.
+    const PIN_TOAST_CSS = "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(10,14,18,.45);background:color-mix(in srgb, var(--panel-bg-color,#0a0e12) 45%, transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--spotui-accent,var(--panel-border-color,var(--essential-base,#7fd4d4)));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;";
+
     // Small non-blocking toast (console.log alone is invisible without DevTools).
     function pinToast(text, ms = 7000) {
-        // Border follows --spotui-accent (what -shade re-points) with the panel
-        // border as fallback. The toast lives on document.body, outside the
-        // TUI container, so the var reads as the exact target color.
-        toastBase("spotui-pin-toast", text, ms, "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(10,14,18,.45);background:color-mix(in srgb, var(--panel-bg-color,#0a0e12) 45%, transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--spotui-accent,var(--panel-border-color,var(--essential-base,#7fd4d4)));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;");
+        toastBase("spotui-pin-toast", text, ms, PIN_TOAST_CSS);
     }
 
     // SpoTUI's default accent color is orange #ff8c42 (the fallback baked into
@@ -2198,6 +2208,8 @@ body.spotui-spotify-enabled, body {
         const [command, sub, ...rest] = stripCommandPrefix(cmd).toLowerCase().split(/\s+/);
         if (command === "tui") {
             if (!THEME_ALLOWED_TUI_SUBS.has(sub)) return true;
+            // Approving wallpaper hosts is the user's call, never a theme's.
+            if (rest.some((word) => WP_HOST_FLAGS.has(word))) return true;
             // The wall's look is fine; adding remote images or clearing the
             // user's pins is not.
             if ((sub === "-posters" || sub === "-poster") && rest.some((word) => THEME_BLOCKED_POSTER_WORDS.has(word))) return true;
@@ -2209,10 +2221,17 @@ body.spotui-spotify-enabled, body {
     // Too powerful for remote/store-and-fire paths: meta commands, secrets,
     // destructive theme ops, and tracking/defacement URLs. Local bar authoring
     // stays unrestricted — this gates the relay ingress (sync.js) only.
-    const SENSITIVE_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b|tui\s+-(?:pin-token|pin-board|pin-feed|pin-refresh)\b|tui\s+-t\b|tui\s+-wp\b|tui\s+-posters\s+(?:add|clear)\b)/i;
+    // It must match what executeInner dispatches: those subs act in FIRST position
+    // only, except `-wp`, which executeInner reaches from ANY position (it tests
+    // the whole argument list), so `-wp` is matched as a whole token anywhere
+    // after `tui`. `-poster` is an alias of `-posters` there.
+    const SENSITIVE_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b|tui\s+-(?:pin-token|pin-board|pin-feed|pin-refresh)\b|tui\s+-t\b|tui\s+-posters?\s+(?:add|clear)\b|tui\s(?:[\s\S]*\s)?-wp(?!\S))/;
 
+    // Lowercased first: executeInner lowercases with toLowerCase(), which maps
+    // characters (e.g. KELVIN SIGN for "k") that a /i regex without the u flag does
+    // not fold, so a "-pin-token" spelled with one must not slip past.
     function isSensitiveCommand(cmd) {
-        return SENSITIVE_CMD_REGEX.test(stripCommandPrefix(cmd).trim());
+        return SENSITIVE_CMD_REGEX.test(stripCommandPrefix(cmd).trim().toLowerCase());
     }
 
     function eventToKeyCombo(e) {
@@ -3197,9 +3216,12 @@ body.spotui-spotify-enabled, body {
             return;
         }
         ghost.hidden = false;
-        ghost.style.left = `${input.offsetLeft}px`;
+        // Start where the input's text starts (its left padding), like the command bar ghost.
+        let padLeft = 0;
+        try { padLeft = parseFloat(getComputedStyle(input).paddingLeft) || 0; } catch (e) {}
+        ghost.style.left = `${input.offsetLeft + padLeft}px`;
         ghost.style.top = `${input.offsetTop}px`;
-        ghost.style.width = `${input.offsetWidth}px`;
+        ghost.style.width = `${Math.max(0, input.offsetWidth - padLeft)}px`;
         ghost.style.height = `${input.offsetHeight}px`;
         ghost.innerHTML = "";
         const typed = document.createElement("span");
@@ -5815,6 +5837,315 @@ body.spotui-spotify-enabled, body {
         }
     }
 
+    // Host consent for wallpapers that come from a feed theme. A wallpaper is
+    // persistent: its host sees the user's IP and every Spotify start. A theme
+    // may therefore only load one from a host the user approved; any other host
+    // is skipped and offered to the user. The user's own `tui -wp <url>` is never
+    // restricted (it approves its own host). Nothing here runs a command a theme
+    // wrote except through the user's own Allow click / `tui -wp -allow`.
+
+    const URL_MAX$1 = 2000;
+    const TOAST_ID = "spotui-wp-consent";
+    const TOAST_MS = 30000;
+    // Private or local names: never offered, always refused for themes.
+    const LOCAL_SUFFIXES = ["local", "lan", "internal", "home.arpa", "localhost"];
+
+    // A hostname (as URL.hostname gives it: lowercase, punycode) a theme
+    // wallpaper may ever load from. No IP literals, no single-label or local names.
+    function isOfferableHost(host) {
+        if (typeof host !== "string" || !host || host.length > 253) return false;
+        if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/.test(host)) return false;
+        const labels = host.split(".");
+        if (labels.length < 2) return false;
+        if (labels.some((l) => !l || l.length > 63)) return false;
+        // URL parsing turns every IPv4 spelling into dotted decimal; a numeric last
+        // label is never a real name.
+        if (/^\d+$/.test(labels[labels.length - 1])) return false;
+        return !LOCAL_SUFFIXES.some((s) => host === s || host.endsWith("." + s));
+    }
+
+    // A theme wallpaper URL, or null when it is never acceptable: https only, no
+    // credentials, a public name, bounded length. `href` is the normalised form:
+    // load THAT, never the raw text (a raw `")` would break out of the CSS url()).
+    function checkWallpaperUrl(raw) {
+        const text = String(raw ?? "");
+        if (!text || text.length > URL_MAX$1) return null;
+        let u;
+        try { u = new URL(text); } catch (e) { return null; }
+        if (u.protocol !== "https:" || u.username || u.password) return null;
+        if (!isOfferableHost(u.hostname) || u.href.length > URL_MAX$1) return null;
+        return { host: u.hostname, href: u.href };
+    }
+
+    // `tui -wp -allow/-deny <host>` argument: a bare hostname or a full https URL.
+    function parseHostInput(raw) {
+        const t = String(raw ?? "").trim();
+        if (!t) return null;
+        if (t.includes("://")) {
+            const c = checkWallpaperUrl(t);
+            return c ? c.host : null;
+        }
+        let u;
+        try { u = new URL("https://" + t); } catch (e) { return null; }
+        if (u.username || u.password || u.port || u.pathname !== "/" || u.search || u.hash) return null;
+        return isOfferableHost(u.hostname) ? u.hostname : null;
+    }
+
+    // Approved hosts: corrupt or odd JSON reads as empty and is left alone until
+    // the next change.
+    function getWpHosts() {
+        try {
+            const raw = storageGet(WP_HOSTS_KEY);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return [];
+            return [...new Set(parsed.filter((h) => typeof h === "string" && h).map((h) => h.toLowerCase()))];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    // Oldest dropped past the cap. An empty list is still written, so the key
+    // existing means "migration done" even after the user denied everything.
+    function saveHosts(list) {
+        return storageSet(WP_HOSTS_KEY, JSON.stringify([...new Set(list)].slice(-200)));
+    }
+
+    function isHostApproved(host) {
+        return getWpHosts().includes(String(host || "").toLowerCase());
+    }
+
+    function approveHost(host) {
+        const list = getWpHosts();
+        if (list.includes(host)) return true;
+        list.push(host);
+        return saveHosts(list);
+    }
+
+    // First run without the key: the wallpaper already stored keeps working if a
+    // theme re-uses its host. The key is always written (an empty list marks
+    // "migrated"), so this never runs twice and never approves a URL that gets
+    // stored later.
+    function migrateWpHosts() {
+        try {
+            if (storageGet(WP_HOSTS_KEY) !== null) return;
+            const stored = storageGet(WP_URL_KEY);
+            const c = stored ? checkWallpaperUrl(stored) : null;
+            saveHosts(c ? [c.host] : []);
+        } catch (e) {}
+    }
+
+    // The user typed `tui -wp <url>` themself: they chose that host.
+    function noteUserWallpaper(url) {
+        const c = checkWallpaperUrl(url);
+        if (c && !approveHost(c.host)) dbg("[SpoTUI] wallpaper host not remembered: storage full");
+    }
+
+    // Forms only the user may run. A theme must not approve hosts or read the
+    // list, wherever in the command the word sits.
+    function isHostMgmtToken(word) {
+        return WP_HOST_FLAGS.has(word);
+    }
+
+    function hasHostMgmtToken(argsLower) {
+        return argsLower.some(isHostMgmtToken);
+    }
+
+    // ---- pending theme wallpaper + consent toast ----
+
+    // One at a time, memory only: { host, cmd, run }. `cmd` is the theme's own
+    // command with the URL replaced by its normalised form.
+    let pending = null;
+    // An onboarding panel is open: show the toast once it closes.
+    let deferred = false;
+
+    function removeToast() {
+        try {
+            const t = document.getElementById(TOAST_ID);
+            if (t) t.remove();
+        } catch (e) {}
+    }
+
+    // A new theme apply starts clean: the previous offer and its toast go.
+    function beginThemeApply() {
+        clearPendingWallpaper();
+    }
+
+    // The offer is void: the user chose a wallpaper themself (tui -wp, a saved
+    // theme, tui restore) or dismissed it. A later `tui -wp -allow` (history,
+    // keybind) must not replace that choice with an old theme's wallpaper.
+    function clearPendingWallpaper() {
+        pending = null;
+        deferred = false;
+        removeToast();
+    }
+
+    function appendLine(parent, text) {
+        const line = document.createElement("div");
+        line.textContent = text;
+        parent.appendChild(line);
+        return line;
+    }
+
+    // Fixed colors, not theme variables: a theme may set a panel color to full
+    // transparency (#00000000), which would leave this prompt, and its Allow
+    // button, invisible but clickable. Applied inline, after any shared CSS.
+    const FIXED_LOOK = "color:#e8e2d4;background:rgba(10,14,18,0.92);border:1px solid #7fd4d4;";
+
+    function mkConsentButton(label, onClick) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        b.tabIndex = -1;
+        b.style.cssText = FIXED_LOOK + "padding:2px 10px;margin-right:8px;font:inherit;cursor:pointer;overflow-wrap:anywhere;";
+        // A mouse press must not pull focus out of the command bar.
+        b.addEventListener("mousedown", (e) => e.preventDefault());
+        b.addEventListener("click", onClick);
+        return b;
+    }
+
+    function showConsentToast() {
+        if (!pending) return;
+        if (app.onboardingPanelOpen) {
+            deferred = true;
+            return;
+        }
+        deferred = false;
+        const host = pending.host;
+        const t = toastBase(TOAST_ID, "", TOAST_MS, PIN_TOAST_CSS + "pointer-events:auto;bottom:176px;text-align:left;overflow-wrap:anywhere;" + FIXED_LOOK);
+        if (!t) return;
+        // The host is untrusted text from a feed theme: textContent only.
+        appendLine(t, `Theme wallpaper from ${host} was not loaded.`);
+        if (host.split(".").some((l) => l.startsWith("xn--"))) appendLine(t, "(internationalised name)");
+        const row = document.createElement("div");
+        row.style.cssText = "margin:8px 0 4px;";
+        row.appendChild(mkConsentButton(`Allow ${host}`, () => applyPendingWallpaper()));
+        row.appendChild(mkConsentButton("Dismiss", () => clearPendingWallpaper()));
+        t.appendChild(row);
+        appendLine(t, "or type: tui -wp -allow");
+    }
+
+    // Onboarding stage 3 ("Theme applied."): when the chosen theme's wallpaper was
+    // skipped, say so there with an Allow button, because a first-time user has
+    // no approved host and could not type the command. Mouse only: the buttons
+    // stay out of the tab order and onboarding's own keys are untouched. Without
+    // a click the toast still comes after onboarding closes.
+    function appendOnboardingConsent(parent) {
+        if (!pending) return null;
+        const box = document.createElement("div");
+        box.style.cssText = FIXED_LOOK + "padding:8px 12px;margin:12px auto 0;max-width:420px;font:inherit;text-align:center;overflow-wrap:anywhere;";
+        const line = appendLine(box, `This theme's wallpaper comes from ${pending.host}.`);
+        const row = document.createElement("div");
+        row.style.cssText = "margin:8px 0 2px;";
+        const allow = mkConsentButton("Allow wallpaper", () => {
+            if (!applyPendingWallpaper()) return;
+            line.textContent = "Wallpaper allowed.";
+            allow.remove();
+        });
+        allow.style.marginRight = "0";
+        row.appendChild(allow);
+        box.appendChild(row);
+        parent.appendChild(box);
+        return box;
+    }
+
+    // Called by closeOnboardingPanel: the toast that had to wait.
+    function flushDeferredConsent() {
+        if (deferred && pending) showConsentToast();
+    }
+
+    function offerThemeWallpaper(offer) {
+        pending = offer;
+        dbg("[SpoTUI] theme wallpaper waiting for consent:", offer.host);
+        showConsentToast();
+    }
+
+    // Approve the pending wallpaper's host and load it exactly once, as the user.
+    // True when the host was approved and the wallpaper started.
+    function applyPendingWallpaper() {
+        const p = pending;
+        if (!p) {
+            pinToast("no theme wallpaper is waiting");
+            return false;
+        }
+        if (!approveHost(p.host)) {
+            pinToast("host not saved: storage full");
+            return false;
+        }
+        clearPendingWallpaper();
+        pinToast(`wallpaper host allowed: ${p.host}`);
+        try {
+            Promise.resolve(p.run(p.cmd)).catch((e) => dbg("[SpoTUI] pending wallpaper failed:", e));
+        } catch (e) {
+            dbg("[SpoTUI] pending wallpaper failed:", e);
+        }
+        return true;
+    }
+
+    // Theme wallpaper URL gate. Returns the URL to load, or null when the theme's
+    // wallpaper is skipped (with the offer or the notice already raised).
+    // buildCmd(href) rebuilds the command around the normalised URL.
+    function gateThemeWallpaper(url, buildCmd, run) {
+        const c = checkWallpaperUrl(url);
+        if (!c) {
+            dbg("[SpoTUI] theme wallpaper refused:", String(url).slice(0, 200));
+            pinToast("theme wallpaper skipped (unsupported address)");
+            return null;
+        }
+        if (isHostApproved(c.host)) return c.href;
+        offerThemeWallpaper({ host: c.host, cmd: buildCmd(c.href), run });
+        return null;
+    }
+
+    // `tui -wp -allow|-deny|-hosts`: user only (callers refuse these for themes).
+    function handleWpHostCommand(sub, arg) {
+        if (sub === "-hosts") {
+            const list = getWpHosts();
+            pinToast(list.length
+                ? `approved wallpaper hosts (${list.length})\n${list.slice(0, 20).join("\n")}${list.length > 20 ? `\n+${list.length - 20} more (see console)` : ""}`
+                : "no approved wallpaper hosts");
+            console.log("[SpoTUI] approved wallpaper hosts:", list.length ? list : "(none)");
+            return;
+        }
+        const shown = String(arg ?? "").slice(0, 80);
+        if (sub === "-deny") {
+            const host = parseHostInput(arg) ?? String(arg ?? "").trim().toLowerCase();
+            if (!host) {
+                pinToast("usage: tui -wp -deny <host>  (see tui -wp -hosts)");
+                return;
+            }
+            const list = getWpHosts();
+            if (!list.includes(host)) {
+                pinToast(`${shown} is not an approved wallpaper host`);
+                return;
+            }
+            if (!saveHosts(list.filter((h) => h !== host))) {
+                pinToast("host not removed: storage full");
+                return;
+            }
+            let live = false;
+            const cur = checkWallpaperUrl(storageGet(WP_URL_KEY));
+            if (cur && cur.host === host) live = true;
+            pinToast(`removed wallpaper host: ${host}${live ? "\nthe current wallpaper stays until you change it" : ""}`);
+            return;
+        }
+        // -allow
+        if (!String(arg ?? "").trim()) {
+            applyPendingWallpaper();
+            return;
+        }
+        const host = parseHostInput(arg);
+        if (!host) {
+            pinToast(`not a valid wallpaper host: ${shown}\nuse a name like cdn.example.com (https only, no IP addresses or local names)`);
+            return;
+        }
+        if (pending && pending.host === host) {
+            applyPendingWallpaper();
+            return;
+        }
+        pinToast(approveHost(host) ? `wallpaper host allowed: ${host}` : "host not saved: storage full");
+    }
+
     // Local theme snapshots: everything a Spotify restart preserves, saved
     // under one name — except personal config and secrets (history, keybinds,
     // actions, pin token) and app/UI state, which are not a look. storage.js has no key enumeration, so this
@@ -5832,8 +6163,9 @@ body.spotui-spotify-enabled, body {
 
     // Personal config and secrets, not a look: never snapshotted, never wiped,
     // and never restored over live values (old snapshots may still carry these
-    // keys, e.g. the Pinterest token).
-    const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY, PIN_TOKEN_KEY]);
+    // keys, e.g. the Pinterest token). The approved wallpaper hosts are the
+    // user's consent, so a snapshot or a theme must never carry or change them.
+    const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY, PIN_TOKEN_KEY, WP_HOSTS_KEY]);
 
     // App or UI state, not a look either: never snapshotted, never wiped, never
     // restored from an old snapshot (wiping launched re-triggers onboarding,
@@ -6104,6 +6436,8 @@ body.spotui-spotify-enabled, body {
             console.error("[SpoTUI] theme apply failed:", e.message);
             return;
         }
+        // The saved look replaced the wallpaper keys: an older feed theme's offer is void.
+        clearPendingWallpaper();
         try {
             refreshLook();
         } catch (e) {
@@ -6192,6 +6526,9 @@ body.spotui-spotify-enabled, body {
         "tui -t pull ",
         "tui -wp ",
         "tui -wp off",
+        "tui -wp -allow",
+        "tui -wp -deny ",
+        "tui -wp -hosts",
         "tui -shade ",
         "tui -shade off",
         "tui -video on",
@@ -6719,7 +7056,7 @@ body.spotui-spotify-enabled, body {
     }
 
     // Feed text -> parsed value, never evaluated. Accepts the plain JSON list and
-    // the legacy `window.spotuiThemes = [...];` wrapper (exact prefix only), so
+    // the legacy `window.<feed global> = [...];` wrapper (exact prefix only), so
     // anything else (extra statements, other assignments) fails to parse.
     function parseThemeFeedText(text) {
         if (typeof text !== "string") throw new Error("Theme feed is not text");
@@ -6762,6 +7099,163 @@ body.spotui-spotify-enabled, body {
         return { signal: controller.signal, clear: () => clearTimeout(timer) };
     }
 
+    // Feed URL shape the frame loader accepts: https, no credentials or fragment,
+    // and exactly the numeric cache-buster as query. The caller builds it from a
+    // hard-coded channel URL; this is the last gate before it reaches srcdoc.
+    // `allowLocalHttp` (tests only, never set by the app) also lets
+    // http://localhost / 127.0.0.1 through.
+    const FRAME_QUERY_REGEX = /^\?_=\d{1,16}$/;
+
+    function frameFeedUrl(url, allowLocalHttp) {
+        let u;
+        try { u = new URL(url); } catch (e) { throw new Error("Theme feed URL invalid"); }
+        const https = u.protocol === "https:";
+        const local = allowLocalHttp === true && u.protocol === "http:"
+            && (u.hostname === "localhost" || u.hostname === "127.0.0.1");
+        if (!(https || local) || u.username || u.password || u.hash || !FRAME_QUERY_REGEX.test(u.search)) {
+            throw new Error("Theme feed URL invalid");
+        }
+        return u;
+    }
+
+    function escapeAttr(text) {
+        return String(text)
+            .replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+            .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // Policy for the frame: nothing loads except inline script and scripts from the
+    // feed's own origin; no connections, forms, <base>, child frames or WebRTC.
+    // `frame-src`/`child-src` 'none' do not stop about:blank/srcdoc children, and
+    // `webrtc 'block'` is not enforced everywhere (Edge 157 ignored it), so two
+    // more layers sit behind them: Trusted Types (the only policy is the bootstrap's
+    // own, for the feed script URL) makes every string-to-HTML/javascript:/srcdoc
+    // sink throw, which is what stops a feed from planting a child frame with its
+    // own script, and the bootstrap below removes the WebRTC entry points.
+    function frameCsp(origin) {
+        return `default-src 'none'; script-src 'unsafe-inline' ${origin}; frame-src 'none'; child-src 'none'; webrtc 'block'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types spotui-feed`;
+    }
+
+    // Runs in the frame BEFORE the feed script is added. Best-effort hardening, not
+    // a guarantee: the browser sandbox + CSP above are what contain the feed, this
+    // closes the ambient channels CSP does not cover in an opaque-origin frame.
+    // It removes the WebRTC constructors (UDP/STUN to any host) and the obvious
+    // routes to a fresh realm that would bring them back: window.open and the
+    // contentWindow/contentDocument getters of iframe/object/frame. The non-
+    // configurable redefinition means the feed cannot put them back in this realm.
+    // Checked in Edge 157: with only the constructors removed, a feed still got a
+    // working RTCPeerConnection through a srcdoc child frame (innerHTML, srcdoc,
+    // setAttribute, createContextualFragment, DOMParser, javascript: src); with
+    // Trusted Types all of those throw. Not closed: one self-navigation (a GET to
+    // the feed's own host), and a feed that finds a realm by a route not tried
+    // could still send STUN packets, which only reveal the public IP the feed host
+    // already sees. fetch, XHR, WebSocket, EventSource and sendBeacon fall under
+    // `default-src 'none'` (connect-src); WebTransport/WebSocketStream are removed
+    // too because MDN does not list them under connect-src. <object>/<embed> use
+    // object-src -> 'none'.
+    const FRAME_HARDEN = "var TP=null;try{TP=window.trustedTypes.createPolicy('spotui-feed',{createScriptURL:function(u){return u}})}catch(e){}"
+        + "var X=function(o,n,d){try{delete o[n]}catch(e){}try{Object.defineProperty(o,n,d)}catch(e){}},"
+        + "U={value:undefined,configurable:false,writable:false},G={get:function(){},configurable:false};"
+        + "[\"RTCPeerConnection\",\"webkitRTCPeerConnection\",\"RTCDataChannel\",\"RTCSessionDescription\",\"RTCIceCandidate\","
+        + "\"WebTransport\",\"WebSocketStream\",\"open\"].forEach(function(n){X(window,n,U)});"
+        + "[\"HTMLIFrameElement\",\"HTMLFrameElement\",\"HTMLObjectElement\"].forEach(function(c){"
+        + "var P=window[c]&&window[c].prototype;if(P)[\"contentWindow\",\"contentDocument\"].forEach(function(n){X(P,n,G)})});";
+
+    // The frame document. The same policy rides in a <meta> too. The bootstrap grabs
+    // `parent.postMessage` and `JSON.stringify` before the feed script runs, then
+    // reports the feed global as a JSON string. Feed URL and nonce travel as
+    // escaped attributes, never as script text.
+    function buildFrameDoc(origin, url, nonce) {
+        return "<!doctype html><html><head><meta charset=\"utf-8\">"
+            + `<meta http-equiv="Content-Security-Policy" content="${escapeAttr(frameCsp(origin))}">`
+            + "<meta name=\"referrer\" content=\"no-referrer\"></head><body>"
+            + `<script data-src="${escapeAttr(url)}" data-k="${escapeAttr(nonce)}">`
+            + "(function(){"
+            + "var post=parent.postMessage.bind(parent),S=JSON.stringify,me=document.currentScript,"
+            + "k=me.dataset.k,s=document.createElement('script');"
+            + FRAME_HARDEN
+            + "s.onload=function(){try{var d=S(window.spotuiThemes);post({k:k,ok:typeof d==='string',d:d},'*')}"
+            + "catch(e){post({k:k,ok:false},'*')}};"
+            + "s.onerror=function(){post({k:k,ok:false},'*')};"
+            + "s.src=TP?TP.createScriptURL(me.dataset.src):me.dataset.src;document.head.appendChild(s)})();"
+            + "</script></body></html>";
+    }
+
+    function randomNonce(getRandomValues) {
+        const bytes = new Uint8Array(16);
+        getRandomValues(bytes);
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    // Load a feed whose host sends no CORS header WITHOUT running its code in the
+    // page: the script runs in a hidden sandboxed frame (`allow-scripts` only, so
+    // an opaque origin: no page DOM, storage, cookies or Spicetify) and only a JSON
+    // string comes back through postMessage. A message counts only from that
+    // frame's window with this load's nonce. The nonce is readable by the feed
+    // script, so a hostile feed can still post any DATA: it is parsed and validated
+    // like every other feed, and nothing else crosses over.
+    // Resolves { themes, dropped, reasons }; always settles (timeout) and always
+    // removes the frame, the listener and the timer.
+    // `deps` (document, window, setTimeout, clearTimeout, getRandomValues,
+    // allowLocalHttp) exist for tests; the app passes none.
+    function loadThemeFeedInFrame(url, deps = {}) {
+        return new Promise((resolve, reject) => {
+            const doc = deps.document || document;
+            const win = deps.window || window;
+            const setTimer = deps.setTimeout || setTimeout;
+            const clearTimer = deps.clearTimeout || clearTimeout;
+            const random = deps.getRandomValues || ((bytes) => crypto.getRandomValues(bytes));
+            let frame = null;
+            let timer = 0;
+            let finished = false;
+            let listening = false;
+            let onMessage = null;
+            const finish = (settle) => {
+                if (finished) return;
+                finished = true;
+                clearTimer(timer);
+                if (listening) win.removeEventListener("message", onMessage);
+                try { if (frame) frame.remove(); } catch (e) { /* already detached */ }
+                settle();
+            };
+            const fail = (message) => finish(() => reject(new Error(message)));
+            try {
+                const feed = frameFeedUrl(url, deps.allowLocalHttp);
+                const nonce = randomNonce(random);
+                onMessage = (event) => {
+                    if (finished) return;
+                    const own = frame && frame.contentWindow;
+                    if (!own || event.source !== own) return;
+                    const data = event.data;
+                    if (!data || typeof data !== "object" || data.k !== nonce) return;
+                    if (data.ok !== true) { fail("Theme feed script failed"); return; }
+                    if (typeof data.d !== "string" || data.d.length > FEED_MAX_BYTES) { fail("Theme feed too large or not text"); return; }
+                    let result;
+                    try { result = validateThemeFeed(JSON.parse(data.d)); } catch (e) { finish(() => reject(e)); return; }
+                    finish(() => resolve(result));
+                };
+                frame = doc.createElement("iframe");
+                // sandbox first and exactly this: no same-origin, navigation,
+                // popups, forms, modals or downloads.
+                frame.setAttribute("sandbox", "allow-scripts");
+                frame.setAttribute("referrerpolicy", "no-referrer");
+                frame.setAttribute("loading", "eager");
+                frame.setAttribute("credentialless", "");
+                frame.setAttribute("aria-hidden", "true");
+                frame.setAttribute("tabindex", "-1");
+                frame.setAttribute("style", "position:fixed;width:0;height:0;border:0;visibility:hidden");
+                frame.setAttribute("csp", frameCsp(feed.origin));
+                frame.setAttribute("srcdoc", buildFrameDoc(feed.origin, feed.href, nonce));
+                win.addEventListener("message", onMessage);
+                listening = true;
+                timer = setTimer(() => fail("Theme feed timed out"), FEED_TIMEOUT_MS);
+                doc.body.appendChild(frame);
+            } catch (e) {
+                finish(() => reject(e));
+            }
+        });
+    }
+
     // Fetch a feed URL as data and validate it: { themes, dropped, reasons }.
     async function fetchThemeFeed(url) {
         const timeout = timeoutSignal(FEED_TIMEOUT_MS);
@@ -6786,56 +7280,36 @@ body.spotui-spotify-enabled, body {
     const channelCache = {};
     const channelInflight = {};
 
-    // Transport for channels whose host sends no CORS header, so the page cannot
-    // fetch them as data (see THEME_SCRIPT_CHANNELS). The script's global is read
-    // once and removed; the caller validates it like any other feed.
-    // A feed that declares `var spotuiThemes` leaves a non-configurable global:
-    // `delete` then throws in strict mode, so fall back to blanking it.
-    function clearFeedGlobal() {
-        try { delete window.spotuiThemes; } catch (e) { /* non-configurable */ }
-        try {
-            if (window.spotuiThemes !== undefined) window.spotuiThemes = undefined;
-        } catch (e) { /* read-only: nothing more to do */ }
-    }
+    // One feed -> validated themes: fetched as data; a fetch the browser blocks
+    // (TypeError: CORS or network) on a frame channel is retried in a sandboxed
+    // frame, never as a script in this page. Any failure surfaces as the same
+    // "Failed to load themes" error.
+    // Per channel, for this session: the time the plain fetch was last blocked
+    // (TypeError). A blocked channel goes straight to the frame instead of
+    // paying a doomed request on every load; a forced refresh may retry the fetch
+    // once per FETCH_RETRY_MS, and a fetch that works forgets the entry.
+    const FETCH_RETRY_MS = 10 * 60 * 1000;
+    const fetchBlockedAt = {};
 
-    // Always settles: load, error or the same timeout the fetch path uses.
-    function loadFeedScript(src) {
-        return new Promise((resolve, reject) => {
-            const script = document.createElement("script");
-            script.src = src;
-            let finished = false;
-            let timer = 0;
-            const done = (fn, read) => {
-                if (finished) return;
-                finished = true;
-                clearTimeout(timer);
-                script.onload = null;
-                script.onerror = null;
-                script.remove();
-                let value;
-                try {
-                    if (read) value = window.spotuiThemes;
-                    clearFeedGlobal();
-                } catch (e) { /* settle anyway */ }
-                fn(value);
-            };
-            script.onload = () => done(resolve, true);
-            script.onerror = () => done(() => reject(new Error(FEED_ERROR)), false);
-            timer = setTimeout(() => done(() => reject(new Error(FEED_ERROR)), false), FEED_TIMEOUT_MS);
-            clearFeedGlobal();
-            document.body.appendChild(script);
-        });
-    }
-
-    // One feed -> validated themes. Any transport/parse failure surfaces as the
-    // same "Failed to load themes" error the old script loader gave.
-    async function fetchChannel(key) {
+    async function fetchChannel(key, force = false) {
         const src = `${THEME_CHANNELS[key]}?_=${Math.floor(Date.now() / 1000)}`;
         let result;
         try {
-            result = THEME_SCRIPT_CHANNELS.has(key)
-                ? validateThemeFeed(await loadFeedScript(src))
-                : await fetchThemeFeed(src);
+            const blockedAt = fetchBlockedAt[key];
+            const skipFetch = blockedAt !== undefined && !(force && Date.now() - blockedAt >= FETCH_RETRY_MS);
+            if (skipFetch) {
+                result = await loadThemeFeedInFrame(src);
+            } else {
+                try {
+                    result = await fetchThemeFeed(src);
+                    delete fetchBlockedAt[key];
+                } catch (err) {
+                    if (!(THEME_FRAME_CHANNELS.has(key) && err instanceof TypeError)) throw err;
+                    fetchBlockedAt[key] = Date.now();
+                    dbg(`[SpoTUI] theme feed (${key}) fetch blocked, trying sandboxed frame:`, err.message);
+                    result = await loadThemeFeedInFrame(src);
+                }
+            }
         } catch (err) {
             dbg(`[SpoTUI] theme feed (${key}) failed:`, err && err.message);
             throw new Error(FEED_ERROR, { cause: err });
@@ -6851,7 +7325,7 @@ body.spotui-spotify-enabled, body {
         const key = THEME_CHANNELS[channel] ? channel : "live";
         if (!force && channelCache[key]) return Promise.resolve(channelCache[key].slice());
         if (!force && channelInflight[key]) return channelInflight[key].then((themes) => themes.slice());
-        const promise = fetchChannel(key).then((themes) => {
+        const promise = fetchChannel(key, force).then((themes) => {
             channelCache[key] = themes;
             return themes;
         });
@@ -6915,6 +7389,7 @@ body.spotui-spotify-enabled, body {
                 }
                 return null;
             }
+            beginThemeApply();
             resetAllSettings();
             if (theme.commands) {
                 const pending = [];
@@ -7223,6 +7698,7 @@ body.spotui-spotify-enabled, body {
 
         grid.addEventListener("click", (e) => {
             if (e.target.tagName === "BUTTON" && e.target.dataset.commands) {
+                beginThemeApply();
                 resetAllSettings();
                 const commands = JSON.parse(e.target.dataset.commands);
                 commands.forEach((cmd) => {
@@ -7455,6 +7931,8 @@ body.spotui-spotify-enabled, body {
         if (input) input.focus();
         document.removeEventListener("keydown", handleGlobalEsc);
         if (wasFirstBoot) initUpdateBanner();
+        // A theme wallpaper skipped during onboarding is offered now, not under the dialog.
+        flushDeferredConsent();
     }
     function openOnboardingPanel() {
         if (app.onboardingPanelOpen) return;
@@ -7570,6 +8048,9 @@ body.spotui-spotify-enabled, body {
                 app.onboardingStage = "done";
                 renderOnboardingPanel();
             });
+            // The theme's wallpaper was skipped (no approved host yet): offer it here.
+            const copy = panel.querySelector(".spotui-onboarding-copy");
+            if (copy) appendOnboardingConsent(copy);
         } else {
             markLaunched();
             panel.innerHTML = `
@@ -7824,6 +8305,11 @@ body.spotui-spotify-enabled, body {
         like: { fn: async () => { const h = await Spicetify.Player.getHeart(); await Spicetify.Player.toggleHeart(); return h; }, name: "Like" }
     };
 
+    // A skipped theme wallpaper the user allowed: runs as the user's own command.
+    function runPendingWallpaper(cmd) {
+        return execute(cmd, { bypassOnboarding: true });
+    }
+
     // All command traffic (typed, keybound, themed, synced) flows through here,
     // so menu round-trips are consumed in one place: if a menu prefill armed a
     // reopen and this command matches it, the menu comes back with fresh data.
@@ -7948,11 +8434,34 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             if (argsLower.includes("-wp")) {
+                // Defence in depth behind isSensitiveCommand: a wallpaper loads
+                // from a host that sees the user's IP and never comes from the
+                // relay, whatever the filter let through.
+                if (opts.fromRemote) {
+                    dbg("[SpoTUI] remote wallpaper command refused:", cleanedCmd.slice(0, 200));
+                    return;
+                }
+                // Only the user's own typed/keybound/action commands (no origin
+                // flag) may change a wallpaper; a theme goes through the gate below.
+                const byUser = !opts.fromTheme;
                 dbg("[SpoTUI-dbg] -wp raw:", JSON.stringify(cleanedCmd), "args:", JSON.stringify(args));
+                // Wallpaper-host consent forms are the user's alone: a theme that
+                // carries one (anywhere in the command) is dropped whole.
+                if (opts.fromTheme && hasHostMgmtToken(argsLower)) {
+                    dbg("[SpoTUI] theme wallpaper-host command skipped:", cleanedCmd);
+                    return;
+                }
+                // Only right after the leading -wp: other subs reach this branch
+                // too (it matches -wp anywhere) and must not approve hosts.
+                if (argsLower[0] === "-wp" && isHostMgmtToken(argsLower[1])) {
+                    handleWpHostCommand(argsLower[1], args[2]);
+                    return;
+                }
                 const urlIdx = argsLower.indexOf("-wp") + 1;
                 const url = args[urlIdx];
                 if ((url || "").toLowerCase() === "off") {
                     dbg("[SpoTUI-dbg] -wp off: removing wallpaper + clearing storage");
+                    if (byUser) clearPendingWallpaper();
                     const wp = document.getElementById("spotui-wallpaper");
                     if (wp) wp.remove();
                     storageRemove(WP_URL_KEY);
@@ -7995,6 +8504,7 @@ body.spotui-spotify-enabled, body {
                         return;
                     }
                     dbg("[SpoTUI-dbg] -wp tweaking current wallpaper.");
+                    if (byUser) clearPendingWallpaper();
                     setWallpaper(curUrl, flag("-o") ?? curOp, true, {
                         fit: flag("-fit") ?? storageGet(WP_FIT_KEY),
                         pos: flag("-pos") ?? storageGet(WP_POS_KEY),
@@ -8008,7 +8518,18 @@ body.spotui-spotify-enabled, body {
                     if (oIdx !== -1 && args[oIdx + 1]) opacity = args[oIdx + 1];
                     if (args.length > urlIdx + 1 && oIdx === -1) console.warn("[SpoTUI-dbg] URL looks space-split (contains spaces?). Got url=" + JSON.stringify(url) + " extra=" + JSON.stringify(args.slice(urlIdx + 1)) + ". Quote handling: commands split on whitespace, so use %20 or dashes.");
                     dbg("[SpoTUI-dbg] -wp parsed:", { url, opacity });
-                    setWallpaper(url, opacity, true, { fit: flag("-fit"), pos: flag("-pos"), rich: flag("-rich") });
+                    let wpUrl = url;
+                    if (opts.fromTheme) {
+                        // Feed theme: only an approved https host, loaded in its
+                        // normalised form; anything else is skipped and offered.
+                        wpUrl = gateThemeWallpaper(url, (href) => [rawCommand, ...args.map((a, i) => (i === urlIdx ? href : a))].join(" "), runPendingWallpaper);
+                        if (wpUrl === null) return;
+                    } else {
+                        // The user chose this wallpaper: an older theme's offer is void.
+                        clearPendingWallpaper();
+                        if (argsLower[0] === "-wp") noteUserWallpaper(url);
+                    }
+                    setWallpaper(wpUrl, opacity, true, { fit: flag("-fit"), pos: flag("-pos"), rich: flag("-rich") });
                 } else {
                     console.warn('[SpoTUI-dbg] -wp got no URL. Usage: tui -wp <url> [-o 0-1] [-fit cover|contain|fill|none] [-pos center|top|"top left"] [-rich 0-200] | tui -wp off. Same-origin example: tui -wp https://xpui.app.spotify.com/videos/shimmer.webm -o 0.5');
                 }
@@ -8335,6 +8856,7 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             if (argsLower[0] === "restore") {
+                clearPendingWallpaper();
                 wipeSpotuiStorage(argsLower[1] === "-full");
                 showRestartPopup("Wait 5 seconds and relaunch Spotify", true);
                 setTimeout(() => location.reload(), 100);
@@ -11678,7 +12200,7 @@ body.spotui-search-panel #spotui-search-panel {
     align-items: center;
     pointer-events: none;
     overflow: hidden;
-    white-space: nowrap;
+    white-space: pre;
     font-family: inherit;
     font-size: 15px;
     color: #777;
@@ -11691,7 +12213,8 @@ body.spotui-search-panel #spotui-search-panel {
     align-items: center;
     pointer-events: none;
     overflow: hidden;
-    white-space: nowrap;
+    /* pre, not nowrap: flex items collapse the space at the join of the two spans */
+    white-space: pre;
     margin: 0;
     padding: 0;
     border: 0;
@@ -12324,7 +12847,7 @@ body.spotui-spotify-enabled.spotui-video-on .Root__right-sidebar {
                     dbg("[SpoTUI-sync] refused remote sensitive command.");
                     return;
                 }
-                execute(cleaned).then(send);
+                execute(cleaned, { fromRemote: true }).then(send);
             }
         };
     }
@@ -12412,6 +12935,9 @@ body.spotui-spotify-enabled.spotui-video-on .Root__right-sidebar {
 
     // Launch first-boot onboarding for new users
     setTimeout(() => { launchFirstBootIfNeeded().catch(() => {}); }, 2000);
+
+    // Existing wallpaper host counts as approved (first run only; never throws).
+    migrateWpHosts();
 
     // Restore saved state: lyrics panel, wallpaper, colors, jam session
     try {

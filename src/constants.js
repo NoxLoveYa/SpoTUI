@@ -6,13 +6,14 @@ export const THEME_CHANNELS = {
     live: `${THEME_HOST}themes.js`,
 };
 
-// Feeds are fetched as data (never executed) unless the host sends no
-// Access-Control-Allow-Origin, which blocks fetch from the Spotify page. Those
-// channels still load as a script, and the result is validated the same way.
+// Feeds are fetched as data. A channel listed here whose fetch is blocked
+// (no Access-Control-Allow-Origin, so the page cannot read it) is retried in a
+// sandboxed frame; feed code never runs in the Spotify page. The result is
+// validated the same way either way.
 // live: spotui.root.sx sends no CORS header (checked with curl); stable on
 // jsDelivr sends `access-control-allow-origin: *`. Drop "live" from this set
-// once the server allows the Spotify origin and the script loader can go.
-export const THEME_SCRIPT_CHANNELS = new Set(["live"]);
+// once the server allows the Spotify origin and the frame loader can go.
+export const THEME_FRAME_CHANNELS = new Set(["live"]);
 
 // LocalStorage keys for user preferences
 export const ANIMATION_KEY = "spotui:ascii-animation";
@@ -22,6 +23,10 @@ export const WP_URL_KEY = "spotui:wp-url";
 export const WP_FIT_KEY = "spotui:wp-fit";
 export const WP_POS_KEY = "spotui:wp-pos";
 export const WP_RICH_KEY = "spotui:wp-rich";
+// Hosts the user approved for wallpapers that come from a feed theme: a
+// JSON array of lowercase hostnames. Personal config, not a look.
+export const WP_HOSTS_KEY = "spotui:wp-hosts";
+export const WP_HOSTS_MAX = 200;
 export const SHADE_KEY = "spotui:shade";
 // Video mode (Spotify Canvas as background): a look key, "1" = on, absent = off.
 export const VIDEO_MODE_KEY = "spotui:video-mode";
@@ -137,6 +142,9 @@ export const THEME_ALLOWED_TUI_SUBS = new Set([
 ]);
 // Poster-wall words a theme may not use: they add remote images or delete the user's pins.
 export const THEME_BLOCKED_POSTER_WORDS = new Set(["add", "clear"]);
+// Wallpaper-host consent forms (tui -wp -allow/-deny/-hosts): user only. A theme
+// must not approve a host or read the list, wherever in its command the word is.
+export const WP_HOST_FLAGS = new Set(["-allow", "-deny", "-hosts"]);
 
 // Pinterest API token: a secret, personal config rather than a look.
 export const PIN_TOKEN_KEY = "spotui:pin-token";
@@ -155,6 +163,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -l -a &lt;on/off&gt;", desc: "Toggle ASCII animation" },
     { cmd: "tui -wp &lt;url&gt; [-o &lt;0-1&gt;] [-fit &lt;cover/contain/fill/none&gt;] [-pos &lt;center/top/bottom/left/right&gt;] [-rich &lt;0-200&gt;]", desc: "Set wallpaper — bare tui -wp shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off)" },
     { cmd: "tui -wp off", desc: "Remove wallpaper" },
+    { cmd: "tui -wp -allow [&lt;host&gt;] | tui -wp -deny &lt;host&gt; | tui -wp -hosts", desc: "Wallpapers from a feed theme load only from hosts you approved, otherwise the theme applies without its wallpaper. -allow approves the host of the wallpaper that was just skipped (or the host you name) and loads it, -deny removes a host, -hosts lists them. A wallpaper you set yourself with tui -wp &lt;url&gt; approves its host" },
     { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare tui -shade shows current" },
     { cmd: "tui -video &lt;on/off/toggle&gt;", desc: "Video mode: while a song plays, its Spotify Canvas (the short looping clip) replaces your background; paused, stopped, ads, podcasts or songs without a Canvas bring your wallpaper/posters back. Off by default, saved with your look; bare tui -video shows what it is doing" },
     { cmd: "tui -debug &lt;on/off&gt;", desc: "Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print)" },
@@ -163,7 +172,7 @@ export const COMMAND_LIST = [
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
     { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
     { cmd: "tui bind clear", desc: "Remove all keybinds" },
-    { cmd: "tui restore [-full]", desc: "Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, saved themes and the onboarding and banner flags; -full removes every SpoTUI setting stored in Spotify). Spotify's own settings and other extensions' data are never touched" },
+    { cmd: "tui restore [-full]", desc: "Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, approved wallpaper hosts, saved themes and the onboarding and banner flags; -full removes every SpoTUI setting stored in Spotify). Spotify's own settings and other extensions' data are never touched" },
     { cmd: "Ctrl+R", desc: "Reverse-search persistent command history (typing filters, Ctrl+R cycles older matches, Enter fills the bar, Esc aborts; unknown commands stay session-only)" },
     { cmd: "Tab", desc: "Accept the ghost fill suggestion in the command bar (repeat to cycle matches); also completes the last word of any known command, e.g. tui -viz -ga + Tab → tui -viz -gap" },
     { cmd: "Esc", desc: "Abort history search, or leave the command bar so Spotify gets its keys back" },

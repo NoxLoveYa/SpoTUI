@@ -153,9 +153,12 @@ function renderSearchAutocomplete() {
         return;
     }
     ghost.hidden = false;
-    ghost.style.left = `${input.offsetLeft}px`;
+    // Start where the input's text starts (its left padding), like the command bar ghost.
+    let padLeft = 0;
+    try { padLeft = parseFloat(getComputedStyle(input).paddingLeft) || 0; } catch (e) {}
+    ghost.style.left = `${input.offsetLeft + padLeft}px`;
     ghost.style.top = `${input.offsetTop}px`;
-    ghost.style.width = `${input.offsetWidth}px`;
+    ghost.style.width = `${Math.max(0, input.offsetWidth - padLeft)}px`;
     ghost.style.height = `${input.offsetHeight}px`;
     ghost.innerHTML = "";
     const typed = document.createElement("span");

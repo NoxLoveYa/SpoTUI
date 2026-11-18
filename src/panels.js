@@ -14,6 +14,7 @@ import { app } from "./state.js";
 import { renderCmdGhost } from "./terminal.js";
 import { dbg, pinToast } from "./utils.js";
 import { createAddThemeCard, createThemeCard, loadThemeChannel } from "./themes.js";
+import { beginThemeApply } from "./wpconsent.js";
 
 const PANE_TARGETS = {
     helpPanelOpen: "help",
@@ -265,6 +266,7 @@ export async function openThemePanel() {
 
     grid.addEventListener("click", (e) => {
         if (e.target.tagName === "BUTTON" && e.target.dataset.commands) {
+            beginThemeApply();
             resetAllSettings();
             const commands = JSON.parse(e.target.dataset.commands);
             commands.forEach((cmd) => {

@@ -1,6 +1,6 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, toggleLogo } from "./appearance.js";
 import { resetGrid } from "./ascii.js";
-import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, DEBUG_KEY, HISTORY_KEY, JAM_STATE_KEY, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_STORAGE_KEY, PIN_TOKEN_KEY, SHADE_KEY, UPDATE_BANNER_KEY, VIDEO_MODE_KEY, VISUALIZER_STORAGE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, DEBUG_KEY, HISTORY_KEY, JAM_STATE_KEY, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_STORAGE_KEY, PIN_TOKEN_KEY, SHADE_KEY, UPDATE_BANNER_KEY, VIDEO_MODE_KEY, VISUALIZER_STORAGE_KEY, WP_FIT_KEY, WP_HOSTS_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { POSTERS_IMGS, POSTERS_LAYOUT, renderPosters, renderSavedLayout, startRotateTimer } from "./posters.js";
 import { applyShade, isValidShade } from "./shade.js";
 import { app } from "./state.js";
@@ -9,6 +9,7 @@ import { dbg, pinToast } from "./utils.js";
 import { refreshVideoMode } from "./videomode.js";
 import { refreshVisualizer } from "./visualizer.js";
 import { setWallpaper } from "./wallpaper.js";
+import { clearPendingWallpaper } from "./wpconsent.js";
 
 // Local theme snapshots: everything a Spotify restart preserves, saved
 // under one name — except personal config and secrets (history, keybinds,
@@ -27,8 +28,9 @@ let savesCache = null;
 
 // Personal config and secrets, not a look: never snapshotted, never wiped,
 // and never restored over live values (old snapshots may still carry these
-// keys, e.g. the Pinterest token).
-const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY, PIN_TOKEN_KEY]);
+// keys, e.g. the Pinterest token). The approved wallpaper hosts are the
+// user's consent, so a snapshot or a theme must never carry or change them.
+const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY, PIN_TOKEN_KEY, WP_HOSTS_KEY]);
 
 // App or UI state, not a look either: never snapshotted, never wiped, never
 // restored from an old snapshot (wiping launched re-triggers onboarding,
@@ -299,6 +301,8 @@ export function applyTheme(name) {
         console.error("[SpoTUI] theme apply failed:", e.message);
         return;
     }
+    // The saved look replaced the wallpaper keys: an older feed theme's offer is void.
+    clearPendingWallpaper();
     try {
         refreshLook();
     } catch (e) {

@@ -22,6 +22,7 @@ import { reportShade, setShade } from "./shade.js";
 import { reportVideoMode, setVideoMode } from "./videomode.js";
 import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, getBoardCounts, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 import { dbg, pinToast, playFresh } from "./utils.js";
+import { clearPendingWallpaper, gateThemeWallpaper, handleWpHostCommand, hasHostMgmtToken, isHostMgmtToken, noteUserWallpaper } from "./wpconsent.js";
 
 const playerMap = {
     play: { fn: () => { if (!Spicetify.Player.isPlaying()) Spicetify.Player.togglePlay(); }, name: "Play" },
@@ -32,6 +33,11 @@ const playerMap = {
     shuffle: { fn: () => { const s = Spicetify.Player.getShuffle(); Spicetify.Player.setShuffle(!s); return s; }, name: "Shuffle" },
     like: { fn: async () => { const h = await Spicetify.Player.getHeart(); await Spicetify.Player.toggleHeart(); return h; }, name: "Like" }
 };
+
+// A skipped theme wallpaper the user allowed: runs as the user's own command.
+function runPendingWallpaper(cmd) {
+    return execute(cmd, { bypassOnboarding: true });
+}
 
 // All command traffic (typed, keybound, themed, synced) flows through here,
 // so menu round-trips are consumed in one place: if a menu prefill armed a
@@ -157,11 +163,34 @@ async function executeInner(cmd, opts = {}) {
             return;
         }
         if (argsLower.includes("-wp")) {
+            // Defence in depth behind isSensitiveCommand: a wallpaper loads
+            // from a host that sees the user's IP and never comes from the
+            // relay, whatever the filter let through.
+            if (opts.fromRemote) {
+                dbg("[SpoTUI] remote wallpaper command refused:", cleanedCmd.slice(0, 200));
+                return;
+            }
+            // Only the user's own typed/keybound/action commands (no origin
+            // flag) may change a wallpaper; a theme goes through the gate below.
+            const byUser = !opts.fromTheme;
             dbg("[SpoTUI-dbg] -wp raw:", JSON.stringify(cleanedCmd), "args:", JSON.stringify(args));
+            // Wallpaper-host consent forms are the user's alone: a theme that
+            // carries one (anywhere in the command) is dropped whole.
+            if (opts.fromTheme && hasHostMgmtToken(argsLower)) {
+                dbg("[SpoTUI] theme wallpaper-host command skipped:", cleanedCmd);
+                return;
+            }
+            // Only right after the leading -wp: other subs reach this branch
+            // too (it matches -wp anywhere) and must not approve hosts.
+            if (argsLower[0] === "-wp" && isHostMgmtToken(argsLower[1])) {
+                handleWpHostCommand(argsLower[1], args[2]);
+                return;
+            }
             const urlIdx = argsLower.indexOf("-wp") + 1;
             const url = args[urlIdx];
             if ((url || "").toLowerCase() === "off") {
                 dbg("[SpoTUI-dbg] -wp off: removing wallpaper + clearing storage");
+                if (byUser) clearPendingWallpaper();
                 const wp = document.getElementById("spotui-wallpaper");
                 if (wp) wp.remove();
                 storageRemove(WP_URL_KEY);
@@ -204,6 +233,7 @@ async function executeInner(cmd, opts = {}) {
                     return;
                 }
                 dbg("[SpoTUI-dbg] -wp tweaking current wallpaper.");
+                if (byUser) clearPendingWallpaper();
                 setWallpaper(curUrl, flag("-o") ?? curOp, true, {
                     fit: flag("-fit") ?? storageGet(WP_FIT_KEY),
                     pos: flag("-pos") ?? storageGet(WP_POS_KEY),
@@ -217,7 +247,18 @@ async function executeInner(cmd, opts = {}) {
                 if (oIdx !== -1 && args[oIdx + 1]) opacity = args[oIdx + 1];
                 if (args.length > urlIdx + 1 && oIdx === -1) console.warn("[SpoTUI-dbg] URL looks space-split (contains spaces?). Got url=" + JSON.stringify(url) + " extra=" + JSON.stringify(args.slice(urlIdx + 1)) + ". Quote handling: commands split on whitespace, so use %20 or dashes.");
                 dbg("[SpoTUI-dbg] -wp parsed:", { url, opacity });
-                setWallpaper(url, opacity, true, { fit: flag("-fit"), pos: flag("-pos"), rich: flag("-rich") });
+                let wpUrl = url;
+                if (opts.fromTheme) {
+                    // Feed theme: only an approved https host, loaded in its
+                    // normalised form; anything else is skipped and offered.
+                    wpUrl = gateThemeWallpaper(url, (href) => [rawCommand, ...args.map((a, i) => (i === urlIdx ? href : a))].join(" "), runPendingWallpaper);
+                    if (wpUrl === null) return;
+                } else {
+                    // The user chose this wallpaper: an older theme's offer is void.
+                    clearPendingWallpaper();
+                    if (argsLower[0] === "-wp") noteUserWallpaper(url);
+                }
+                setWallpaper(wpUrl, opacity, true, { fit: flag("-fit"), pos: flag("-pos"), rich: flag("-rich") });
             } else {
                 console.warn('[SpoTUI-dbg] -wp got no URL. Usage: tui -wp <url> [-o 0-1] [-fit cover|contain|fill|none] [-pos center|top|"top left"] [-rich 0-200] | tui -wp off. Same-origin example: tui -wp https://xpui.app.spotify.com/videos/shimmer.webm -o 0.5');
             }
@@ -544,6 +585,7 @@ async function executeInner(cmd, opts = {}) {
             return;
         }
         if (argsLower[0] === "restore") {
+            clearPendingWallpaper();
             wipeSpotuiStorage(argsLower[1] === "-full");
             showRestartPopup("Wait 5 seconds and relaunch Spotify", true);
             setTimeout(() => location.reload(), 100);

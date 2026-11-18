@@ -1,64 +1,45 @@
 import { resetAllSettings } from "./appearance.js";
 import { execute } from "./commands.js";
-import { FIRST_BOOT_THEME_IDS, THEME_CHANNELS, THEME_HOST, THEME_SCRIPT_CHANNELS } from "./constants.js";
+import { FIRST_BOOT_THEME_IDS, THEME_CHANNELS, THEME_FRAME_CHANNELS, THEME_HOST } from "./constants.js";
 import { isRestrictedThemeCommand } from "./keybinds.js";
-import { FEED_TIMEOUT_MS, fetchThemeFeed, safeHttpsUrl, validateThemeFeed } from "./themefeed.js";
+import { fetchThemeFeed, loadThemeFeedInFrame, safeHttpsUrl } from "./themefeed.js";
 import { dbg, pinToast } from "./utils.js";
+import { beginThemeApply } from "./wpconsent.js";
 
 const FEED_ERROR = "Failed to load themes";
 const channelCache = {};
 const channelInflight = {};
 
-// Transport for channels whose host sends no CORS header, so the page cannot
-// fetch them as data (see THEME_SCRIPT_CHANNELS). The script's global is read
-// once and removed; the caller validates it like any other feed.
-// A feed that declares `var spotuiThemes` leaves a non-configurable global:
-// `delete` then throws in strict mode, so fall back to blanking it.
-function clearFeedGlobal() {
-    try { delete window.spotuiThemes; } catch (e) { /* non-configurable */ }
-    try {
-        if (window.spotuiThemes !== undefined) window.spotuiThemes = undefined;
-    } catch (e) { /* read-only: nothing more to do */ }
-}
+// One feed -> validated themes: fetched as data; a fetch the browser blocks
+// (TypeError: CORS or network) on a frame channel is retried in a sandboxed
+// frame, never as a script in this page. Any failure surfaces as the same
+// "Failed to load themes" error.
+// Per channel, for this session: the time the plain fetch was last blocked
+// (TypeError). A blocked channel goes straight to the frame instead of
+// paying a doomed request on every load; a forced refresh may retry the fetch
+// once per FETCH_RETRY_MS, and a fetch that works forgets the entry.
+const FETCH_RETRY_MS = 10 * 60 * 1000;
+const fetchBlockedAt = {};
 
-// Always settles: load, error or the same timeout the fetch path uses.
-function loadFeedScript(src) {
-    return new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        script.src = src;
-        let finished = false;
-        let timer = 0;
-        const done = (fn, read) => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timer);
-            script.onload = null;
-            script.onerror = null;
-            script.remove();
-            let value;
-            try {
-                if (read) value = window.spotuiThemes;
-                clearFeedGlobal();
-            } catch (e) { /* settle anyway */ }
-            fn(value);
-        };
-        script.onload = () => done(resolve, true);
-        script.onerror = () => done(() => reject(new Error(FEED_ERROR)), false);
-        timer = setTimeout(() => done(() => reject(new Error(FEED_ERROR)), false), FEED_TIMEOUT_MS);
-        clearFeedGlobal();
-        document.body.appendChild(script);
-    });
-}
-
-// One feed -> validated themes. Any transport/parse failure surfaces as the
-// same "Failed to load themes" error the old script loader gave.
-async function fetchChannel(key) {
+async function fetchChannel(key, force = false) {
     const src = `${THEME_CHANNELS[key]}?_=${Math.floor(Date.now() / 1000)}`;
     let result;
     try {
-        result = THEME_SCRIPT_CHANNELS.has(key)
-            ? validateThemeFeed(await loadFeedScript(src))
-            : await fetchThemeFeed(src);
+        const blockedAt = fetchBlockedAt[key];
+        const skipFetch = blockedAt !== undefined && !(force && Date.now() - blockedAt >= FETCH_RETRY_MS);
+        if (skipFetch) {
+            result = await loadThemeFeedInFrame(src);
+        } else {
+            try {
+                result = await fetchThemeFeed(src);
+                delete fetchBlockedAt[key];
+            } catch (err) {
+                if (!(THEME_FRAME_CHANNELS.has(key) && err instanceof TypeError)) throw err;
+                fetchBlockedAt[key] = Date.now();
+                dbg(`[SpoTUI] theme feed (${key}) fetch blocked, trying sandboxed frame:`, err.message);
+                result = await loadThemeFeedInFrame(src);
+            }
+        }
     } catch (err) {
         dbg(`[SpoTUI] theme feed (${key}) failed:`, err && err.message);
         throw new Error(FEED_ERROR, { cause: err });
@@ -74,7 +55,7 @@ export function loadThemeChannel(channel, force = false) {
     const key = THEME_CHANNELS[channel] ? channel : "live";
     if (!force && channelCache[key]) return Promise.resolve(channelCache[key].slice());
     if (!force && channelInflight[key]) return channelInflight[key].then((themes) => themes.slice());
-    const promise = fetchChannel(key).then((themes) => {
+    const promise = fetchChannel(key, force).then((themes) => {
         channelCache[key] = themes;
         return themes;
     });
@@ -138,6 +119,7 @@ export function applyThemeByName(themeName, opts = {}) {
             }
             return null;
         }
+        beginThemeApply();
         resetAllSettings();
         if (theme.commands) {
             const pending = [];

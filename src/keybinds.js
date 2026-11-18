@@ -1,5 +1,5 @@
 import { execute } from "./commands.js";
-import { BIND_CMD_REGEX, F_KEY_REGEX, KEYBIND_STORAGE_KEY, THEME_ALLOWED_COMMANDS, THEME_ALLOWED_TUI_SUBS, THEME_BLOCKED_POSTER_WORDS } from "./constants.js";
+import { BIND_CMD_REGEX, F_KEY_REGEX, KEYBIND_STORAGE_KEY, THEME_ALLOWED_COMMANDS, THEME_ALLOWED_TUI_SUBS, THEME_BLOCKED_POSTER_WORDS, WP_HOST_FLAGS } from "./constants.js";
 import { app, isInputBlockingPanelOpen } from "./state.js";
 import { readJsonObject, storageSet } from "./storage.js";
 
@@ -47,6 +47,8 @@ export function isRestrictedThemeCommand(cmd) {
     const [command, sub, ...rest] = stripCommandPrefix(cmd).toLowerCase().split(/\s+/);
     if (command === "tui") {
         if (!THEME_ALLOWED_TUI_SUBS.has(sub)) return true;
+        // Approving wallpaper hosts is the user's call, never a theme's.
+        if (rest.some((word) => WP_HOST_FLAGS.has(word))) return true;
         // The wall's look is fine; adding remote images or clearing the
         // user's pins is not.
         if ((sub === "-posters" || sub === "-poster") && rest.some((word) => THEME_BLOCKED_POSTER_WORDS.has(word))) return true;
@@ -58,10 +60,17 @@ export function isRestrictedThemeCommand(cmd) {
 // Too powerful for remote/store-and-fire paths: meta commands, secrets,
 // destructive theme ops, and tracking/defacement URLs. Local bar authoring
 // stays unrestricted — this gates the relay ingress (sync.js) only.
-const SENSITIVE_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b|tui\s+-(?:pin-token|pin-board|pin-feed|pin-refresh)\b|tui\s+-t\b|tui\s+-wp\b|tui\s+-posters\s+(?:add|clear)\b)/i;
+// It must match what executeInner dispatches: those subs act in FIRST position
+// only, except `-wp`, which executeInner reaches from ANY position (it tests
+// the whole argument list), so `-wp` is matched as a whole token anywhere
+// after `tui`. `-poster` is an alias of `-posters` there.
+const SENSITIVE_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b|tui\s+-(?:pin-token|pin-board|pin-feed|pin-refresh)\b|tui\s+-t\b|tui\s+-posters?\s+(?:add|clear)\b|tui\s(?:[\s\S]*\s)?-wp(?!\S))/;
 
+// Lowercased first: executeInner lowercases with toLowerCase(), which maps
+// characters (e.g. KELVIN SIGN for "k") that a /i regex without the u flag does
+// not fold, so a "-pin-token" spelled with one must not slip past.
 export function isSensitiveCommand(cmd) {
-    return SENSITIVE_CMD_REGEX.test(stripCommandPrefix(cmd).trim());
+    return SENSITIVE_CMD_REGEX.test(stripCommandPrefix(cmd).trim().toLowerCase());
 }
 
 // Normalize keyboard shortcuts to canonical format

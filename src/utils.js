@@ -81,10 +81,12 @@ export function setStatusTag(id, lines) {
     } catch (e) {}
 }
 
+// Border follows --spotui-accent (what -shade re-points) with the panel
+// border as fallback. The toast lives on document.body, outside the
+// TUI container, so the var reads as the exact target color.
+export const PIN_TOAST_CSS = "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(10,14,18,.45);background:color-mix(in srgb, var(--panel-bg-color,#0a0e12) 45%, transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--spotui-accent,var(--panel-border-color,var(--essential-base,#7fd4d4)));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;";
+
 // Small non-blocking toast (console.log alone is invisible without DevTools).
 export function pinToast(text, ms = 7000) {
-    // Border follows --spotui-accent (what -shade re-points) with the panel
-    // border as fallback. The toast lives on document.body, outside the
-    // TUI container, so the var reads as the exact target color.
-    toastBase("spotui-pin-toast", text, ms, "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(10,14,18,.45);background:color-mix(in srgb, var(--panel-bg-color,#0a0e12) 45%, transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--panel-text-color,var(--text-base,#e8e2d4));border:1px solid var(--spotui-accent,var(--panel-border-color,var(--essential-base,#7fd4d4)));padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:70vw;white-space:pre-wrap;text-align:center;pointer-events:none;");
+    toastBase("spotui-pin-toast", text, ms, PIN_TOAST_CSS);
 }

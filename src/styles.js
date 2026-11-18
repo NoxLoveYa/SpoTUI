@@ -1300,7 +1300,7 @@ body.spotui-search-panel #spotui-search-panel {
     align-items: center;
     pointer-events: none;
     overflow: hidden;
-    white-space: nowrap;
+    white-space: pre;
     font-family: inherit;
     font-size: 15px;
     color: #777;
@@ -1313,7 +1313,8 @@ body.spotui-search-panel #spotui-search-panel {
     align-items: center;
     pointer-events: none;
     overflow: hidden;
-    white-space: nowrap;
+    /* pre, not nowrap: flex items collapse the space at the join of the two spans */
+    white-space: pre;
     margin: 0;
     padding: 0;
     border: 0;

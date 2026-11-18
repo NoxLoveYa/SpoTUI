@@ -17,6 +17,7 @@ import { initVideoMode } from "./videomode.js";
 import { restoreVisualizer } from "./visualizer.js";
 import { setWallpaper } from "./wallpaper.js";
 import { dbg } from "./utils.js";
+import { migrateWpHosts } from "./wpconsent.js";
 
 // Inject styles, set up event listeners, and restore saved state
 initClassMap();
@@ -60,6 +61,9 @@ try {
 
 // Launch first-boot onboarding for new users
 setTimeout(() => { launchFirstBootIfNeeded().catch(() => {}); }, 2000);
+
+// Existing wallpaper host counts as approved (first run only; never throws).
+migrateWpHosts();
 
 // Restore saved state: lyrics panel, wallpaper, colors, jam session
 try {
