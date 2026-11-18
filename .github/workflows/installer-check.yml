@@ -77,16 +77,23 @@ jobs:
           sandbox="$RUNNER_TEMP/sandbox"
           rm -rf "$sandbox"
           mkdir -p "$sandbox"
+          # The same values go to GITHUB_ENV (for the later steps) and into this shell: a line
+          # written to GITHUB_ENV only takes effect in the steps after this one.
+          XDG_DATA_HOME="$sandbox/data"
+          XDG_CONFIG_HOME="$sandbox/config"
+          XDG_STATE_HOME="$sandbox/state"
+          BIN="$sandbox/data/sposync/sposync"
+          DESKTOP="$sandbox/config/autostart/sposync.desktop"
+          LOG="$sandbox/state/sposync/sposync.log"
           {
-            echo "XDG_DATA_HOME=$sandbox/data"
-            echo "XDG_CONFIG_HOME=$sandbox/config"
-            echo "XDG_STATE_HOME=$sandbox/state"
-            echo "BIN=$sandbox/data/sposync/sposync"
-            echo "DESKTOP=$sandbox/config/autostart/sposync.desktop"
-            echo "LOG=$sandbox/state/sposync/sposync.log"
+            echo "XDG_DATA_HOME=$XDG_DATA_HOME"
+            echo "XDG_CONFIG_HOME=$XDG_CONFIG_HOME"
+            echo "XDG_STATE_HOME=$XDG_STATE_HOME"
+            echo "BIN=$BIN"
+            echo "DESKTOP=$DESKTOP"
+            echo "LOG=$LOG"
           } >> "$GITHUB_ENV"
-          export XDG_DATA_HOME="$sandbox/data" XDG_CONFIG_HOME="$sandbox/config" XDG_STATE_HOME="$sandbox/state"
-          bin="$XDG_DATA_HOME/sposync/sposync"
+          export XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME
 
           for t in ss pgrep pkill setsid curl sha256sum install; do
             command -v "$t" > /dev/null || fail "the runner has no $t"
@@ -110,19 +117,20 @@ jobs:
           grep -aqF "SHA256: ${HASH,,}" "$out" || fail "installer did not print the pinned SHA256"
           grep -aq 'SpoSync: installed and running' "$out" || fail "installer summary is not 'installed and running'"
 
-          [ -f "$bin" ] || fail "binary missing: $bin"
-          [ "$(sha256sum "$bin" | cut -d ' ' -f 1)" = "${HASH,,}" ] || fail "the installed binary is not the pinned file"
-          [ "$("$bin" --version)" = "${TAG#sposync-v}" ] || fail "the installed binary does not print version ${TAG#sposync-v}"
+          [ -f "$BIN" ] || fail "binary missing: $BIN"
+          [ "$(sha256sum "$BIN" | cut -d ' ' -f 1)" = "${HASH,,}" ] || fail "the installed binary is not the pinned file"
+          [ "$("$BIN" --version)" = "${TAG#sposync-v}" ] || fail "the installed binary does not print version ${TAG#sposync-v}"
           [ -f "$DESKTOP" ] || fail "autostart entry missing: $DESKTOP"
 
           # The process that listens on 8765 must be the installed binary.
-          pids="$(pgrep -u "$(id -u)" -f -- "^${bin}( |\$)" | sort -n || true)"
-          [ -n "$pids" ] || fail "no process runs $bin"
-          lp="$(ss -Hltnp 'sport = :8765' | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -un || true)"
+          # (Same forms as build-sposync.yml smoke-install: grep without -q, so no SIGPIPE under pipefail.)
+          pids="$(pgrep -u "$(id -u)" -f -- "^${BIN}( |\$)" | sort -n || true)"
+          [ -n "$pids" ] || fail "no process runs $BIN"
+          lp="$(ss -Hltnp 'sport = :8765' 2> /dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -un || true)"
           [ -n "$lp" ] || fail "nothing listens on 8765"
           owned=0
           for p in $lp; do
-            if printf '%s\n' "$pids" | grep -qx -- "$p"; then owned=1; fi
+            if printf '%s\n' "$pids" | grep -x -- "$p" > /dev/null; then owned=1; fi
           done
           [ "$owned" -eq 1 ] || fail "the listener on 8765 ($lp) is not the installed binary ($pids)"
           grep -q 'listening on' "$LOG" || fail "no 'listening on' line in $LOG"
