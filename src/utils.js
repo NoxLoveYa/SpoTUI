@@ -43,7 +43,8 @@ export function dbg(tag, ...args) {
 
 // Shared toast skeleton: fixed bottom-center single instance, auto-remove
 // after ms (null = sticky). Callers pass their exact visuals as cssText so
-// unifying here changes no pixels.
+// unifying here changes no pixels. Returns the toast element, or null if it
+// could not be built.
 export function toastBase(id, text, ms, cssText) {
     try {
         const old = document.getElementById(id);
@@ -54,7 +55,10 @@ export function toastBase(id, text, ms, cssText) {
         t.style.cssText = cssText;
         document.body.appendChild(t);
         if (ms !== null && ms !== undefined) setTimeout(() => t.remove(), ms);
-    } catch (e) {}
+        return t;
+    } catch (e) {
+        return null;
+    }
 }
 
 // Status tag cluster (jam/dj tags): one .spotui-jam-tag div per line,

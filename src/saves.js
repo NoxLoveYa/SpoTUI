@@ -43,12 +43,30 @@ function isLookKey(k) {
         && !PERSONAL_KEYS.has(k) && !NEVER_WIPE_KEYS.has(k);
 }
 
+// Old snapshots may still hold keys that are not a look (e.g. the Pinterest
+// token). They are never restored, but would stay duplicated in storage:
+// drop them in place. Returns true when something was removed.
+function stripNonLookKeys(saves) {
+    let changed = false;
+    for (const snap of Object.values(saves)) {
+        if (!snap || typeof snap.settings !== "object" || !snap.settings) continue;
+        for (const k of Object.keys(snap.settings)) {
+            if (!isLookKey(k)) {
+                delete snap.settings[k];
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
 function readSaves() {
     if (savesCache) return savesCache;
     try {
         const raw = storageGet(SAVES_KEY);
         const obj = raw ? JSON.parse(raw) : {};
         savesCache = obj && typeof obj === "object" ? obj : {};
+        if (stripNonLookKeys(savesCache)) storageSet(SAVES_KEY, JSON.stringify(savesCache));
     } catch (e) {
         savesCache = {};
         backupCorruptSaves();
@@ -165,8 +183,12 @@ export function saveTheme(name) {
         console.warn("[SpoTUI] usage: tui -t save <name>  (quote multi-word names, e.g. tui -t save cozy or tui -t save \"my theme\")");
         return;
     }
+    if (n === "__proto__") {
+        console.warn("[SpoTUI] \"__proto__\" is a reserved name, pick another theme name.");
+        return;
+    }
     const saves = readSaves();
-    const existed = !!saves[n];
+    const existed = Object.hasOwn(saves, n);
     const settings = snapshotSettings();
     saves[n] = { savedAt: Date.now(), settings };
     // Evict oldest snapshots past the cap (never the one just saved).
@@ -213,7 +235,7 @@ export function deleteTheme(name) {
         return;
     }
     const saves = readSaves();
-    if (!saves[n]) {
+    if (!Object.hasOwn(saves, n)) {
         console.warn(`[SpoTUI] no saved theme "${n}". See: tui -t list`);
         return;
     }
@@ -230,7 +252,8 @@ export function applyTheme(name) {
         console.warn("[SpoTUI] usage: tui -t apply <name>  (see tui -t list)");
         return;
     }
-    const snap = readSaves()[n];
+    const saves = readSaves();
+    const snap = Object.hasOwn(saves, n) ? saves[n] : null;
     if (!snap || typeof snap.settings !== "object") {
         console.warn(`[SpoTUI] no saved theme "${n}". See: tui -t list`);
         return;

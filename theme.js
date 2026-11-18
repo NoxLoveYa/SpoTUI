@@ -124,7 +124,7 @@
     // first-position branches of executeInner in commands.js.
     const THEME_ALLOWED_COMMANDS = new Set(["lyrics", "visualizer"]);
     const THEME_ALLOWED_TUI_SUBS = new Set([
-        "-l", "-wp", "-shade", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
+        "-l", "-a", "-wp", "-shade", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
     ]);
     // Poster-wall words a theme may not use: they add remote images or delete the user's pins.
     const THEME_BLOCKED_POSTER_WORDS = new Set(["add", "clear"]);
@@ -324,7 +324,8 @@
 
     // Shared toast skeleton: fixed bottom-center single instance, auto-remove
     // after ms (null = sticky). Callers pass their exact visuals as cssText so
-    // unifying here changes no pixels.
+    // unifying here changes no pixels. Returns the toast element, or null if it
+    // could not be built.
     function toastBase(id, text, ms, cssText) {
         try {
             const old = document.getElementById(id);
@@ -335,7 +336,10 @@
             t.style.cssText = cssText;
             document.body.appendChild(t);
             if (ms !== null && ms !== undefined) setTimeout(() => t.remove(), ms);
-        } catch (e) {}
+            return t;
+        } catch (e) {
+            return null;
+        }
     }
 
     // Status tag cluster (jam/dj tags): one .spotui-jam-tag div per line,
@@ -1905,7 +1909,7 @@ body.spotui-spotify-enabled, body {
     // persistSession - to survive the reload after all settings get reset.
     // Sticky (no auto-remove): it must survive until the reload happens.
     function showRestartPopup(message = "Wait 5 seconds and relaunch Spotify", persistSession = false) {
-        toastBase("spotui-restart-popup", message, null, "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(0,0,0,0.92);border:1px solid var(--spotui-accent,#ff8c42);border-radius:6px;padding:12px 16px;color:var(--spotui-accent,#ff8c42);font-family:\"JetBrains Mono\",monospace;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,0.35);");
+        const popup = toastBase("spotui-restart-popup", message, null, "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(0,0,0,0.92);border:1px solid var(--spotui-accent,#ff8c42);border-radius:6px;padding:12px 16px;color:var(--spotui-accent,#ff8c42);font-family:\"JetBrains Mono\",monospace;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,0.35);");
         if (persistSession) {
             try { sessionStorage.setItem("spotui:restart-popup", message); } catch (e) {}
         }
@@ -2324,6 +2328,7 @@ body.spotui-spotify-enabled, body {
             if (!app.sposyncConnected) {
                 if (silent) return;
                 const popup = showRestartPopup("");
+                if (!popup) return;
                 const accent = getSpotuiAccentColor();
                 popup.style.border = `1px solid ${accent}`;
                 popup.style.color = accent;
@@ -3606,12 +3611,30 @@ body.spotui-spotify-enabled, body {
             && !PERSONAL_KEYS.has(k) && !NEVER_WIPE_KEYS.has(k);
     }
 
+    // Old snapshots may still hold keys that are not a look (e.g. the Pinterest
+    // token). They are never restored, but would stay duplicated in storage:
+    // drop them in place. Returns true when something was removed.
+    function stripNonLookKeys(saves) {
+        let changed = false;
+        for (const snap of Object.values(saves)) {
+            if (!snap || typeof snap.settings !== "object" || !snap.settings) continue;
+            for (const k of Object.keys(snap.settings)) {
+                if (!isLookKey(k)) {
+                    delete snap.settings[k];
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+
     function readSaves() {
         if (savesCache) return savesCache;
         try {
             const raw = storageGet(SAVES_KEY);
             const obj = raw ? JSON.parse(raw) : {};
             savesCache = obj && typeof obj === "object" ? obj : {};
+            if (stripNonLookKeys(savesCache)) storageSet(SAVES_KEY, JSON.stringify(savesCache));
         } catch (e) {
             savesCache = {};
             backupCorruptSaves();
@@ -3728,8 +3751,12 @@ body.spotui-spotify-enabled, body {
             console.warn("[SpoTUI] usage: tui -t save <name>  (quote multi-word names, e.g. tui -t save cozy or tui -t save \"my theme\")");
             return;
         }
+        if (n === "__proto__") {
+            console.warn("[SpoTUI] \"__proto__\" is a reserved name, pick another theme name.");
+            return;
+        }
         const saves = readSaves();
-        const existed = !!saves[n];
+        const existed = Object.hasOwn(saves, n);
         const settings = snapshotSettings();
         saves[n] = { savedAt: Date.now(), settings };
         // Evict oldest snapshots past the cap (never the one just saved).
@@ -3776,7 +3803,7 @@ body.spotui-spotify-enabled, body {
             return;
         }
         const saves = readSaves();
-        if (!saves[n]) {
+        if (!Object.hasOwn(saves, n)) {
             console.warn(`[SpoTUI] no saved theme "${n}". See: tui -t list`);
             return;
         }
@@ -3793,7 +3820,8 @@ body.spotui-spotify-enabled, body {
             console.warn("[SpoTUI] usage: tui -t apply <name>  (see tui -t list)");
             return;
         }
-        const snap = readSaves()[n];
+        const saves = readSaves();
+        const snap = Object.hasOwn(saves, n) ? saves[n] : null;
         if (!snap || typeof snap.settings !== "object") {
             console.warn(`[SpoTUI] no saved theme "${n}". See: tui -t list`);
             return;
@@ -4463,7 +4491,7 @@ body.spotui-spotify-enabled, body {
     function applyThemeByName(themeName, opts = {}) {
         const skipNonTui = Boolean(opts.skipNonTui);
         const apply = async (themes) => {
-            const theme = (themes || []).find((t) => t.name === themeName);
+            const theme = (themes || []).find((t) => (opts.id && t.id === opts.id) || t.name === themeName);
             if (!theme) {
                 if (opts.channel) {
                     pinToast(`theme not found on ${opts.channel}${opts.channel === "live" ? "" : " (try -live)"}`);
@@ -4512,6 +4540,19 @@ body.spotui-spotify-enabled, body {
             return btoa(unescape(encodeURIComponent(String(name || ""))));
         } catch (e) {
             return "";
+        }
+    }
+
+    // Exact inverse of encodeThemeName: UTF-8 base64 -> name. Also takes
+    // unpadded and URL-safe base64. Returns null for an invalid id.
+    function decodeThemeId(id) {
+        try {
+            let b64 = String(id || "").replace(/-/g, "+").replace(/_/g, "/");
+            while (b64.length % 4) b64 += "=";
+            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+            return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch (e) {
+            return null;
         }
     }
 
@@ -4780,7 +4821,9 @@ body.spotui-spotify-enabled, body {
             if (e.target.tagName === "BUTTON" && e.target.dataset.commands) {
                 resetAllSettings();
                 const commands = JSON.parse(e.target.dataset.commands);
-                commands.forEach((cmd) => { if (!isRestrictedThemeCommand(cmd)) execute(cmd, { fromTheme: true }); });
+                commands.forEach((cmd) => {
+                    if (!isRestrictedThemeCommand(cmd)) execute(cmd, { fromTheme: true }).catch((err) => dbg("[SpoTUI] theme command failed:", cmd, err));
+                });
                 closeThemePanel();
             }
         });
@@ -5637,17 +5680,15 @@ body.spotui-spotify-enabled, body {
                 if (tSub === "pull") {
                     const { id, channel } = parsePullArgs(args);
                     if (!id) {
-                        console.warn("[SpoTUI] usage: tui -t pull <theme_id> [-live]");
+                        pinToast("usage: tui -t pull <theme_id> [-live]");
                         return;
                     }
-                    let themeName;
-                    try {
-                        themeName = atob(id);
-                    } catch (e) {
+                    const themeName = decodeThemeId(id);
+                    if (themeName === null) {
                         pinToast("invalid theme id");
                         return;
                     }
-                    applyThemeByName(themeName, { channel }).catch((e) => pinToast(`theme pull failed (${channel} feed): ${e.message}`));
+                    applyThemeByName(themeName, { channel, id }).catch((e) => pinToast(`theme pull failed (${channel} feed): ${e.message}`));
                 } else {
                     console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id> [-live]>");
                 }
@@ -5774,11 +5815,14 @@ body.spotui-spotify-enabled, body {
                 let value = args[idx + 1];
                 if ((value || "").toLowerCase() === "off") {
                     storageRemove(LYRICS_LINE_SPACING);
-                } else {
+                } else if (isValidLineSpacing(value)) {
                     if (!isNaN(value)) {
                         value = value + "px";
                     }
                     storageSet(LYRICS_LINE_SPACING, value);
+                } else {
+                    pinToast("usage: tui -ly -spacing <number[px|em|rem]|off>");
+                    return;
                 }
                 applyLyricLineSpacing();
                 return;
@@ -5816,7 +5860,7 @@ body.spotui-spotify-enabled, body {
                     if (argsLower.includes("-progress")) {
                         const pIdx = argsLower.indexOf("-progress");
                         const styleId = (args[pIdx + 1] || "").toLowerCase();
-                        if (styleId && PROGRESS_STYLES[styleId]) {
+                        if (styleId && Object.hasOwn(PROGRESS_STYLES, styleId)) {
                             storageSet(CUSTOM_BAR_PROGRESS_STYLE, styleId);
                             if (storageGet(CUSTOM_BAR_ENABLED) === "on") updateCustomBar();
                         }
@@ -5941,7 +5985,7 @@ body.spotui-spotify-enabled, body {
             return;
         }
 
-        if (playerMap[command]) {
+        if (Object.hasOwn(playerMap, command)) {
             const act = playerMap[command];
             try { await act.fn(); } catch {}
             return;
@@ -6033,7 +6077,7 @@ body.spotui-spotify-enabled, body {
     }
 
     const PANE_CLOSE_EVENT = "pane_close";
-    const RESERVED_NAMES = new Set(["create", "list", "enable", "disable", "delete"]);
+    const RESERVED_NAMES = new Set(["create", "list", "enable", "disable", "delete", "__proto__"]);
     const CLAUSE_RE = /^(?:actions:)?spotui@([a-z_]+)(?:>(!?)([a-z0-9_-]+))?$/i;
 
     let runningActions = false;
@@ -6169,7 +6213,7 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             const actions = getActions();
-            if (actions[name]) {
+            if (Object.hasOwn(actions, name)) {
                 jamSay("Action already exists: " + name);
                 return;
             }
@@ -6201,7 +6245,7 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             const actions = getActions();
-            if (!actions[name]) {
+            if (!Object.hasOwn(actions, name)) {
                 jamSay("Unknown action: " + name);
                 return;
             }
@@ -6217,7 +6261,7 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             const actions = getActions();
-            if (!actions[name]) {
+            if (!Object.hasOwn(actions, name)) {
                 jamSay("Unknown action: " + name);
                 return;
             }
@@ -6244,7 +6288,7 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             const actions = getActions();
-            const prev = actions[name] || { enabled: true};
+            const prev = Object.hasOwn(actions, name) ? actions[name] : { enabled: true};
             actions[name] = {
                 enabled: prev.enabled !== false,
                 listener,
@@ -6945,9 +6989,17 @@ body.spotui-spotify-enabled, body {
         }
     }
 
+    // Lyric line spacing: a plain number with an optional px/em/rem unit.
+    function isValidLineSpacing(value) {
+        return /^\d+(\.\d+)?(px|em|rem)?$/.test(String(value ?? ""));
+    }
+
     function applyLyricLineSpacing() {
     	try {
-    		applyCssVar(LYRICS_LINE_SPACING, "--lyrics-line-spacing");
+    		// A stored value that is not a valid spacing (e.g. "undefined" from an
+    		// older build) is ignored, not applied.
+    		if (isValidLineSpacing(storageGet(LYRICS_LINE_SPACING))) applyCssVar(LYRICS_LINE_SPACING, "--lyrics-line-spacing");
+    		else document.documentElement.style.removeProperty("--lyrics-line-spacing");
     	} catch (e) {
     		console.error("SpoTUI: Failed to apply line spacing", e);
     	}
@@ -7173,7 +7225,7 @@ body.spotui-spotify-enabled, body {
 
     // Render progress bar using specified style and fill percentage
     function renderProgressBar(progress, styleId, width) {
-        const style = PROGRESS_STYLES[styleId] || PROGRESS_STYLES["classic-block"];
+        const style = Object.hasOwn(PROGRESS_STYLES, styleId) ? PROGRESS_STYLES[styleId] : PROGRESS_STYLES["classic-block"];
         const filled = Math.round(progress * width);
         const empty = width - filled;
         let filledStr = "";
@@ -9452,7 +9504,8 @@ body.spotui-standby .Root__now-playing-bar {
         const data = Spicetify.Player.data;
         const item = data?.item ?? data?.track;
         if (!item) return null;
-        const progressStyle = storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block";
+        const storedStyle = storageGet(CUSTOM_BAR_PROGRESS_STYLE);
+        const progressStyle = Object.hasOwn(PROGRESS_STYLES, storedStyle) ? storedStyle : "classic-block";
         return {
             type: "update",
             title: item.name ?? item.metadata?.title ?? "",
@@ -9466,7 +9519,7 @@ body.spotui-standby .Root__now-playing-bar {
             colors: getCachedColors(),
             lyrics: lyricsCache,
             progress_style: progressStyle,
-            progress_chars: PROGRESS_STYLES[progressStyle] || PROGRESS_STYLES["classic-block"],
+            progress_chars: PROGRESS_STYLES[progressStyle],
             visualizer: app.visualizerOpen,
             visualizer_bars: getVisualizerBars(),
             visualizer_smoothing: getVisualizerSmooth(),

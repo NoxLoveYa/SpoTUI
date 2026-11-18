@@ -6,7 +6,7 @@ import { toastBase } from "./utils.js";
 // persistSession - to survive the reload after all settings get reset.
 // Sticky (no auto-remove): it must survive until the reload happens.
 export function showRestartPopup(message = "Wait 5 seconds and relaunch Spotify", persistSession = false) {
-    toastBase("spotui-restart-popup", message, null, "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(0,0,0,0.92);border:1px solid var(--spotui-accent,#ff8c42);border-radius:6px;padding:12px 16px;color:var(--spotui-accent,#ff8c42);font-family:\"JetBrains Mono\",monospace;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,0.35);");
+    const popup = toastBase("spotui-restart-popup", message, null, "position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:10000;background:rgba(0,0,0,0.92);border:1px solid var(--spotui-accent,#ff8c42);border-radius:6px;padding:12px 16px;color:var(--spotui-accent,#ff8c42);font-family:\"JetBrains Mono\",monospace;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,0.35);");
     if (persistSession) {
         try { sessionStorage.setItem("spotui:restart-popup", message); } catch (e) {}
     }

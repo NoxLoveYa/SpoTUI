@@ -109,7 +109,8 @@ function getTrackPayload() {
     const data = Spicetify.Player.data;
     const item = data?.item ?? data?.track;
     if (!item) return null;
-    const progressStyle = storageGet(CUSTOM_BAR_PROGRESS_STYLE) || "classic-block";
+    const storedStyle = storageGet(CUSTOM_BAR_PROGRESS_STYLE);
+    const progressStyle = Object.hasOwn(PROGRESS_STYLES, storedStyle) ? storedStyle : "classic-block";
     return {
         type: "update",
         title: item.name ?? item.metadata?.title ?? "",
@@ -123,7 +124,7 @@ function getTrackPayload() {
         colors: getCachedColors(),
         lyrics: lyricsCache,
         progress_style: progressStyle,
-        progress_chars: PROGRESS_STYLES[progressStyle] || PROGRESS_STYLES["classic-block"],
+        progress_chars: PROGRESS_STYLES[progressStyle],
         visualizer: app.visualizerOpen,
         visualizer_bars: getVisualizerBars(),
         visualizer_smoothing: getVisualizerSmooth(),

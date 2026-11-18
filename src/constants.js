@@ -122,7 +122,7 @@ export const BIND_CMD_REGEX = /^tui\s+(bind|unbind)\b/i;
 // first-position branches of executeInner in commands.js.
 export const THEME_ALLOWED_COMMANDS = new Set(["lyrics", "visualizer"]);
 export const THEME_ALLOWED_TUI_SUBS = new Set([
-    "-l", "-wp", "-shade", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
+    "-l", "-a", "-wp", "-shade", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
 ]);
 // Poster-wall words a theme may not use: they add remote images or delete the user's pins.
 export const THEME_BLOCKED_POSTER_WORDS = new Set(["add", "clear"]);

@@ -40,9 +40,17 @@ export function applyLyricColors() {
     }
 }
 
+// Lyric line spacing: a plain number with an optional px/em/rem unit.
+export function isValidLineSpacing(value) {
+    return /^\d+(\.\d+)?(px|em|rem)?$/.test(String(value ?? ""));
+}
+
 export function applyLyricLineSpacing() {
 	try {
-		applyCssVar(LYRICS_LINE_SPACING, "--lyrics-line-spacing");
+		// A stored value that is not a valid spacing (e.g. "undefined" from an
+		// older build) is ignored, not applied.
+		if (isValidLineSpacing(storageGet(LYRICS_LINE_SPACING))) applyCssVar(LYRICS_LINE_SPACING, "--lyrics-line-spacing");
+		else document.documentElement.style.removeProperty("--lyrics-line-spacing");
 	} catch (e) {
 		console.error("SpoTUI: Failed to apply line spacing", e);
 	}
@@ -268,7 +276,7 @@ export function clearNativeBarOverrides() {
 
 // Render progress bar using specified style and fill percentage
 export function renderProgressBar(progress, styleId, width) {
-    const style = PROGRESS_STYLES[styleId] || PROGRESS_STYLES["classic-block"];
+    const style = Object.hasOwn(PROGRESS_STYLES, styleId) ? PROGRESS_STYLES[styleId] : PROGRESS_STYLES["classic-block"];
     const filled = Math.round(progress * width);
     const empty = width - filled;
     let filledStr = "";

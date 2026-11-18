@@ -12,7 +12,7 @@ import { applyTheme as applySavedTheme, savedThemeDetails } from "./saves.js";
 import { clearBoard, getBoardCounts, refreshBoards } from "./posters.js";
 import { app } from "./state.js";
 import { renderCmdGhost } from "./terminal.js";
-import { pinToast } from "./utils.js";
+import { dbg, pinToast } from "./utils.js";
 import { createAddThemeCard, createThemeCard, loadThemeChannel } from "./themes.js";
 
 const PANE_TARGETS = {
@@ -267,7 +267,9 @@ export async function openThemePanel() {
         if (e.target.tagName === "BUTTON" && e.target.dataset.commands) {
             resetAllSettings();
             const commands = JSON.parse(e.target.dataset.commands);
-            commands.forEach((cmd) => { if (!isRestrictedThemeCommand(cmd)) execute(cmd, { fromTheme: true }); });
+            commands.forEach((cmd) => {
+                if (!isRestrictedThemeCommand(cmd)) execute(cmd, { fromTheme: true }).catch((err) => dbg("[SpoTUI] theme command failed:", cmd, err));
+            });
             closeThemePanel();
         }
     });

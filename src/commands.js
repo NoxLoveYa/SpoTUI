@@ -1,5 +1,5 @@
 import { handleActionsCommand } from "./actions.js";
-import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, handleColorArgs, toggleLogo, updateCustomBar } from "./appearance.js";
+import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, handleColorArgs, isValidLineSpacing, toggleLogo, updateCustomBar } from "./appearance.js";
 import { resetGrid, startAsciiPaintLoop } from "./ascii.js";
 import { initUpdateBanner, showRestartPopup } from "./banner.js";
 import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, HISTORY_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PIN_TOKEN_KEY, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, VISUALIZER_BARS, VISUALIZER_COLOR, VISUALIZER_GAP, VISUALIZER_MODE, VISUALIZER_SMOOTH, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
@@ -14,7 +14,7 @@ import { getPlaylists } from "./playlists.js";
 import { openSearchPanel } from "./search.js";
 import { app } from "./state.js";
 import { storageClear, storageGet, storageRemove, storageSet } from "./storage.js";
-import { applyThemeByName } from "./themes.js";
+import { applyThemeByName, decodeThemeId } from "./themes.js";
 import { enterStandby } from "./standby.js";
 import { applyTheme as applySavedTheme, deleteTheme, invalidateSavesCache, listThemes, saveTheme, savedThemeNames } from "./saves.js";
 import { setWallpaper } from "./wallpaper.js";
@@ -295,17 +295,15 @@ async function executeInner(cmd, opts = {}) {
             if (tSub === "pull") {
                 const { id, channel } = parsePullArgs(args);
                 if (!id) {
-                    console.warn("[SpoTUI] usage: tui -t pull <theme_id> [-live]");
+                    pinToast("usage: tui -t pull <theme_id> [-live]");
                     return;
                 }
-                let themeName;
-                try {
-                    themeName = atob(id);
-                } catch (e) {
+                const themeName = decodeThemeId(id);
+                if (themeName === null) {
                     pinToast("invalid theme id");
                     return;
                 }
-                applyThemeByName(themeName, { channel }).catch((e) => pinToast(`theme pull failed (${channel} feed): ${e.message}`));
+                applyThemeByName(themeName, { channel, id }).catch((e) => pinToast(`theme pull failed (${channel} feed): ${e.message}`));
             } else {
                 console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id> [-live]>");
             }
@@ -432,11 +430,14 @@ async function executeInner(cmd, opts = {}) {
             let value = args[idx + 1];
             if ((value || "").toLowerCase() === "off") {
                 storageRemove(LYRICS_LINE_SPACING);
-            } else {
+            } else if (isValidLineSpacing(value)) {
                 if (!isNaN(value)) {
                     value = value + "px";
                 }
                 storageSet(LYRICS_LINE_SPACING, value);
+            } else {
+                pinToast("usage: tui -ly -spacing <number[px|em|rem]|off>");
+                return;
             }
             applyLyricLineSpacing();
             return;
@@ -474,7 +475,7 @@ async function executeInner(cmd, opts = {}) {
                 if (argsLower.includes("-progress")) {
                     const pIdx = argsLower.indexOf("-progress");
                     const styleId = (args[pIdx + 1] || "").toLowerCase();
-                    if (styleId && PROGRESS_STYLES[styleId]) {
+                    if (styleId && Object.hasOwn(PROGRESS_STYLES, styleId)) {
                         storageSet(CUSTOM_BAR_PROGRESS_STYLE, styleId);
                         if (storageGet(CUSTOM_BAR_ENABLED) === "on") updateCustomBar();
                     }
@@ -599,7 +600,7 @@ async function executeInner(cmd, opts = {}) {
         return;
     }
 
-    if (playerMap[command]) {
+    if (Object.hasOwn(playerMap, command)) {
         const act = playerMap[command];
         try { await act.fn(); } catch {}
         return;

@@ -123,7 +123,7 @@ export function createThemeCard(theme) {
 export function applyThemeByName(themeName, opts = {}) {
     const skipNonTui = Boolean(opts.skipNonTui);
     const apply = async (themes) => {
-        const theme = (themes || []).find((t) => t.name === themeName);
+        const theme = (themes || []).find((t) => (opts.id && t.id === opts.id) || t.name === themeName);
         if (!theme) {
             if (opts.channel) {
                 pinToast(`theme not found on ${opts.channel}${opts.channel === "live" ? "" : " (try -live)"}`);
@@ -172,6 +172,19 @@ export function encodeThemeName(name) {
         return btoa(unescape(encodeURIComponent(String(name || ""))));
     } catch (e) {
         return "";
+    }
+}
+
+// Exact inverse of encodeThemeName: UTF-8 base64 -> name. Also takes
+// unpadded and URL-safe base64. Returns null for an invalid id.
+export function decodeThemeId(id) {
+    try {
+        let b64 = String(id || "").replace(/-/g, "+").replace(/_/g, "/");
+        while (b64.length % 4) b64 += "=";
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (e) {
+        return null;
     }
 }
 

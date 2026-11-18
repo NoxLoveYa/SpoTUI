@@ -4,7 +4,7 @@ import { jamSay } from "./jam.js";
 import { readJsonObject, storageSet } from "./storage.js";
 
 const PANE_CLOSE_EVENT = "pane_close";
-const RESERVED_NAMES = new Set(["create", "list", "enable", "disable", "delete"]);
+const RESERVED_NAMES = new Set(["create", "list", "enable", "disable", "delete", "__proto__"]);
 const CLAUSE_RE = /^(?:actions:)?spotui@([a-z_]+)(?:>(!?)([a-z0-9_-]+))?$/i;
 
 let runningActions = false;
@@ -140,7 +140,7 @@ export function handleActionsCommand(cleanedCmd) {
             return;
         }
         const actions = getActions();
-        if (actions[name]) {
+        if (Object.hasOwn(actions, name)) {
             jamSay("Action already exists: " + name);
             return;
         }
@@ -172,7 +172,7 @@ export function handleActionsCommand(cleanedCmd) {
             return;
         }
         const actions = getActions();
-        if (!actions[name]) {
+        if (!Object.hasOwn(actions, name)) {
             jamSay("Unknown action: " + name);
             return;
         }
@@ -188,7 +188,7 @@ export function handleActionsCommand(cleanedCmd) {
             return;
         }
         const actions = getActions();
-        if (!actions[name]) {
+        if (!Object.hasOwn(actions, name)) {
             jamSay("Unknown action: " + name);
             return;
         }
@@ -215,7 +215,7 @@ export function handleActionsCommand(cleanedCmd) {
             return;
         }
         const actions = getActions();
-        const prev = actions[name] || { enabled: true, listener: "", command: "" };
+        const prev = Object.hasOwn(actions, name) ? actions[name] : { enabled: true, listener: "", command: "" };
         actions[name] = {
             enabled: prev.enabled !== false,
             listener,

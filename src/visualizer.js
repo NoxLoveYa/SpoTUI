@@ -76,6 +76,7 @@ export function handleVisualizerCommand(arg, silent) {
         if (!app.sposyncConnected) {
             if (silent) return;
             const popup = showRestartPopup("");
+            if (!popup) return;
             const accent = getSpotuiAccentColor();
             popup.style.border = `1px solid ${accent}`;
             popup.style.color = accent;
