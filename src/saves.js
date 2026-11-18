@@ -35,6 +35,13 @@ const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE
 // would try to rejoin a dead jam).
 const NEVER_WIPE_KEYS = new Set([LAUNCHED_KEY, UPDATE_BANNER_KEY, JAM_STATE_KEY, DEBUG_KEY, VISUALIZER_STORAGE_KEY, LYRICS_STORAGE_KEY]);
 
+// What a plain `tui restore` leaves in place: personal config and secrets,
+// the saved-themes library (and its corrupt-blob backup; saved themes are the
+// user's data, not a look) and the launched/banner flags (wiping them would
+// replay onboarding and resurrect a dismissed banner). Everything else
+// spotui:* is a look or transient state and is removed.
+export const RESTORE_KEEP_KEYS = new Set([...PERSONAL_KEYS, SAVES_KEY, SAVES_KEY + ".corrupt", LAUNCHED_KEY, UPDATE_BANNER_KEY]);
+
 // Only spotui:* keys that are actually a look take part in snapshots. The
 // library itself and its corrupt-blob backup are internal, not a look.
 function isLookKey(k) {
@@ -93,6 +100,23 @@ function backupCorruptSaves() {
 // storage): callers must invalidate so menus never show ghost themes.
 export function invalidateSavesCache() {
     savesCache = null;
+}
+
+// tui restore: remove SpoTUI's own localStorage keys (spotui:*) and nothing
+// else, because the origin is shared with Spotify and other extensions. With
+// `full` every spotui:* key goes; otherwise RESTORE_KEEP_KEYS survive.
+export function wipeSpotuiStorage(full = false) {
+    try {
+        const doomed = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("spotui:") && (full || !RESTORE_KEEP_KEYS.has(k))) doomed.push(k);
+        }
+        for (const k of doomed) {
+            try { localStorage.removeItem(k); } catch (e) {}
+        }
+    } catch (e) {}
+    invalidateSavesCache();
 }
 
 function snapshotSettings() {

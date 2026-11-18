@@ -1,87 +1,92 @@
 import { resetAllSettings } from "./appearance.js";
 import { execute } from "./commands.js";
-import { FIRST_BOOT_THEME_IDS, THEME_CHANNELS, THEME_HOST } from "./constants.js";
+import { FIRST_BOOT_THEME_IDS, THEME_CHANNELS, THEME_HOST, THEME_SCRIPT_CHANNELS } from "./constants.js";
 import { isRestrictedThemeCommand } from "./keybinds.js";
-import { app } from "./state.js";
-import { pinToast } from "./utils.js";
+import { FEED_TIMEOUT_MS, fetchThemeFeed, safeHttpsUrl, validateThemeFeed } from "./themefeed.js";
+import { dbg, pinToast } from "./utils.js";
 
-// Singleton promise for theme feed
-
-// Load theme catalog from remote server
-export function loadThemeFeed(onLoad, onError) {
-    if (window.spotuiThemes && window.spotuiThemes.length) {
-        onLoad();
-        return;
-    }
-    if (!app.themesFeedPromise) {
-        app.themesFeedPromise = new Promise((resolve, reject) => {
-            const script = document.createElement("script");
-            script.src = `${THEME_HOST}themes.js?_=${Math.floor(Date.now() / 1000)}`;
-            script.onload = () => {
-                try {
-                    if (window.spotuiThemes && window.spotuiThemes.length) {
-                        resolve();
-                    } else {
-                        reject(new Error("Theme feed loaded but empty"));
-                    }
-                } finally {
-                    script.remove();
-                }
-            };
-            script.onerror = () => {
-                try {
-                    reject(new Error("Failed to load themes"));
-                } finally {
-                    script.remove();
-                }
-            };
-            document.body.appendChild(script);
-        });
-        app.themesFeedPromise.then(
-            () => { app.themesFeedPromise = null; },
-            () => { app.themesFeedPromise = null; }
-        );
-    }
-    app.themesFeedPromise.then(onLoad, onError);
-}
-
+const FEED_ERROR = "Failed to load themes";
 const channelCache = {};
 const channelInflight = {};
+
+// Transport for channels whose host sends no CORS header, so the page cannot
+// fetch them as data (see THEME_SCRIPT_CHANNELS). The script's global is read
+// once and removed; the caller validates it like any other feed.
+// A feed that declares `var spotuiThemes` leaves a non-configurable global:
+// `delete` then throws in strict mode, so fall back to blanking it.
+function clearFeedGlobal() {
+    try { delete window.spotuiThemes; } catch (e) { /* non-configurable */ }
+    try {
+        if (window.spotuiThemes !== undefined) window.spotuiThemes = undefined;
+    } catch (e) { /* read-only: nothing more to do */ }
+}
+
+// Always settles: load, error or the same timeout the fetch path uses.
+function loadFeedScript(src) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = src;
+        let finished = false;
+        let timer = 0;
+        const done = (fn, read) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            script.onload = null;
+            script.onerror = null;
+            script.remove();
+            let value;
+            try {
+                if (read) value = window.spotuiThemes;
+                clearFeedGlobal();
+            } catch (e) { /* settle anyway */ }
+            fn(value);
+        };
+        script.onload = () => done(resolve, true);
+        script.onerror = () => done(() => reject(new Error(FEED_ERROR)), false);
+        timer = setTimeout(() => done(() => reject(new Error(FEED_ERROR)), false), FEED_TIMEOUT_MS);
+        clearFeedGlobal();
+        document.body.appendChild(script);
+    });
+}
+
+// One feed -> validated themes. Any transport/parse failure surfaces as the
+// same "Failed to load themes" error the old script loader gave.
+async function fetchChannel(key) {
+    const src = `${THEME_CHANNELS[key]}?_=${Math.floor(Date.now() / 1000)}`;
+    let result;
+    try {
+        result = THEME_SCRIPT_CHANNELS.has(key)
+            ? validateThemeFeed(await loadFeedScript(src))
+            : await fetchThemeFeed(src);
+    } catch (err) {
+        dbg(`[SpoTUI] theme feed (${key}) failed:`, err && err.message);
+        throw new Error(FEED_ERROR, { cause: err });
+    }
+    if (result.dropped) {
+        dbg(`[SpoTUI] theme feed (${key}): dropped ${result.dropped} invalid theme(s)`, JSON.stringify(result.reasons || {}));
+    }
+    if (!result.themes.length) throw new Error("Theme feed loaded but empty");
+    return result.themes;
+}
 
 export function loadThemeChannel(channel, force = false) {
     const key = THEME_CHANNELS[channel] ? channel : "live";
     if (!force && channelCache[key]) return Promise.resolve(channelCache[key].slice());
-    if (!force && channelInflight[key]) return channelInflight[key];
-    const src = `${THEME_CHANNELS[key]}?_=${Math.floor(Date.now() / 1000)}`;
-    const promise = new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        script.src = src;
-        script.onload = () => {
-            try {
-                const themes = (window.spotuiThemes || []).slice();
-                if (themes.length) {
-                    channelCache[key] = themes;
-                    resolve(themes.slice());
-                } else {
-                    reject(new Error("Theme feed loaded but empty"));
-                }
-            } finally {
-                script.remove();
-                delete channelInflight[key];
-            }
-        };
-        script.onerror = () => {
-            try {
-                reject(new Error("Failed to load themes"));
-            } finally {
-                script.remove();
-                delete channelInflight[key];
-            }
-        };
-        document.body.appendChild(script);
+    if (!force && channelInflight[key]) return channelInflight[key].then((themes) => themes.slice());
+    const promise = fetchChannel(key).then((themes) => {
+        channelCache[key] = themes;
+        return themes;
     });
     channelInflight[key] = promise;
-    return promise;
+    const settled = () => { if (channelInflight[key] === promise) delete channelInflight[key]; };
+    promise.then(settled, settled);
+    return promise.then((themes) => themes.slice());
+}
+
+// Validated themes already loaded for a channel ([] when none yet).
+export function getCachedThemes(channel) {
+    return (channelCache[channel] || []).slice();
 }
 
 export function createAddThemeCard(imgUrl, channel) {
@@ -92,7 +97,7 @@ export function createAddThemeCard(imgUrl, channel) {
     card.className = "theme-card";
     card.innerHTML = `
         <h3>${label}</h3>
-        <img src="${imgUrl}" alt="${label}">
+        <img src="${imgUrl}" alt="${label}" referrerpolicy="no-referrer" loading="lazy" decoding="async">
         <button>${stable ? "Contribute" : "Add"}</button>
     `;
     card.querySelector("button").addEventListener("click", () => {
@@ -107,7 +112,10 @@ export function createThemeCard(theme) {
     const title = document.createElement("h3");
     title.textContent = theme.name || "";
     const img = document.createElement("img");
-    img.src = theme.screenshot_url || "";
+    img.referrerPolicy = "no-referrer";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.src = safeHttpsUrl(theme.screenshot_url);
     img.alt = `${theme.name || ""} screenshot`;
     const btn = document.createElement("button");
     btn.textContent = "Apply";
@@ -149,21 +157,8 @@ export function applyThemeByName(themeName, opts = {}) {
         }
         return theme;
     };
-    if (opts.channel) {
-        return loadThemeChannel(opts.channel).then((themes) => apply(themes));
-    }
-    return new Promise((resolve, reject) => {
-        loadThemeFeed(
-            async () => {
-                try {
-                    resolve(await apply(window.spotuiThemes || []));
-                } catch (err) {
-                    reject(err);
-                }
-            },
-            () => reject(new Error("Failed to load themes"))
-        );
-    });
+    // Without a channel (onboarding) the stable list is the one that was shown.
+    return loadThemeChannel(opts.channel || "stable").then((themes) => apply(themes));
 }
 
 // Encode theme name for theme ID generation

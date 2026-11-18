@@ -608,6 +608,15 @@ body.spotui-spotify-enabled #spotui-back-btn {
     app-region: no-drag !important;
 }
 
+/* Same hover treatment as .spotui-control-btn:hover (styles.js); the !important
+   background above would otherwise win and the button would never react. */
+body.spotui-tui-hidden #spotui-back-btn:hover,
+body.spotui-tui-hidden #spotui-back-btn:focus-visible,
+body.spotui-spotify-enabled #spotui-back-btn:hover,
+body.spotui-spotify-enabled #spotui-back-btn:focus-visible {
+    background: var(--input-bg-hover-color, color-mix(in srgb, var(--spotui-accent, #ff8c42) 88%, black)) !important;
+}
+
 body:not(.spotui-tui-hidden):not(.spotui-spotify-enabled) #spotui-back-btn {
     display: none !important;
 }

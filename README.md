@@ -100,7 +100,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -inputs off` | Reset input colors |
 | `tui -panel -bg <#hex> -border <#hex> -text <#hex>` | Set help/playlist/theme/about panel colors |
 | `tui -panel off` | Reset panel colors |
-| `tui restore [-full]` | Reset all settings to defaults and reload (keeps history, keybinds, actions and your pin token; `-full` wipes everything) |
+| `tui restore [-full]` | Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, saved themes and the onboarding and banner flags; `-full` removes every SpoTUI setting stored in Spotify). Only `spotui:*` keys are touched: Spotify's own settings and other extensions' data stay as they are |
 | `playlist` / `list` `<playlist-name>` | Open playlist viewer or play a specific playlist |
 | `add2list` | Add the current song to a playlist |
 | `queue` | View and reorder the play queue |
@@ -260,7 +260,7 @@ The theme works without it. Only the `visualizer` command needs it.
 
 ### Privacy
 
-- SpoSync listens on `localhost` only. It accepts connections from Spotify's page (`https://xpui.app.spotify.com`) and from local command-line tools. Every other web page is refused with HTTP 403.
+- SpoSync listens on `localhost` only. It accepts only Spotify's page (`https://xpui.app.spotify.com`) and local tools **of the same user**; web pages and other users' programs are refused (HTTP 403).
 - Audio is captured only while the visualizer is on. With it off, SpoSync does not touch your audio device.
 - Lyrics for SpoSync come from the same sources the theme uses: spolyrc first, then Spotify, then [lrclib](https://lrclib.net/). The theme fetches them for the helper only while SpoSync's window is open. A hidden or background SpoSync causes no lyric requests.
 - The log file holds no track titles, lyrics or search text.
@@ -324,6 +324,7 @@ Windows uses `conhost.exe` so the window can be hidden and shown even when Windo
 - **Windows:** SpoSync sits in the tray. Choose **Show** in the tray icon's menu to open the window and **Quit** to exit. Closing the window with `q` offers **Hide to tray**. Running `sposync.exe` again brings the running window forward. If you start it yourself from Windows Terminal, the helper cannot hide to the tray: it offers **Run in background** instead. Autostart at sign-in always uses the tray.
 - **Linux:** there is no tray. Open the window in a terminal with `~/.local/share/sposync/sposync --replace`. Closing it with `q` and choosing **Run in background** hands back to the background helper.
 - **Both:** `sposync --quit` asks the running helper to exit (exit code `0` done, `1` nothing was running, `2` the port is held by another program or by another user's SpoSync, or the helper did not exit within 10 seconds). `sposync --version` prints the version.
+- **Flag `--no-peer-check`:** turns off the check that a connecting program belongs to the same signed-in user as SpoSync (see "Shared computers" under Troubleshooting). Use it only to find out why Spotify stays disconnected. The installer never sets it, and SpoSync logs `peer check disabled by --no-peer-check` at start.
 
 ### Logs
 
@@ -357,7 +358,8 @@ bash scripts/uninstall/linux/uninstall.sh --sposync-only
 
 - **Port 8765 is busy:** another program holds it. A program that answers on the port makes SpoSync exit at once with code `2` and `port 8765 in use by another program`. A holder that does not answer, or a port that cannot be bound, is retried for 10 seconds first. The installer names the program when it can see it: on Windows always, on Linux only when it belongs to the same user (otherwise it says the owner may be another user). Close that program, then start SpoSync again or sign in again.
 - **The log says `port 8765 cannot be bound (reserved or blocked by the system)`:** Windows can reserve port ranges for other components. List them with `netsh int ipv4 show excludedportrange protocol=tcp` and `netsh int ipv6 show excludedportrange protocol=tcp`. If 8765 is inside a listed range, SpoSync cannot use it until that range is released, which often happens after a restart.
-- **Shared computers:** SpoSync is one helper per machine port, not per user. If two people are signed in at once, the second person's SpoSync does not start (its log says the port is held by another user's SpoSync), and their Spotify connects to the first person's helper. That person's SpoSync window then shows the other's track, and commands typed there reach both Spotify clients. While two people are signed in on the same computer and one of them runs SpoSync, the other person's SpoTUI connects to that helper anyway, and no setting prevents it. The only remedies: only one person is signed in (or runs Spotify with SpoTUI) at a time, or the helper's owner quits SpoSync (tray menu Quit, or `sposync --quit`). Also note that any program running as a local user can talk to the helper; web pages cannot.
+- **Shared computers:** SpoSync checks that every connecting program belongs to the same signed-in user as the helper. A program of another user is refused (HTTP 403), for Spotify and for local control (`--quit`, Show) alike, so a second person's Spotify cannot use your SpoSync or quit it. Only one signed-in user at a time can run SpoSync: while yours holds port 8765, the second person's SpoSync exits with `port 8765 held by another user's SpoSync` in its log, and their SpoTUI shows SpoSync as disconnected (no visualizer). To switch, the first person quits SpoSync (tray menu Quit, or `sposync --quit`), then the second starts theirs. Programs running as the same user can still talk to the helper; web pages cannot.
+- **Spotify stays disconnected:** open the log (paths in the table above). If it has `rejected peer unknown (...)` lines, the user check could not tell who is connecting. Run SpoSync by hand with `--no-peer-check` to confirm that this is the cause (on Windows, run the exe from a terminal; do not edit the registry autostart value), then report the issue. If the log has `peer check self-test failed (...); peer check off for this run` (Windows) or `peer check unavailable (...)` (Linux), SpoSync has already turned the check off by itself and accepts local clients as before; the cause is then elsewhere, for example the port problems above. If the log says `port 8765 held by another user's SpoSync`, see "Shared computers".
 - **Flat bars and `no loopback audio device` in the log:** SpoSync found no output device to listen to. On Windows check that a playback device is enabled. On Linux it needs PulseAudio or PipeWire (with `pipewire-pulse`) and a `.monitor` source, which `pactl list short sources` lists. SpoSync keeps running and retries every few seconds.
 - **Windows: autostart does not run:** open Task Manager, **Startup apps**, and enable SpoSync. The installer never changes that setting.
 - **Linux: nothing starts at login:** some sessions (i3, sway and other bare window managers) do not run XDG autostart entries. Add `exec "$HOME/.local/share/sposync/sposync" --headless` to your session config.

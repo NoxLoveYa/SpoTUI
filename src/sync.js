@@ -44,18 +44,24 @@ function cssVar(style, name, fallback) {
 }
 
 function getColors() {
-    const style = getComputedStyle(document.documentElement);
+    // <body>, not <html>: the shade rule defines --spotui-accent on body, and
+    // custom properties only inherit downward. Root inline vars reach body too.
+    const style = getComputedStyle(document.body);
+    // Same chains as the CSS: lyrics active, panel border/text, bar text and
+    // the visualizer fall back to the accent. Inactive/near lyrics and the
+    // backgrounds have fixed CSS fallbacks, so they keep fixed values here.
+    const accent = cssVar(style, "--spotui-accent", "#ff8c42");
     return {
-        active: cssVar(style, "--lyrics-color-active", "#ff8c42"),
+        active: cssVar(style, "--lyrics-color-active", accent),
         inactive: cssVar(style, "--lyrics-color-inactive", "#777777"),
         near: cssVar(style, "--lyrics-color-light-inactive", "#b3b3b3"),
-        accent: cssVar(style, "--spotui-accent", "#ff8c42"),
+        accent,
         panel_bg: cssVar(style, "--panel-bg-color", "#000000"),
-        panel_border: cssVar(style, "--panel-border-color", "#ff8c42"),
-        panel_text: cssVar(style, "--panel-text-color", "#ff8c42"),
+        panel_border: cssVar(style, "--panel-border-color", accent),
+        panel_text: cssVar(style, "--panel-text-color", accent),
         bar_bg: cssVar(style, "--player-bar-background", "#000000"),
-        bar_text: cssVar(style, "--player-bar-text-color", "#ff8c42"),
-        visualizer: cssVar(style, "--visualizer-color", "#ff8c42"),
+        bar_text: cssVar(style, "--player-bar-text-color", accent),
+        visualizer: cssVar(style, "--visualizer-color", accent),
     };
 }
 

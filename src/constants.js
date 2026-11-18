@@ -6,6 +6,14 @@ export const THEME_CHANNELS = {
     live: `${THEME_HOST}themes.js`,
 };
 
+// Feeds are fetched as data (never executed) unless the host sends no
+// Access-Control-Allow-Origin, which blocks fetch from the Spotify page. Those
+// channels still load as a script, and the result is validated the same way.
+// live: spotui.root.sx sends no CORS header (checked with curl); stable on
+// jsDelivr sends `access-control-allow-origin: *`. Drop "live" from this set
+// once the server allows the Spotify origin and the script loader can go.
+export const THEME_SCRIPT_CHANNELS = new Set(["live"]);
+
 // LocalStorage keys for user preferences
 export const ANIMATION_KEY = "spotui:ascii-animation";
 export const LYRICS_STORAGE_KEY = "spotui:lyrics-open";
@@ -152,7 +160,7 @@ export const COMMAND_LIST = [
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
     { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
     { cmd: "tui bind clear", desc: "Remove all keybinds" },
-    { cmd: "tui restore [-full]", desc: "Reset all settings to defaults and reload (keeps history, keybinds, actions and your pin token; -full wipes everything)" },
+    { cmd: "tui restore [-full]", desc: "Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, saved themes and the onboarding and banner flags; -full removes every SpoTUI setting stored in Spotify). Spotify's own settings and other extensions' data are never touched" },
     { cmd: "Ctrl+R", desc: "Reverse-search persistent command history (typing filters, Ctrl+R cycles older matches, Enter fills the bar, Esc aborts; unknown commands stay session-only)" },
     { cmd: "Tab", desc: "Accept the ghost fill suggestion in the command bar (repeat to cycle matches); also completes the last word of any known command, e.g. tui -viz -ga + Tab → tui -viz -gap" },
     { cmd: "Esc", desc: "Abort history search, or leave the command bar so Spotify gets its keys back" },

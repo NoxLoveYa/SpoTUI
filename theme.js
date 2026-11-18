@@ -9,6 +9,14 @@
         live: `${THEME_HOST}themes.js`,
     };
 
+    // Feeds are fetched as data (never executed) unless the host sends no
+    // Access-Control-Allow-Origin, which blocks fetch from the Spotify page. Those
+    // channels still load as a script, and the result is validated the same way.
+    // live: spotui.root.sx sends no CORS header (checked with curl); stable on
+    // jsDelivr sends `access-control-allow-origin: *`. Drop "live" from this set
+    // once the server allows the Spotify origin and the script loader can go.
+    const THEME_SCRIPT_CHANNELS = new Set(["live"]);
+
     // LocalStorage keys for user preferences
     const ANIMATION_KEY = "spotui:ascii-animation";
     const LYRICS_STORAGE_KEY = "spotui:lyrics-open";
@@ -153,7 +161,7 @@
         { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
         { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
         { cmd: "tui bind clear", desc: "Remove all keybinds" },
-        { cmd: "tui restore [-full]", desc: "Reset all settings to defaults and reload (keeps history, keybinds, actions and your pin token; -full wipes everything)" },
+        { cmd: "tui restore [-full]", desc: "Reset SpoTUI's own settings to defaults and reload (keeps history, keybinds, actions, your pin token, saved themes and the onboarding and banner flags; -full removes every SpoTUI setting stored in Spotify). Spotify's own settings and other extensions' data are never touched" },
         { cmd: "Ctrl+R", desc: "Reverse-search persistent command history (typing filters, Ctrl+R cycles older matches, Enter fills the bar, Esc aborts; unknown commands stay session-only)" },
         { cmd: "Tab", desc: "Accept the ghost fill suggestion in the command bar (repeat to cycle matches); also completes the last word of any known command, e.g. tui -viz -ga + Tab → tui -viz -gap" },
         { cmd: "Esc", desc: "Abort history search, or leave the command bar so Spotify gets its keys back" },
@@ -275,12 +283,6 @@
             const parsed = JSON.parse(raw);
             return Array.isArray(parsed) ? parsed : [];
         } catch (e) { return []; }
-    }
-
-    function storageClear() {
-        try {
-            localStorage.clear();
-        } catch (e) {}
     }
 
     function sleep(ms) {
@@ -610,7 +612,6 @@ body.spotui-spotify-enabled, body {
         jamIntervalId: null,
         jamBarPrevHidden: null,
         jamLastAppliedUri: null,
-        themesFeedPromise: null,
         playlistListScrollRaf: null,
         songListScrollRaf: null,
         songScrollAnimRaf: null,
@@ -1959,10 +1960,12 @@ body.spotui-spotify-enabled, body {
         };
     }
 
-    // Get current theme accent color from CSS variables
+    // Get current theme accent color from CSS variables. Read from <body>: the
+    // shade rule defines --spotui-accent there, and inheritance only goes down, so
+    // <html> never sees it (root inline vars still inherit into <body>).
     function getSpotuiAccentColor() {
         try {
-            const accent = getComputedStyle(document.documentElement).getPropertyValue("--spotui-accent").trim();
+            const accent = getComputedStyle(document.body).getPropertyValue("--spotui-accent").trim();
             return accent || "#ff8c42";
         } catch (e) {
             return "#ff8c42";
@@ -2306,7 +2309,12 @@ body.spotui-spotify-enabled, body {
         const gap = n > 1 ? Math.min(getGap(), Math.max(0, Math.floor((w - n) / (n - 1)))) : 0;
         const bw = Math.max(1, (w - gap * (n - 1)) / n);
         const step = bw + gap;
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--visualizer-color").trim() || "#ff8c42";
+        // One computed-style read per frame, on <body> (where the shade rule
+        // defines the accent; <html> would never see it).
+        const style = getComputedStyle(document.body);
+        ctx.fillStyle = style.getPropertyValue("--visualizer-color").trim()
+            || style.getPropertyValue("--spotui-accent").trim()
+            || "#ff8c42";
         for (let i = 0; i < n; i++) {
             const bh = data[i] * h;
             if (bh <= 0) continue;
@@ -3606,6 +3614,13 @@ body.spotui-spotify-enabled, body {
     // would try to rejoin a dead jam).
     const NEVER_WIPE_KEYS = new Set([LAUNCHED_KEY, UPDATE_BANNER_KEY, JAM_STATE_KEY, DEBUG_KEY, VISUALIZER_STORAGE_KEY, LYRICS_STORAGE_KEY]);
 
+    // What a plain `tui restore` leaves in place: personal config and secrets,
+    // the saved-themes library (and its corrupt-blob backup; saved themes are the
+    // user's data, not a look) and the launched/banner flags (wiping them would
+    // replay onboarding and resurrect a dismissed banner). Everything else
+    // spotui:* is a look or transient state and is removed.
+    const RESTORE_KEEP_KEYS = new Set([...PERSONAL_KEYS, SAVES_KEY, SAVES_KEY + ".corrupt", LAUNCHED_KEY, UPDATE_BANNER_KEY]);
+
     // Only spotui:* keys that are actually a look take part in snapshots. The
     // library itself and its corrupt-blob backup are internal, not a look.
     function isLookKey(k) {
@@ -3664,6 +3679,23 @@ body.spotui-spotify-enabled, body {
     // storage): callers must invalidate so menus never show ghost themes.
     function invalidateSavesCache() {
         savesCache = null;
+    }
+
+    // tui restore: remove SpoTUI's own localStorage keys (spotui:*) and nothing
+    // else, because the origin is shared with Spotify and other extensions. With
+    // `full` every spotui:* key goes; otherwise RESTORE_KEEP_KEYS survive.
+    function wipeSpotuiStorage(full = false) {
+        try {
+            const doomed = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k && k.startsWith("spotui:") && (full || !RESTORE_KEEP_KEYS.has(k))) doomed.push(k);
+            }
+            for (const k of doomed) {
+                try { localStorage.removeItem(k); } catch (e) {}
+            }
+        } catch (e) {}
+        invalidateSavesCache();
     }
 
     function snapshotSettings() {
@@ -4376,83 +4408,230 @@ body.spotui-spotify-enabled, body {
         });
     }
 
-    // Singleton promise for theme feed
+    // Theme feed as DATA: fetched as text, parsed without executing anything and
+    // validated into fresh objects. No imports on purpose, so the parsing stays
+    // pure and testable on its own.
 
-    // Load theme catalog from remote server
-    function loadThemeFeed(onLoad, onError) {
-        if (window.spotuiThemes && window.spotuiThemes.length) {
-            onLoad();
-            return;
+    const FEED_MAX_BYTES = 2 * 1024 * 1024;
+    const FEED_TIMEOUT_MS = 8000;
+    const FEED_MAX_THEMES = 1000;
+    const NAME_MAX = 120;
+    const ID_MAX = 200;
+    const URL_MAX = 2000;
+    const COMMANDS_MAX = 300;
+    // Longest real feed command is ~570 chars (a wallpaper URL with a signed
+    // token), so 500 would drop a legitimate theme.
+    const COMMAND_MAX = 1000;
+    const ID_REGEX = /^[A-Za-z0-9+/=_-]+$/;
+    const FORBIDDEN_KEYS = ["__proto__", "constructor", "prototype"];
+    const FEED_PREFIX_REGEX = /^window\.spotuiThemes\s*=\s*/;
+
+    // https URL or "". The feed's preview images must never be http:, data:,
+    // javascript: or anything else.
+    function safeHttpsUrl(value) {
+        if (typeof value !== "string" || !value || value.length > URL_MAX) return "";
+        try {
+            const url = new URL(value);
+            if (url.protocol !== "https:" || url.username || url.password) return "";
+            return url.href;
+        } catch (e) {
+            return "";
         }
-        if (!app.themesFeedPromise) {
-            app.themesFeedPromise = new Promise((resolve, reject) => {
-                const script = document.createElement("script");
-                script.src = `${THEME_HOST}themes.js?_=${Math.floor(Date.now() / 1000)}`;
-                script.onload = () => {
-                    try {
-                        if (window.spotuiThemes && window.spotuiThemes.length) {
-                            resolve();
-                        } else {
-                            reject(new Error("Theme feed loaded but empty"));
-                        }
-                    } finally {
-                        script.remove();
-                    }
-                };
-                script.onerror = () => {
-                    try {
-                        reject(new Error("Failed to load themes"));
-                    } finally {
-                        script.remove();
-                    }
-                };
-                document.body.appendChild(script);
-            });
-            app.themesFeedPromise.then(
-                () => { app.themesFeedPromise = null; },
-                () => { app.themesFeedPromise = null; }
-            );
-        }
-        app.themesFeedPromise.then(onLoad, onError);
     }
 
+    function isPlainObject(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+        const proto = Object.getPrototypeOf(value);
+        return proto === Object.prototype || proto === null;
+    }
+
+    // One feed entry -> { theme } or { reason } (why it is dropped). Only the
+    // fields the cards and the apply path read are copied; the rest is dropped.
+    // `null` counts as a missing optional field. A bad id only costs the theme its
+    // id (still usable from the panel); anything that could apply a partial or
+    // unsafe look drops the whole theme.
+    function validateTheme(item) {
+        if (!isPlainObject(item)) return { reason: "not-object" };
+        if (FORBIDDEN_KEYS.some((k) => Object.hasOwn(item, k))) return { reason: "forbidden-key" };
+        const { id, name, commands, screenshot_url: shot } = item;
+        if (typeof name !== "string" || !name.trim() || name.length > NAME_MAX) return { reason: "bad-name" };
+        let list = [];
+        if (commands !== undefined && commands !== null) {
+            if (!Array.isArray(commands) || commands.length > COMMANDS_MAX) return { reason: "bad-commands" };
+            if (!commands.every((c) => typeof c === "string" && c.length <= COMMAND_MAX)) return { reason: "bad-command" };
+            list = commands.slice();
+        }
+        const theme = { name, screenshot_url: safeHttpsUrl(shot), commands: Object.freeze(list) };
+        if (typeof id === "string" && id && id.length <= ID_MAX && ID_REGEX.test(id)) theme.id = id;
+        return { theme: Object.freeze(theme) };
+    }
+
+    // Parsed feed -> { themes, dropped, reasons }. `reasons` counts drops by
+    // cause (no feed content). Throws when the feed is not a list.
+    function validateThemeFeed(data) {
+        if (!Array.isArray(data)) throw new Error("Theme feed is not a list");
+        const themes = [];
+        const reasons = {};
+        let dropped = 0;
+        const drop = (reason, n = 1) => {
+            dropped += n;
+            reasons[reason] = (reasons[reason] || 0) + n;
+        };
+        if (data.length > FEED_MAX_THEMES) drop("over-limit", data.length - FEED_MAX_THEMES);
+        for (let i = 0; i < data.length && i < FEED_MAX_THEMES; i++) {
+            const { theme, reason } = validateTheme(data[i]);
+            if (theme) themes.push(theme);
+            else drop(reason);
+        }
+        return { themes, dropped, reasons };
+    }
+
+    // Feed text -> parsed value, never evaluated. Accepts the plain JSON list and
+    // the legacy `window.spotuiThemes = [...];` wrapper (exact prefix only), so
+    // anything else (extra statements, other assignments) fails to parse.
+    function parseThemeFeedText(text) {
+        if (typeof text !== "string") throw new Error("Theme feed is not text");
+        let body = text.trim().replace(FEED_PREFIX_REGEX, "");
+        if (body.endsWith(";")) body = body.slice(0, -1);
+        if (body[0] !== "[") throw new Error("Theme feed is not a list");
+        return JSON.parse(body);
+    }
+
+    // Read a response body as text, refusing more than `max` bytes.
+    async function readCappedText(res, max) {
+        const declared = Number(res.headers.get("content-length"));
+        if (declared > max) throw new Error("Theme feed too large");
+        if (!res.body || typeof res.body.getReader !== "function") {
+            const whole = await res.text();
+            if (whole.length > max) throw new Error("Theme feed too large");
+            return whole;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let size = 0;
+        let out = "";
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > max) {
+                reader.cancel().catch(() => {});
+                throw new Error("Theme feed too large");
+            }
+            out += decoder.decode(value, { stream: true });
+        }
+        return out + decoder.decode();
+    }
+
+    // { signal, clear } — the timer is cleared once the request is over.
+    function timeoutSignal(ms) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), ms);
+        return { signal: controller.signal, clear: () => clearTimeout(timer) };
+    }
+
+    // Fetch a feed URL as data and validate it: { themes, dropped, reasons }.
+    async function fetchThemeFeed(url) {
+        const timeout = timeoutSignal(FEED_TIMEOUT_MS);
+        try {
+            const res = await fetch(url, {
+                cache: "no-store",
+                credentials: "omit",
+                referrerPolicy: "no-referrer",
+                signal: timeout.signal,
+            });
+            if (!res.ok) {
+                try { res.body?.cancel().catch(() => {}); } catch (e) { /* body already gone */ }
+                throw new Error(`Theme feed HTTP ${res.status}`);
+            }
+            return validateThemeFeed(parseThemeFeedText(await readCappedText(res, FEED_MAX_BYTES)));
+        } finally {
+            timeout.clear();
+        }
+    }
+
+    const FEED_ERROR = "Failed to load themes";
     const channelCache = {};
     const channelInflight = {};
+
+    // Transport for channels whose host sends no CORS header, so the page cannot
+    // fetch them as data (see THEME_SCRIPT_CHANNELS). The script's global is read
+    // once and removed; the caller validates it like any other feed.
+    // A feed that declares `var spotuiThemes` leaves a non-configurable global:
+    // `delete` then throws in strict mode, so fall back to blanking it.
+    function clearFeedGlobal() {
+        try { delete window.spotuiThemes; } catch (e) { /* non-configurable */ }
+        try {
+            if (window.spotuiThemes !== undefined) window.spotuiThemes = undefined;
+        } catch (e) { /* read-only: nothing more to do */ }
+    }
+
+    // Always settles: load, error or the same timeout the fetch path uses.
+    function loadFeedScript(src) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement("script");
+            script.src = src;
+            let finished = false;
+            let timer = 0;
+            const done = (fn, read) => {
+                if (finished) return;
+                finished = true;
+                clearTimeout(timer);
+                script.onload = null;
+                script.onerror = null;
+                script.remove();
+                let value;
+                try {
+                    if (read) value = window.spotuiThemes;
+                    clearFeedGlobal();
+                } catch (e) { /* settle anyway */ }
+                fn(value);
+            };
+            script.onload = () => done(resolve, true);
+            script.onerror = () => done(() => reject(new Error(FEED_ERROR)), false);
+            timer = setTimeout(() => done(() => reject(new Error(FEED_ERROR)), false), FEED_TIMEOUT_MS);
+            clearFeedGlobal();
+            document.body.appendChild(script);
+        });
+    }
+
+    // One feed -> validated themes. Any transport/parse failure surfaces as the
+    // same "Failed to load themes" error the old script loader gave.
+    async function fetchChannel(key) {
+        const src = `${THEME_CHANNELS[key]}?_=${Math.floor(Date.now() / 1000)}`;
+        let result;
+        try {
+            result = THEME_SCRIPT_CHANNELS.has(key)
+                ? validateThemeFeed(await loadFeedScript(src))
+                : await fetchThemeFeed(src);
+        } catch (err) {
+            dbg(`[SpoTUI] theme feed (${key}) failed:`, err && err.message);
+            throw new Error(FEED_ERROR, { cause: err });
+        }
+        if (result.dropped) {
+            dbg(`[SpoTUI] theme feed (${key}): dropped ${result.dropped} invalid theme(s)`, JSON.stringify(result.reasons || {}));
+        }
+        if (!result.themes.length) throw new Error("Theme feed loaded but empty");
+        return result.themes;
+    }
 
     function loadThemeChannel(channel, force = false) {
         const key = THEME_CHANNELS[channel] ? channel : "live";
         if (!force && channelCache[key]) return Promise.resolve(channelCache[key].slice());
-        if (!force && channelInflight[key]) return channelInflight[key];
-        const src = `${THEME_CHANNELS[key]}?_=${Math.floor(Date.now() / 1000)}`;
-        const promise = new Promise((resolve, reject) => {
-            const script = document.createElement("script");
-            script.src = src;
-            script.onload = () => {
-                try {
-                    const themes = (window.spotuiThemes || []).slice();
-                    if (themes.length) {
-                        channelCache[key] = themes;
-                        resolve(themes.slice());
-                    } else {
-                        reject(new Error("Theme feed loaded but empty"));
-                    }
-                } finally {
-                    script.remove();
-                    delete channelInflight[key];
-                }
-            };
-            script.onerror = () => {
-                try {
-                    reject(new Error("Failed to load themes"));
-                } finally {
-                    script.remove();
-                    delete channelInflight[key];
-                }
-            };
-            document.body.appendChild(script);
+        if (!force && channelInflight[key]) return channelInflight[key].then((themes) => themes.slice());
+        const promise = fetchChannel(key).then((themes) => {
+            channelCache[key] = themes;
+            return themes;
         });
         channelInflight[key] = promise;
-        return promise;
+        const settled = () => { if (channelInflight[key] === promise) delete channelInflight[key]; };
+        promise.then(settled, settled);
+        return promise.then((themes) => themes.slice());
+    }
+
+    // Validated themes already loaded for a channel ([] when none yet).
+    function getCachedThemes(channel) {
+        return (channelCache[channel] || []).slice();
     }
 
     function createAddThemeCard(imgUrl, channel) {
@@ -4463,7 +4642,7 @@ body.spotui-spotify-enabled, body {
         card.className = "theme-card";
         card.innerHTML = `
         <h3>${label}</h3>
-        <img src="${imgUrl}" alt="${label}">
+        <img src="${imgUrl}" alt="${label}" referrerpolicy="no-referrer" loading="lazy" decoding="async">
         <button>${stable ? "Contribute" : "Add"}</button>
     `;
         card.querySelector("button").addEventListener("click", () => {
@@ -4478,7 +4657,10 @@ body.spotui-spotify-enabled, body {
         const title = document.createElement("h3");
         title.textContent = theme.name || "";
         const img = document.createElement("img");
-        img.src = theme.screenshot_url || "";
+        img.referrerPolicy = "no-referrer";
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.src = safeHttpsUrl(theme.screenshot_url);
         img.alt = `${theme.name || ""} screenshot`;
         const btn = document.createElement("button");
         btn.textContent = "Apply";
@@ -4520,21 +4702,8 @@ body.spotui-spotify-enabled, body {
             }
             return theme;
         };
-        if (opts.channel) {
-            return loadThemeChannel(opts.channel).then((themes) => apply(themes));
-        }
-        return new Promise((resolve, reject) => {
-            loadThemeFeed(
-                async () => {
-                    try {
-                        resolve(await apply(window.spotuiThemes || []));
-                    } catch (err) {
-                        reject(err);
-                    }
-                },
-                () => reject(new Error("Failed to load themes"))
-            );
-        });
+        // Without a channel (onboarding) the stable list is the one that was shown.
+        return loadThemeChannel(opts.channel || "stable").then((themes) => apply(themes));
     }
 
     // Encode theme name for theme ID generation
@@ -5073,7 +5242,10 @@ body.spotui-spotify-enabled, body {
         button.className = "spotui-onboarding-theme";
         button.dataset.themeName = theme.name || "";
         const img = document.createElement("img");
-        img.src = theme.screenshot_url || "";
+        img.referrerPolicy = "no-referrer";
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.src = safeHttpsUrl(theme.screenshot_url);
         img.alt = `${theme.name || ""} screenshot`;
         const label = document.createElement("span");
         label.textContent = theme.name || "";
@@ -5111,7 +5283,7 @@ body.spotui-spotify-enabled, body {
                 renderOnboardingPanel();
             });
         } else if (app.onboardingStage === "themes") {
-            const themes = getThemeSelectionList(window.spotuiThemes || [], app.onboardingShowAllThemes);
+            const themes = getThemeSelectionList(getCachedThemes("stable"), app.onboardingShowAllThemes);
             const themeCards = themes.map(onboardingThemeCard);
             panel.innerHTML = `
             <div class="spotui-onboarding-stage">
@@ -5237,7 +5409,7 @@ body.spotui-spotify-enabled, body {
             return;
         }
 
-        if (window.spotuiThemes && window.spotuiThemes.length) {
+        if (getCachedThemes("stable").length) {
             renderOnboardingStage(panel);
             return;
         }
@@ -5924,23 +6096,7 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             if (argsLower[0] === "restore") {
-                const fullRestore = argsLower[1] === "-full";
-                const launchedValue = storageGet(LAUNCHED_KEY);
-                const bannerValue = storageGet(UPDATE_BANNER_KEY);
-                const keybindsValue = storageGet(KEYBIND_STORAGE_KEY);
-                const actionsValue = storageGet(ACTIONS_STORAGE_KEY);
-                const historyValue = storageGet(HISTORY_KEY);
-                const pinTokenValue = storageGet(PIN_TOKEN_KEY);
-                storageClear();
-                invalidateSavesCache();
-                if (!fullRestore) {
-                    if (pinTokenValue !== null) storageSet(PIN_TOKEN_KEY, pinTokenValue);
-                    if (launchedValue !== null) storageSet(LAUNCHED_KEY, launchedValue);
-                    if (bannerValue !== null) storageSet(UPDATE_BANNER_KEY, bannerValue);
-                    if (keybindsValue !== null) storageSet(KEYBIND_STORAGE_KEY, keybindsValue);
-                    if (actionsValue !== null) storageSet(ACTIONS_STORAGE_KEY, actionsValue);
-                    if (historyValue !== null) storageSet(HISTORY_KEY, historyValue);
-                }
+                wipeSpotuiStorage(argsLower[1] === "-full");
                 showRestartPopup("Wait 5 seconds and relaunch Spotify", true);
                 setTimeout(() => location.reload(), 100);
                 return;
@@ -9442,18 +9598,24 @@ body.spotui-standby .Root__now-playing-bar {
     }
 
     function getColors() {
-        const style = getComputedStyle(document.documentElement);
+        // <body>, not <html>: the shade rule defines --spotui-accent on body, and
+        // custom properties only inherit downward. Root inline vars reach body too.
+        const style = getComputedStyle(document.body);
+        // Same chains as the CSS: lyrics active, panel border/text, bar text and
+        // the visualizer fall back to the accent. Inactive/near lyrics and the
+        // backgrounds have fixed CSS fallbacks, so they keep fixed values here.
+        const accent = cssVar(style, "--spotui-accent", "#ff8c42");
         return {
-            active: cssVar(style, "--lyrics-color-active", "#ff8c42"),
+            active: cssVar(style, "--lyrics-color-active", accent),
             inactive: cssVar(style, "--lyrics-color-inactive", "#777777"),
             near: cssVar(style, "--lyrics-color-light-inactive", "#b3b3b3"),
-            accent: cssVar(style, "--spotui-accent", "#ff8c42"),
+            accent,
             panel_bg: cssVar(style, "--panel-bg-color", "#000000"),
-            panel_border: cssVar(style, "--panel-border-color", "#ff8c42"),
-            panel_text: cssVar(style, "--panel-text-color", "#ff8c42"),
+            panel_border: cssVar(style, "--panel-border-color", accent),
+            panel_text: cssVar(style, "--panel-text-color", accent),
             bar_bg: cssVar(style, "--player-bar-background", "#000000"),
-            bar_text: cssVar(style, "--player-bar-text-color", "#ff8c42"),
-            visualizer: cssVar(style, "--visualizer-color", "#ff8c42"),
+            bar_text: cssVar(style, "--player-bar-text-color", accent),
+            visualizer: cssVar(style, "--visualizer-color", accent),
         };
     }
 

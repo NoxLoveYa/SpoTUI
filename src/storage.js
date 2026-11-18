@@ -41,8 +41,3 @@ export function readJsonArray(key) {
     } catch (e) { return []; }
 }
 
-export function storageClear() {
-    try {
-        localStorage.clear();
-    } catch (e) {}
-}

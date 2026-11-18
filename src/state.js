@@ -67,7 +67,6 @@ export const app = {
     jamIntervalId: null,
     jamBarPrevHidden: null,
     jamLastAppliedUri: null,
-    themesFeedPromise: null,
     playlistListScrollRaf: null,
     songListScrollRaf: null,
     songScrollAnimRaf: null,

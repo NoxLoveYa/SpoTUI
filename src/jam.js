@@ -4,10 +4,12 @@ import { app } from "./state.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { setStatusTag, toastBase } from "./utils.js";
 
-// Get current theme accent color from CSS variables
+// Get current theme accent color from CSS variables. Read from <body>: the
+// shade rule defines --spotui-accent there, and inheritance only goes down, so
+// <html> never sees it (root inline vars still inherit into <body>).
 export function getSpotuiAccentColor() {
     try {
-        const accent = getComputedStyle(document.documentElement).getPropertyValue("--spotui-accent").trim();
+        const accent = getComputedStyle(document.body).getPropertyValue("--spotui-accent").trim();
         return accent || "#ff8c42";
     } catch (e) {
         return "#ff8c42";

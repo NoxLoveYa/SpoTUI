@@ -3,7 +3,8 @@ import { LAUNCHED_KEY } from "./constants.js";
 import { closeActivePanel, handleGlobalEsc } from "./panels.js";
 import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
-import { applyThemeByName, getThemeSelectionList, loadThemeChannel } from "./themes.js";
+import { safeHttpsUrl } from "./themefeed.js";
+import { applyThemeByName, getCachedThemes, getThemeSelectionList, loadThemeChannel } from "./themes.js";
 
 // Mark that the user has launched SpoTUI at least once
 export function markLaunched() {
@@ -46,7 +47,10 @@ export function onboardingThemeCard(theme) {
     button.className = "spotui-onboarding-theme";
     button.dataset.themeName = theme.name || "";
     const img = document.createElement("img");
-    img.src = theme.screenshot_url || "";
+    img.referrerPolicy = "no-referrer";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.src = safeHttpsUrl(theme.screenshot_url);
     img.alt = `${theme.name || ""} screenshot`;
     const label = document.createElement("span");
     label.textContent = theme.name || "";
@@ -84,7 +88,7 @@ export function renderOnboardingStage(panel) {
             renderOnboardingPanel();
         });
     } else if (app.onboardingStage === "themes") {
-        const themes = getThemeSelectionList(window.spotuiThemes || [], app.onboardingShowAllThemes);
+        const themes = getThemeSelectionList(getCachedThemes("stable"), app.onboardingShowAllThemes);
         const themeCards = themes.map(onboardingThemeCard);
         panel.innerHTML = `
             <div class="spotui-onboarding-stage">
@@ -210,7 +214,7 @@ export function renderOnboardingPanel() {
         return;
     }
 
-    if (window.spotuiThemes && window.spotuiThemes.length) {
+    if (getCachedThemes("stable").length) {
         renderOnboardingStage(panel);
         return;
     }

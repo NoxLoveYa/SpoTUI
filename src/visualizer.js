@@ -51,7 +51,12 @@ function paint() {
     const gap = n > 1 ? Math.min(getGap(), Math.max(0, Math.floor((w - n) / (n - 1)))) : 0;
     const bw = Math.max(1, (w - gap * (n - 1)) / n);
     const step = bw + gap;
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--visualizer-color").trim() || "#ff8c42";
+    // One computed-style read per frame, on <body> (where the shade rule
+    // defines the accent; <html> would never see it).
+    const style = getComputedStyle(document.body);
+    ctx.fillStyle = style.getPropertyValue("--visualizer-color").trim()
+        || style.getPropertyValue("--spotui-accent").trim()
+        || "#ff8c42";
     for (let i = 0; i < n; i++) {
         const bh = data[i] * h;
         if (bh <= 0) continue;
