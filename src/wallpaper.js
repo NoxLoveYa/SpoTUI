@@ -2,6 +2,7 @@ import { WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from 
 import { reassertPosterLayer } from "./posters.js";
 import { storageSet } from "./storage.js";
 import { dbg } from "./utils.js";
+import { notifyWallpaperChanged } from "./videomode.js";
 
 // Check if URL points to video file
 export function isVideoWallpaperUrl(url) {
@@ -164,6 +165,8 @@ export function setWallpaper(url, opacity, save = true, opts = {}) {
     // Content stays above the wallpaper via the #spotui-tui > * rule in
     // styles.js (covers late-created nodes too); posters re-assert below.
     try { reassertPosterLayer(); } catch (e) {}
+    // A wallpaper <video> was just (re)played: keep it paused while a Canvas covers it.
+    try { notifyWallpaperChanged(); } catch (e) {}
     if (save) {
         storageSet(WP_URL_KEY, url);
         storageSet(WP_OPACITY_KEY, opacity);

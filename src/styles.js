@@ -19,7 +19,7 @@ const style = `#spotui-tui {
 /* Keep TUI content above the wallpaper layer (replaces a per-swap DOM crawl
    that also missed late-created nodes). The absolute overlays are excluded:
    like the old crawl's static-only check, this must not relativize them. */
-#spotui-tui > :not(#spotui-wallpaper):not(#spotui-logo):not(#spotui-top-fade) {
+#spotui-tui > :not(#spotui-wallpaper):not(#spotui-video):not(#spotui-logo):not(#spotui-top-fade) {
     position: relative;
     z-index: 1;
 }
@@ -1419,6 +1419,74 @@ body.spotui-standby #spotui-dj-tags,
 body.spotui-standby #spotui-popup,
 body.spotui-standby .Root__now-playing-bar {
     display: none !important;
+}
+
+/* Video mode: Spotify Canvas layer. Same z as the wallpaper (-1) but later
+   in the DOM, so it paints over it; posters (z 0) fade out by body class;
+   logo (z 0), panels/footer/visualizer (z 1) and top fade (z 2) stay above. */
+#spotui-video {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.spotui-video-slot {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    transition: opacity 600ms ease;
+}
+
+.spotui-video-slot.is-in {
+    opacity: 1;
+}
+
+.spotui-video-slot.is-out {
+    opacity: 0;
+    transition-duration: 800ms;
+}
+
+.spotui-video-backdrop {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    filter: blur(32px);
+    transform: scale(1.15);
+    opacity: 0.35;
+}
+
+.spotui-video-media {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: 0.6;
+}
+
+/* Only while video mode is on: other poster opacity changes (tui -posters) stay
+   instant, and turning video mode off drops the transition in the same style
+   change that drops the override, so the posters are back at once. */
+body.spotui-video-on #spotui-posters {
+    transition: opacity 600ms ease;
+}
+
+body.spotui-video-showing #spotui-posters {
+    opacity: 0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .spotui-video-slot,
+    body.spotui-video-on #spotui-posters {
+        transition: none;
+    }
 }
 `;
 // Inject theme CSS into document head

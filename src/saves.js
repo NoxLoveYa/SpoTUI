@@ -1,11 +1,12 @@
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, toggleLogo } from "./appearance.js";
 import { resetGrid } from "./ascii.js";
-import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, DEBUG_KEY, HISTORY_KEY, JAM_STATE_KEY, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_STORAGE_KEY, PIN_TOKEN_KEY, SHADE_KEY, UPDATE_BANNER_KEY, VISUALIZER_STORAGE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, DEBUG_KEY, HISTORY_KEY, JAM_STATE_KEY, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_STORAGE_KEY, PIN_TOKEN_KEY, SHADE_KEY, UPDATE_BANNER_KEY, VIDEO_MODE_KEY, VISUALIZER_STORAGE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { POSTERS_IMGS, POSTERS_LAYOUT, renderPosters, renderSavedLayout, startRotateTimer } from "./posters.js";
 import { applyShade, isValidShade } from "./shade.js";
 import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
+import { refreshVideoMode } from "./videomode.js";
 import { refreshVisualizer } from "./visualizer.js";
 import { setWallpaper } from "./wallpaper.js";
 
@@ -155,11 +156,12 @@ function describeSnapshot(settings) {
     parts.push(settings[SHADE_KEY] && isValidShade(settings[SHADE_KEY])
         ? `shade ${settings[SHADE_KEY]}`
         : (settings[SHADE_KEY] ? `shade ${settings[SHADE_KEY]} invalid, ignored` : "orange"));
+    if (settings[VIDEO_MODE_KEY] === "1") parts.push("video mode");
     return parts.join(" · ");
 }
 
 // Re-run the boot look-restore against current storage (mirrors main.js:
-// appearance everywhere, wallpaper, wall, shade — no session resume).
+// appearance everywhere, wallpaper, wall, shade, video mode — no session resume).
 function refreshLook() {
     toggleLogo(storageGet("spotui:logo-visible") === "off" ? "off" : "on");
     if (storageGet(ANIMATION_KEY) === "off") {
@@ -192,6 +194,7 @@ function refreshLook() {
         if (wp) wp.remove();
     }
     restoreWall();
+    refreshVideoMode();
 }
 
 // Theme apply restores the snapshot's exact wall: each poster back to its

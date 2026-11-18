@@ -26,6 +26,8 @@
     const WP_POS_KEY = "spotui:wp-pos";
     const WP_RICH_KEY = "spotui:wp-rich";
     const SHADE_KEY = "spotui:shade";
+    // Video mode (Spotify Canvas as background): a look key, "1" = on, absent = off.
+    const VIDEO_MODE_KEY = "spotui:video-mode";
     const DEBUG_KEY = "spotui:debug";
 
     // External endpoints used by the poster wall (kept here, not inline).
@@ -133,7 +135,7 @@
     // first-position branches of executeInner in commands.js.
     const THEME_ALLOWED_COMMANDS = new Set(["lyrics", "visualizer"]);
     const THEME_ALLOWED_TUI_SUBS = new Set([
-        "-l", "-a", "-wp", "-shade", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
+        "-l", "-a", "-wp", "-shade", "-video", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
     ]);
     // Poster-wall words a theme may not use: they add remote images or delete the user's pins.
     const THEME_BLOCKED_POSTER_WORDS = new Set(["add", "clear"]);
@@ -155,6 +157,7 @@
         { cmd: "tui -wp &lt;url&gt; [-o &lt;0-1&gt;] [-fit &lt;cover/contain/fill/none&gt;] [-pos &lt;center/top/bottom/left/right&gt;] [-rich &lt;0-200&gt;]", desc: "Set wallpaper — bare tui -wp shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off)" },
         { cmd: "tui -wp off", desc: "Remove wallpaper" },
         { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare tui -shade shows current" },
+        { cmd: "tui -video &lt;on/off/toggle&gt;", desc: "Video mode: while a song plays, its Spotify Canvas (the short looping clip) replaces your background; paused, stopped, ads, podcasts or songs without a Canvas bring your wallpaper/posters back. Off by default, saved with your look; bare tui -video shows what it is doing" },
         { cmd: "tui -debug &lt;on/off&gt;", desc: "Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print)" },
         { cmd: "tui -t pull &lt;theme_id&gt; [-live]", desc: "Apply a theme by its ID from the stable feed, or the live feed with -live (find IDs on our website)" },
         { cmd: "tui -t &lt;save &lt;name&gt;|list|apply &lt;name&gt;|delete &lt;name&gt;&gt;", desc: "Snapshot the current look locally (incl. poster wall layout); list opens the themes menu (Enter applies, Del/D fills in the delete command); restore/delete snapshots" },
@@ -3417,6 +3420,2190 @@ body.spotui-spotify-enabled, body {
         runSearch(query);
     }
 
+    // Video mode, pure core: Spotify Canvas parsing, profile choice, item
+    // classification, an LRU byte cache and the timer-driven controller.
+    // Self-contained: no dependencies, no DOM, no Spicetify. Everything
+    // environmental arrives through `deps`, so the whole module runs under Node.
+    // Every input is untrusted: each function returns null (or undefined where
+    // documented) on a shape mismatch and never throws.
+
+    const VIDEO_TIMING = Object.freeze({
+        PAUSE_GRACE_MS: 1500,
+        SWAP_WAIT_MS: 1500,
+        POLL_MS: 2000,
+        FADE_IN_MS: 600,
+        CROSSFADE_MS: 600,
+        FADE_OUT_MS: 800,
+        MANIFEST_TIMEOUT_MS: 8000,
+        SEGMENTS_TIMEOUT_MS: 15000,
+        LOOKUP_TIMEOUT_MS: 8000,
+        RETRY_DELAY_MS: 2000,
+        FAILED_RETRY_AFTER_MS: 10 * 60 * 1000,
+        DEGRADE_MS: 30 * 60 * 1000,
+        PRELOAD_DELAY_MS: 3000,
+        QUALITY_SAMPLE_MS: 10000,
+    });
+
+    const VIDEO_LIMITS = Object.freeze({
+        MAX_PROFILE_SHORT_SIDE: 720,
+        MAX_SEGMENTS: 8,
+        MAX_TRACK_BYTES: 12 * 1024 * 1024,
+        CACHE_TRACKS: 3,
+        CACHE_BYTES: 24 * 1024 * 1024,
+        NEGATIVE_CACHE: 300,
+        FAIL_LIMIT: 4,
+        MAX_PENALTY: 2,
+        DROP_RATIO: 0.1,
+        FREEZE_DROP_RATIO: 0.2,
+        MIN_FRAMES: 100,
+    });
+    const CANVAS_MANIFEST_BASE = "https://spclient.wg.spotify.com/manifests/v9/json/sources/";
+    const VP9_MIME = 'video/webm; codecs="vp9"';
+
+    // video-fa.scdn.co, i.scdn.co, canvaz.scdn.co and the second CDN video-cf.spotifycdn.com
+    const MEDIA_HOST_REGEX = /^(?:[a-z0-9-]+\.)*(?:scdn\.co|spotifycdn\.com)$/i;
+    const FILE_ID_REGEX = /^[A-Za-z0-9_-]{8,128}$/;
+    const IMAGE_ID_REGEX = /^[0-9a-f]{40}$/i;
+    const FILE_TYPE_REGEX = /^[a-z0-9]{1,8}$/i;
+    const MAX_URL_LENGTH = 2000;
+    const MAX_TEMPLATE_LENGTH = 1000;
+    const MAX_PROFILE_ENTRIES = 256;
+    const MAX_BASE_URLS = 16;
+    const MAX_SEGMENT_LENGTH_SEC = 60;
+    const MAX_DIMENSION = 16384;
+    const MAX_PROFILE_ID = 9999;
+    // image_url (300 px) first: plenty behind a 32 px blur and the lightest download.
+    const ART_KEYS = ["image_url", "image_large_url", "image_xlarge_url", "image_small_url"];
+    const VIDEO_TYPES = ["VIDEO", "VIDEO_LOOPING", "VIDEO_LOOPING_RANDOM"];
+    const IMAGE_TYPES = ["IMAGE", "GIF"];
+
+    // Own, non-inherited property read: a polluted Object.prototype or a JSON
+    // "__proto__" key can never feed a field we look up by name.
+    function own(o, key) {
+        if (o === null || typeof o !== "object") return undefined;
+        return Object.prototype.hasOwnProperty.call(o, key) ? o[key] : undefined;
+    }
+
+    function isPlainObject$1(o) {
+        return o !== null && typeof o === "object" && !Array.isArray(o);
+    }
+
+    // Parsed URL or null. Only https on a Spotify CDN host, no credentials, no
+    // custom port, no whitespace/quote/angle/backslash characters.
+    function checkUrl(s) {
+        if (typeof s !== "string" || s.length === 0 || s.length > MAX_URL_LENGTH) return null;
+        if (/[\u0000- "<>\\\u007f]/.test(s)) return null;
+        let u;
+        try {
+            u = new URL(s);
+        } catch (e) {
+            return null;
+        }
+        if (u.protocol !== "https:") return null;
+        if (u.username || u.password || u.port) return null;
+        if (!MEDIA_HOST_REGEX.test(u.hostname)) return null;
+        return u;
+    }
+
+    function safeMediaUrl(s) {
+        const u = checkUrl(s);
+        if (!u) return null;
+        const href = u.href;
+        return href.length <= MAX_URL_LENGTH ? href : null;
+    }
+
+    function spotifyImageToUrl(v) {
+        if (typeof v !== "string") return null;
+        if (v.startsWith("spotify:image:")) {
+            const id = v.slice("spotify:image:".length);
+            return IMAGE_ID_REGEX.test(id) ? "https://i.scdn.co/image/" + id : null;
+        }
+        const u = checkUrl(v);
+        if (!u || u.hostname.toLowerCase() !== "i.scdn.co" || u.search || u.hash) return null;
+        return /^\/image\/[0-9a-f]{40}$/i.test(u.pathname) ? u.href : null;
+    }
+
+    function artUrlFromMetadata(meta) {
+        if (!isPlainObject$1(meta)) return null;
+        for (const key of ART_KEYS) {
+            const url = spotifyImageToUrl(own(meta, key));
+            if (url) return url;
+        }
+        return null;
+    }
+
+    // "none" | "ad" | "episode" | "local" | "track" | "other"
+    function classifyItem(item) {
+        if (!isPlainObject$1(item)) return "none";
+        const meta = isPlainObject$1(own(item, "metadata")) ? own(item, "metadata") : {};
+        const uri = typeof own(item, "uri") === "string" ? own(item, "uri") : "";
+        const type = own(item, "type");
+        const mediaType = own(item, "mediaType");
+        if (type === "ad" || own(meta, "is_advertisement") === "true" || uri.startsWith("spotify:ad:")) return "ad";
+        if (
+            type === "episode" ||
+            (typeof mediaType === "string" && mediaType !== "audio") ||
+            uri.startsWith("spotify:episode:")
+        ) {
+            return "episode";
+        }
+        if (uri.startsWith("spotify:local:")) return "local";
+        if (uri.startsWith("spotify:track:")) return "track";
+        return "other";
+    }
+
+    // Canvas shape: { kind: "video", fileId, artUrl } | { kind: "image", imageUrl, artUrl }.
+    function normalizeCanvas(raw, artUrl) {
+        if (!isPlainObject$1(raw)) return null;
+        const type = own(raw, "type");
+        if (typeof type !== "string") return null;
+        const art = typeof artUrl === "string" ? safeMediaUrl(artUrl) : null;
+        if (VIDEO_TYPES.includes(type)) {
+            const fileId = own(raw, "fileId");
+            // The .cnvs.mp4 `url` is ignored on purpose: it is H.264 and cannot be played here.
+            if (typeof fileId !== "string" || !FILE_ID_REGEX.test(fileId)) return null;
+            return { kind: "video", fileId, artUrl: art };
+        }
+        if (IMAGE_TYPES.includes(type)) {
+            const imageUrl = safeMediaUrl(own(raw, "url"));
+            if (!imageUrl) return null;
+            return { kind: "image", imageUrl, artUrl: art };
+        }
+        return null;
+    }
+
+    // Reads the flat `canvas.*` keys of a player item's metadata.
+    // undefined: no `canvas.url` key (unknown, ask GraphQL). null: keys present but invalid.
+    function canvasFromMetadata(meta) {
+        if (!isPlainObject$1(meta)) return undefined;
+        if (own(meta, "canvas.url") === undefined) return undefined;
+        return normalizeCanvas(
+            { type: own(meta, "canvas.type"), url: own(meta, "canvas.url"), fileId: own(meta, "canvas.fileId") },
+            artUrlFromMetadata(meta)
+        );
+    }
+
+    // resp = { data: { trackUnion: { canvas: { fileId, type, uri, url } | null } } }
+    function canvasFromGraphQL(resp, artUrl) {
+        const canvas = own(own(own(resp, "data"), "trackUnion"), "canvas");
+        if (!canvas) return null;
+        return normalizeCanvas(canvas, artUrl);
+    }
+
+    function posInt(n, max) {
+        return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= max ? n : null;
+    }
+
+    function isVp9Webm(p) {
+        const fileType = own(p, "file_type");
+        const mime = own(p, "mime_type");
+        const codec = own(p, "video_codec");
+        const webm =
+            (typeof fileType === "string" && fileType.toLowerCase() === "webm") ||
+            (typeof mime === "string" && mime.toLowerCase() === "video/webm");
+        const vp9 = typeof codec === "string" && /^vp0?9(\.|$)/i.test(codec);
+        return webm && vp9;
+    }
+
+    function nonEmpty(v) {
+        if (v === undefined || v === null || v === false) return false;
+        if (Array.isArray(v)) return v.length > 0;
+        if (typeof v === "object") return Object.keys(v).length > 0;
+        return true;
+    }
+
+    // Real shape (verified against live manifests):
+    //   { contents: [{ segment_length, end_time_millis, encryption_infos, profiles: [
+    //       { id, file_type, mime_type, video_codec, video_width, video_height, ... }] }],
+    //     end_time_millis, base_urls: [..], initialization_template, segment_template }
+    // Returns { profiles: [{ id, width, height, fileType }] (VP9 WebM, height ascending),
+    // segLenSec, endMs, baseUrls (every valid CDN base, in order), initTpl, segTpl } or null.
+    function parseCanvasManifest(json) {
+        try {
+            if (!isPlainObject$1(json)) return null;
+            const contents = own(json, "contents");
+            const c = Array.isArray(contents) ? contents[0] : json;
+            if (!isPlainObject$1(c)) return null;
+            if (nonEmpty(own(c, "encryption_infos")) || nonEmpty(own(json, "encryption_infos"))) return null;
+
+            const segLenSec = posInt(own(c, "segment_length") ?? own(json, "segment_length"), MAX_SEGMENT_LENGTH_SEC);
+            const endRaw = own(json, "end_time_millis") ?? own(c, "end_time_millis");
+            if (segLenSec === null || typeof endRaw !== "number" || !Number.isFinite(endRaw) || endRaw <= 0) return null;
+            const endMs = endRaw;
+            if (Math.ceil(endMs / 1000 / segLenSec) > VIDEO_LIMITS.MAX_SEGMENTS) return null;
+
+            const rawProfiles = own(c, "profiles") ?? own(json, "profiles");
+            if (!Array.isArray(rawProfiles) || rawProfiles.length > MAX_PROFILE_ENTRIES) return null;
+            const profiles = [];
+            for (const p of rawProfiles) {
+                if (!isPlainObject$1(p) || !isVp9Webm(p)) continue;
+                if (own(p, "encrypted") === true || nonEmpty(own(p, "encryption_info")) || nonEmpty(own(p, "encryption_infos"))) {
+                    return null;
+                }
+                const id = own(p, "id");
+                const width = own(p, "video_width");
+                const height = own(p, "video_height");
+                const fileType = own(p, "file_type");
+                if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id > MAX_PROFILE_ID) continue;
+                if (!posInt(width, MAX_DIMENSION) || !posInt(height, MAX_DIMENSION)) continue;
+                if (typeof fileType !== "string" || !FILE_TYPE_REGEX.test(fileType)) continue;
+                profiles.push({ id, width, height, fileType: fileType.toLowerCase() });
+            }
+            if (profiles.length === 0) return null;
+            profiles.sort((a, b) => a.height - b.height || a.width - b.width || a.id - b.id);
+
+            const initTpl = own(json, "initialization_template") ?? own(c, "initialization_template");
+            const segTpl = own(json, "segment_template") ?? own(c, "segment_template");
+            if (typeof initTpl !== "string" || initTpl.length === 0 || initTpl.length > MAX_TEMPLATE_LENGTH) return null;
+            if (typeof segTpl !== "string" || segTpl.length === 0 || segTpl.length > MAX_TEMPLATE_LENGTH) return null;
+            if (!segTpl.includes("{{segment_timestamp}}")) return null;
+
+            // Fixtures list two CDN hosts (video-fa.scdn.co, video-cf.spotifycdn.com):
+            // keep every valid one, in order; the loader falls back to the next.
+            const bases = own(json, "base_urls") ?? own(c, "base_urls");
+            if (!Array.isArray(bases)) return null;
+            const baseUrls = [];
+            for (const b of bases.slice(0, MAX_BASE_URLS)) {
+                const href = safeMediaUrl(b);
+                if (!href) continue;
+                const withSlash = href.endsWith("/") ? href : href + "/";
+                if (!baseUrls.includes(withSlash)) baseUrls.push(withSlash);
+            }
+            if (baseUrls.length === 0) return null;
+            return { profiles, segLenSec, endMs, baseUrls, initTpl, segTpl };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // { init, segments: [url...] } or null. The signed query string inside the
+    // templates is kept byte for byte: only the {{...}} placeholders change, and the
+    // result is validated for protocol, host, length and leftover "{{".
+    function segmentUrls(manifest, profile, baseIndex = 0) {
+        try {
+            if (!isPlainObject$1(manifest) || !isPlainObject$1(profile)) return null;
+            const { segLenSec, endMs, baseUrls, initTpl, segTpl } = manifest;
+            if (!Array.isArray(baseUrls) || !Number.isInteger(baseIndex) || baseIndex < 0 || baseIndex >= baseUrls.length) return null;
+            const baseUrl = baseUrls[baseIndex];
+            const id = profile.id;
+            const fileType = profile.fileType;
+            if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id > MAX_PROFILE_ID) return null;
+            if (typeof fileType !== "string" || !FILE_TYPE_REGEX.test(fileType)) return null;
+            if (posInt(segLenSec, MAX_SEGMENT_LENGTH_SEC) === null) return null;
+            if (typeof endMs !== "number" || !Number.isFinite(endMs) || endMs <= 0) return null;
+            if (typeof initTpl !== "string" || typeof segTpl !== "string" || typeof baseUrl !== "string") return null;
+            const base = checkUrl(baseUrl);
+            if (!base) return null;
+            const prefix = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+
+            const fill = (tpl, ts) => {
+                const path = tpl
+                    .split("{{profile_id}}")
+                    .join(String(id))
+                    .split("{{file_type}}")
+                    .join(fileType)
+                    .split("{{segment_timestamp}}")
+                    .join(String(ts))
+                    .replace(/^\/+/, "");
+                if (path.includes("{{")) return null;
+                const full = prefix + path;
+                const u = checkUrl(full);
+                if (!u || u.hostname !== base.hostname) return null;
+                return full;
+            };
+
+            const count = Math.ceil(endMs / 1000 / segLenSec);
+            if (count < 1 || count > VIDEO_LIMITS.MAX_SEGMENTS) return null;
+            const init = fill(initTpl, 0);
+            if (init === null) return null;
+            const segments = [];
+            // Whole-second timestamps 0, L, 2L, ... while t * 1000 < endMs.
+            for (let t = 0; t * 1000 < endMs; t += segLenSec) {
+                if (segments.length >= VIDEO_LIMITS.MAX_SEGMENTS) return null;
+                const url = fill(segTpl, t);
+                if (url === null) return null;
+                segments.push(url);
+            }
+            return { init, segments };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Height in CSS px a clip of clipW x clipH is displayed at inside a layerW x layerH
+    // box with object-fit: contain. Any invalid input falls back to layerH (and to 0
+    // when the layer itself is invalid).
+    function displayedHeight(layerW, layerH, clipW, clipH) {
+        const ok = (n) => typeof n === "number" && Number.isFinite(n) && n > 0;
+        if (!ok(layerH)) return 0;
+        if (!ok(layerW) || !ok(clipW) || !ok(clipH)) return layerH;
+        const aspect = clipW / clipH;
+        return Math.min(layerH, layerW / aspect);
+    }
+
+    // profiles: [{ id, width, height, fileType }]. Drops profiles whose SHORT side is
+    // over the cap (orientation-neutral: 1080x720 and 720x1080 weigh the same),
+    // takes the first with height >= targetHeight (else the largest left), then
+    // steps down `penalty` positions.
+    function chooseProfile(profiles, opts) {
+        try {
+            if (!Array.isArray(profiles)) return null;
+            const target = opts && Number.isFinite(opts.targetHeight) ? opts.targetHeight : 0;
+            const rawPenalty = opts && Number.isFinite(opts.penalty) ? Math.floor(opts.penalty) : 0;
+            const penalty = Math.max(0, rawPenalty);
+            const usable = profiles
+                .filter(
+                    (p) =>
+                        isPlainObject$1(p) &&
+                        Number.isFinite(p.width) &&
+                        Number.isFinite(p.height) &&
+                        Math.min(p.width, p.height) <= VIDEO_LIMITS.MAX_PROFILE_SHORT_SIDE
+                )
+                .slice(0, MAX_PROFILE_ENTRIES)
+                .sort((a, b) => a.height - b.height);
+            if (usable.length === 0) return null;
+            let idx = usable.findIndex((p) => p.height >= target);
+            if (idx < 0) idx = usable.length - 1;
+            return usable[Math.max(0, idx - penalty)];
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Time allowed for all segments of one clip: the base budget up to a 480 short
+    // side, half again for the 720 profile (about twice the bytes).
+    function segmentsTimeoutMs(profile) {
+        const w = profile && Number.isFinite(profile.width) ? profile.width : 0;
+        const h = profile && Number.isFinite(profile.height) ? profile.height : 0;
+        const short = Math.min(w, h);
+        return short > 480 ? Math.round(VIDEO_TIMING.SEGMENTS_TIMEOUT_MS * 1.5) : VIDEO_TIMING.SEGMENTS_TIMEOUT_MS;
+    }
+
+    // Byte-bounded LRU. get() refreshes recency; set() evicts the oldest entries
+    // until both caps hold. A value larger than maxBytes (or an invalid size) is
+    // rejected: set() returns false and nothing is evicted or replaced.
+    function createLru(maxItems, maxBytes) {
+        const map = new Map(); // key -> { value, bytes }, insertion order = recency
+        let total = 0;
+        const itemCap = Number.isFinite(maxItems) ? maxItems : 0;
+        const byteCap = Number.isFinite(maxBytes) ? maxBytes : 0;
+        return {
+            get(key) {
+                const e = map.get(key);
+                if (!e) return undefined;
+                map.delete(key);
+                map.set(key, e);
+                return e.value;
+            },
+            set(key, value, bytes) {
+                if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return false;
+                if (bytes > byteCap || itemCap < 1) return false;
+                const old = map.get(key);
+                if (old) {
+                    total -= old.bytes;
+                    map.delete(key);
+                }
+                map.set(key, { value, bytes });
+                total += bytes;
+                while (map.size > itemCap || total > byteCap) {
+                    const oldest = map.keys().next();
+                    if (oldest.done) break;
+                    total -= map.get(oldest.value).bytes;
+                    map.delete(oldest.value);
+                }
+                return true;
+            },
+            delete(key) {
+                const e = map.get(key);
+                if (!e) return false;
+                total -= e.bytes;
+                return map.delete(key);
+            },
+            clear() {
+                map.clear();
+                total = 0;
+            },
+            bytes() {
+                return total;
+            },
+            size() {
+                return map.size;
+            },
+        };
+    }
+
+    // Controller. deps: { now, setTimeout, clearTimeout, readPlayer, resolve, load,
+    // show, hide, resume, release, log }. See the state table in the build plan.
+    // Phases: off | idle | resolving | loading | showing | fading.
+    // Reasons: waiting | unsupported | no-canvas | loading | showing | error | hidden.
+    function createController(deps) {
+        const T = VIDEO_TIMING;
+        let enabled = false;
+        let phase = "off";
+        let reason = "waiting";
+        let targetUri = null;
+        let shown = null; // { uri, media }
+        let kept = null; // { uri, media }: hidden but alive, for a resume without reload
+        const settled = new Map(); // uri -> { result: "none" | "error", at }
+        let gen = 0;
+        let inflight = false;
+        let abort = null;
+        let graceTimer = null;
+        let swapTimer = null;
+        let fadeTimer = null;
+        const timers = new Map(); // timer id -> cancel callback (or null)
+
+        function call(name, ...args) {
+            try {
+                return deps[name](...args);
+            } catch (e) {
+                try {
+                    deps.log("dep-error", { name, message: String((e && e.message) || e).slice(0, 200) });
+                } catch (e2) {
+                    // nothing left to report to
+                }
+                return undefined;
+            }
+        }
+
+        function later(ms, fn, onCancel) {
+            const id = deps.setTimeout(() => {
+                timers.delete(id);
+                fn();
+            }, ms);
+            timers.set(id, onCancel || null);
+            return id;
+        }
+
+        function cancelTimer(id) {
+            if (id === null) return;
+            if (timers.has(id)) {
+                timers.delete(id);
+                call("clearTimeout", id);
+            }
+        }
+
+        function newAbort() {
+            if (typeof AbortController === "function") return new AbortController();
+            const signal = { aborted: false };
+            return {
+                signal,
+                abort() {
+                    signal.aborted = true;
+                },
+            };
+        }
+
+        function cancelInflight() {
+            gen++;
+            inflight = false;
+            if (abort) {
+                try {
+                    abort.abort();
+                } catch (e) {
+                    // already aborted
+                }
+                abort = null;
+            }
+        }
+
+        // Reduced motion: the CSS transitions are off, so nothing waits for a fade.
+        function instant() {
+            try {
+                return Boolean(deps.instant && deps.instant());
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function releaseLater(media, ms) {
+            if (instant()) {
+                call("release", media);
+                return;
+            }
+            later(ms, () => call("release", media), () => call("release", media));
+        }
+
+        // until: epoch ms after which a "none" is asked again (a transient "none",
+        // e.g. video Canvases switched off by the circuit breaker). 0 = for good.
+        function setSettled(uri, result, until = 0) {
+            settled.delete(uri);
+            settled.set(uri, { result, at: deps.now(), until });
+            while (settled.size > VIDEO_LIMITS.NEGATIVE_CACHE) {
+                const oldest = settled.keys().next();
+                if (oldest.done) break;
+                settled.delete(oldest.value);
+            }
+        }
+
+        function readNow() {
+            let p = null;
+            try {
+                p = deps.readPlayer();
+            } catch (e) {
+                p = null;
+            }
+            const item = p && p.item ? p.item : null;
+            const cls = classifyItem(item);
+            const visible = Boolean(p && p.visible);
+            const paused = p ? Boolean(p.isPaused) : true;
+            const uri = item && typeof item.uri === "string" ? item.uri : null;
+            const want = visible && !paused && cls === "track" && uri ? uri : null;
+            let idleReason = "waiting";
+            if (!visible) idleReason = "hidden";
+            else if (cls === "ad" || cls === "episode" || cls === "local" || cls === "other") idleReason = "unsupported";
+            return { want, idleReason };
+        }
+
+        // Fade the shown media away. keep: hidden but resumable (pause / hidden window);
+        // otherwise it is released once the fade-out is over.
+        function fadeAway(keep, why) {
+            if (!shown) return;
+            const old = shown;
+            shown = null;
+            call("hide");
+            if (keep) {
+                if (kept && kept.media !== old.media) call("release", kept.media);
+                kept = old;
+            } else {
+                releaseLater(old.media, T.FADE_OUT_MS);
+            }
+            reason = why;
+            cancelTimer(fadeTimer);
+            fadeTimer = null;
+            if (instant()) {
+                phase = inflight ? "resolving" : "idle";
+                return;
+            }
+            phase = "fading";
+            fadeTimer = later(T.FADE_OUT_MS, () => {
+                fadeTimer = null;
+                if (phase === "fading") phase = inflight ? "resolving" : "idle";
+            });
+        }
+
+        function onGrace() {
+            graceTimer = null;
+            if (!enabled) return;
+            const { want, idleReason } = readNow();
+            if (want !== null) {
+                poke();
+                return;
+            }
+            if (shown) fadeAway(true, idleReason);
+            if (idleReason === "unsupported" && inflight) {
+                cancelInflight();
+                targetUri = null;
+            }
+        }
+
+        function onSwapWait() {
+            swapTimer = null;
+            if (!enabled || !shown) return;
+            if (targetUri !== null && shown.uri !== targetUri) fadeAway(false, "loading");
+        }
+
+        // The wanted track's clip is already alive in `kept` (it loaded while the
+        // player had moved on): use it, no resolve and no load. The adapter answers
+        // `false` when the media is gone (its slot was removed): then it is released
+        // and the caller loads the track the normal way.
+        function useKept() {
+            const k = kept;
+            kept = null;
+            const old = shown;
+            const done = old ? call("show", k.media, { crossfade: true }) : call("resume", k.media);
+            if (done === false) {
+                call("release", k.media);
+                return false;
+            }
+            if (old) releaseLater(old.media, T.CROSSFADE_MS);
+            shown = k;
+            targetUri = k.uri;
+            phase = "showing";
+            reason = "showing";
+            return true;
+        }
+
+        function onLoaded(uri, media) {
+            cancelTimer(swapTimer);
+            swapTimer = null;
+            const { want, idleReason } = readNow();
+            if (want === uri) {
+                const old = shown;
+                if (call("show", media, { crossfade: Boolean(old) }) === false) {
+                    // The slot vanished under us: not "showing". The next poke loads it again.
+                    call("release", media);
+                    reason = "loading";
+                    phase = shown ? "showing" : "idle";
+                    return;
+                }
+                if (old) releaseLater(old.media, T.CROSSFADE_MS);
+                if (kept) {
+                    call("release", kept.media);
+                    kept = null;
+                }
+                shown = { uri, media };
+                cancelTimer(graceTimer);
+                graceTimer = null;
+                phase = "showing";
+                reason = "showing";
+                return;
+            }
+            // The player moved on (pause, hidden window, another track): keep it paused.
+            if (kept && kept.media !== media) call("release", kept.media);
+            kept = { uri, media };
+            phase = shown ? "showing" : "idle";
+            if (!shown) reason = idleReason;
+            poke();
+        }
+
+        async function run(myGen, uri, signal) {
+            try {
+                const canvas = await deps.resolve(uri, signal);
+                if (myGen !== gen) return;
+                if (!canvas) {
+                    inflight = false;
+                    const until = deps.transientNone ? Number(call("transientNone", uri)) : 0;
+                    setSettled(uri, "none", Number.isFinite(until) && until > 0 ? until : 0);
+                    cancelTimer(swapTimer);
+                    swapTimer = null;
+                    reason = "no-canvas";
+                    phase = "idle";
+                    if (shown) fadeAway(false, "no-canvas");
+                    return;
+                }
+                phase = "loading";
+                const media = await deps.load(canvas, uri, signal);
+                if (myGen !== gen) {
+                    if (media) call("release", media);
+                    return;
+                }
+                inflight = false;
+                if (!media) throw new Error("empty-media");
+                onLoaded(uri, media);
+            } catch (e) {
+                if (myGen !== gen || (signal && signal.aborted)) return;
+                inflight = false;
+                if (e && e.retryLater) {
+                    // Not this track's fault (no free slot): no error entry, the next poke asks again.
+                    call("log", "load-deferred", { uri, message: String(e.message || e).slice(0, 200) });
+                    cancelTimer(swapTimer);
+                    swapTimer = null;
+                    reason = "loading";
+                    phase = shown ? "showing" : "idle";
+                    return;
+                }
+                setSettled(uri, "error");
+                call("log", "load-failed", { uri, message: String((e && e.message) || e).slice(0, 200) });
+                cancelTimer(swapTimer);
+                swapTimer = null;
+                reason = "error";
+                phase = "idle";
+                if (shown) fadeAway(false, "error");
+            }
+        }
+
+        function start(want) {
+            cancelInflight();
+            abort = newAbort();
+            inflight = true;
+            const myGen = gen;
+            // A kept clip of the wanted track never gets here (poke uses it); any other is dead weight.
+            if (kept) {
+                call("release", kept.media);
+                kept = null;
+            }
+            cancelTimer(swapTimer);
+            swapTimer = null;
+            if (shown) swapTimer = later(T.SWAP_WAIT_MS, onSwapWait);
+            targetUri = want;
+            phase = "resolving";
+            reason = "loading";
+            run(myGen, want, abort.signal).catch(() => {});
+        }
+
+        function poke() {
+            if (!enabled) return;
+            const { want, idleReason } = readNow();
+
+            if (want === null) {
+                if (shown) {
+                    if (graceTimer === null) graceTimer = later(T.PAUSE_GRACE_MS, onGrace);
+                    return;
+                }
+                reason = idleReason;
+                if (idleReason === "unsupported" && inflight) {
+                    cancelInflight();
+                    targetUri = null;
+                }
+                if (!inflight && phase !== "fading") phase = "idle";
+                return;
+            }
+
+            cancelTimer(graceTimer);
+            graceTimer = null;
+
+            if (shown && shown.uri === want) {
+                if (inflight) cancelInflight();
+                cancelTimer(swapTimer);
+                swapTimer = null;
+                targetUri = want;
+                phase = "showing";
+                reason = "showing";
+                return;
+            }
+
+            if (kept && kept.uri === want) {
+                if (inflight) cancelInflight();
+                cancelTimer(swapTimer);
+                swapTimer = null;
+                if (useKept()) return;
+                // The kept media was gone: fall through to a normal load of this track.
+            }
+
+            const s = settled.get(want);
+            const retry = s && ((s.result === "error" && deps.now() - s.at >= T.FAILED_RETRY_AFTER_MS) || (s.until > 0 && deps.now() >= s.until));
+            if (retry) {
+                settled.delete(want);
+            } else if (s) {
+                if (inflight && targetUri !== want) cancelInflight();
+                targetUri = want;
+                cancelTimer(swapTimer);
+                swapTimer = null;
+                if (shown) fadeAway(false, s.result === "none" ? "no-canvas" : "error");
+                else {
+                    reason = s.result === "none" ? "no-canvas" : "error";
+                    if (!inflight && phase !== "fading") phase = "idle";
+                }
+                return;
+            }
+
+            if (inflight && targetUri === want) return;
+            start(want);
+        }
+
+        function enable() {
+            if (enabled) return;
+            enabled = true;
+            phase = "idle";
+            reason = "waiting";
+            poke();
+        }
+
+        function disable() {
+            const wasShown = shown;
+            const wasKept = kept;
+            enabled = false;
+            cancelInflight();
+            for (const [id, onCancel] of Array.from(timers.entries())) {
+                timers.delete(id);
+                call("clearTimeout", id);
+                if (onCancel) onCancel();
+            }
+            graceTimer = null;
+            swapTimer = null;
+            fadeTimer = null;
+            shown = null;
+            kept = null;
+            if (wasShown) {
+                call("hide");
+                call("release", wasShown.media);
+            }
+            if (wasKept) call("release", wasKept.media);
+            settled.clear();
+            targetUri = null;
+            phase = "off";
+            reason = "waiting";
+        }
+
+        function status() {
+            return { enabled, phase, reason, uri: targetUri };
+        }
+
+        return { enable, disable, poke, status };
+    }
+
+    // Video mode: while a song plays, its Spotify Canvas replaces the theme
+    // background (layer #spotui-video, same z as the wallpaper but later in the
+    // DOM). The state machine lives in videocanvas.js; this file is the adapters:
+    // Spicetify player, DOM, fetch and MediaSource. Look key "spotui:video-mode":
+    // "1" = on, absent = off. Off means zero work: no listeners, timers, observers
+    // or DOM. Nothing here reads or sends the Spotify access token: the manifest is
+    // requested through Spicetify's own request layer, the segments with no
+    // credentials. Logs carry hosts, codes and profile heights, never full URLs.
+
+    const LAYER_ID = "spotui-video";
+    const BODY_SHOWING_CLASS = "spotui-video-showing";
+    const BODY_ON_CLASS = "spotui-video-on"; // video mode is enabled (scopes the poster transition)
+    const ENABLE_WAIT_MS = 500;
+    const ENABLE_MAX_TRIES = 20;
+    const T = VIDEO_TIMING;
+
+    // ---- module state ----------------------------------------------------------
+    let controller = null;
+    let layer = null;
+    let running = false; // listeners, poll and layer are live
+    let starting = false; // waiting for #spotui-tui / Spicetify.Player
+    let gaveUp = false; // the 20 start attempts failed: the interface never appeared
+    let startTries = 0;
+    let startTimer = null;
+    let pollTimer = null;
+    let classObserver = null;
+    let lastVisible = true;
+    let current = null; // media being shown (the controller's `shown`)
+    let zTop = 0;
+    let wpTimer = null;
+    let wallpaperFaded = false; // current slot's fade-in is complete
+    let pausedWallpaper = false; // we paused the wallpaper <video>
+    const slots = new Set(); // every media whose slot is in the DOM
+    const timers = new Set(); // adapter timers, all cleared on disable
+    const cache = createLru(VIDEO_LIMITS.CACHE_TRACKS, VIDEO_LIMITS.CACHE_BYTES); // uri -> download
+    const negCache = new Map(); // uri -> true: GraphQL said "no Canvas" (insertion order = age)
+    const MAX_SLOTS = 2; // a crossfade needs two; never more in the DOM
+    // Quality guard (session only, reset on disable).
+    let penalty = 0; // profile steps down for the NEXT load
+    let frozen = false; // video Canvases shown as a still: the machine cannot keep up
+    let qualityTimer = null;
+    let qualitySample = null; // { video, total, dropped }
+    // MSE: the segments of this stream carry timestamps relative to their own start
+    // (found out once per session by comparing the buffered end with the manifest length).
+    let offsetMode = false;
+    // Circuit breaker (session only, reset on disable).
+    let failStreak = 0; // consecutive video-load failures on different tracks
+    const failUris = new Set();
+    let degradedUntil = 0; // epoch ms; video Canvases resolve to none until then
+    let halfOpen = false; // window over: the next failure re-arms it at once
+    let degradedSkip = null; // { uri, until }: last track whose video Canvas the breaker skipped
+    // Reduced motion.
+    let motionQuery = null;
+    let reducedMotion = false;
+    // Preload of the next song's clip (bytes only, into the LRU).
+    let preloadTimer = null;
+    let preloadJob = null; // { uri, ac, promise }
+    const preloadFailed = new Set(); // uris whose preload failed: not retried (the real load still is)
+    let lastUri = null; // playing uri seen by the last poke, to spot a track change
+
+    // ---- small helpers ---------------------------------------------------------
+
+    function after(ms, fn) {
+        const id = setTimeout(() => {
+            timers.delete(id);
+            try {
+                fn();
+            } catch (e) {
+                dbg("[SpoTUI-video]", "timer-error", describeError(e));
+            }
+        }, ms);
+        timers.add(id);
+        return id;
+    }
+
+    function cancel(id) {
+        if (id !== null && timers.delete(id)) clearTimeout(id);
+    }
+
+    function cancelAll() {
+        for (const id of timers) clearTimeout(id);
+        timers.clear();
+    }
+
+    // Errors this module throws carry a short code as message and vm = true. Foreign
+    // errors (fetch, Spicetify, MSE) are reduced to name + status: their messages
+    // can echo URLs with signed queries.
+    function vmError(code, extra, retry) {
+        const e = new Error(extra ? `${code} ${extra}` : code);
+        e.vm = true;
+        e.retry = Boolean(retry);
+        return e;
+    }
+
+    function abortError() {
+        const e = new Error("aborted");
+        e.name = "AbortError";
+        e.vm = true;
+        return e;
+    }
+
+    function describeError(e) {
+        if (e && e.vm) return e.message;
+        const name = e && typeof e.name === "string" ? e.name.slice(0, 40) : "error";
+        const status = e && Number.isFinite(e.status) ? ` ${e.status}` : "";
+        return name + status;
+    }
+
+    function throwIfAborted(signal) {
+        if (signal && signal.aborted) throw abortError();
+    }
+
+    function hostOf(url) {
+        try {
+            return new URL(url).hostname;
+        } catch (e) {
+            return "?";
+        }
+    }
+
+    function isOn() {
+        return storageGet(VIDEO_MODE_KEY) === "1";
+    }
+
+    function vp9Supported() {
+        try {
+            return typeof MediaSource === "function" && MediaSource.isTypeSupported(VP9_MIME);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function isVisible() {
+        const cls = document.body.classList;
+        return !document.hidden && !cls.contains("spotui-tui-hidden") && !cls.contains("spotui-standby");
+    }
+
+    // Video Canvases shown as a still (frame 0, never play()): reduced motion, or
+    // the quality guard gave up on this machine.
+    function stillMode() {
+        return reducedMotion || frozen;
+    }
+
+    // ---- circuit breaker -------------------------------------------------------
+
+    // True while video Canvases are off. When the window runs out the breaker goes
+    // half-open: the next video Canvas is tried, one failure re-arms the window.
+    function isDegraded() {
+        if (degradedUntil === 0) return false;
+        if (Date.now() < degradedUntil) return true;
+        degradedUntil = 0;
+        halfOpen = true;
+        return false;
+    }
+
+    function armDegrade() {
+        degradedUntil = Date.now() + T.DEGRADE_MS;
+        halfOpen = false;
+        failStreak = 0;
+        failUris.clear();
+        dbg("[SpoTUI-video] degraded: video Canvases off for 30 min");
+    }
+
+    // Only video loads that really failed (not aborts, not "no Canvas") reach this.
+    // Several failures on one uri count once.
+    function noteLoadFailure(uri) {
+        if (degradedUntil !== 0 && Date.now() < degradedUntil) return;
+        if (halfOpen) {
+            armDegrade();
+            return;
+        }
+        if (failUris.has(uri)) return;
+        failUris.add(uri);
+        failStreak += 1;
+        if (failStreak >= VIDEO_LIMITS.FAIL_LIMIT) armDegrade();
+    }
+
+    function noteLoadSuccess() {
+        failStreak = 0;
+        failUris.clear();
+        halfOpen = false;
+    }
+
+    // Controller hook: a "none" that is really "video Canvases off for now" is asked
+    // again once the window is over (epoch ms), not remembered for the whole session.
+    function transientNone(uri) {
+        return degradedSkip && degradedSkip.uri === uri ? degradedSkip.until : 0;
+    }
+
+    // True when `uri` shows "none" only because the breaker switched video Canvases off.
+    function skippedByBreaker(uri) {
+        return Boolean(degradedSkip && degradedSkip.uri === uri && Date.now() < degradedSkip.until);
+    }
+
+    // An AbortSignal that follows `signal`, aborts after `ms` too, and says which.
+    function scoped(signal, ms) {
+        const ac = new AbortController();
+        let timedOut = false;
+        let timer = null;
+        const relay = () => ac.abort();
+        if (signal) {
+            if (signal.aborted) ac.abort();
+            else if (signal.addEventListener) signal.addEventListener("abort", relay, { once: true });
+        }
+        if (ms > 0) {
+            timer = after(ms, () => {
+                timedOut = true;
+                ac.abort();
+            });
+        }
+        return {
+            signal: ac.signal,
+            timedOut: () => timedOut,
+            abort: () => ac.abort(),
+            done() {
+                cancel(timer);
+                if (signal && signal.removeEventListener) signal.removeEventListener("abort", relay);
+            },
+        };
+    }
+
+    // Race a promise we cannot abort (Spicetify calls) against a scope.
+    function guard(promise, scope) {
+        return new Promise((resolve, reject) => {
+            const s = scope.signal;
+            const settle = Promise.resolve(promise);
+            const fail = () => reject(scope.timedOut() ? vmError("timeout", "", true) : abortError());
+            if (s.aborted) {
+                settle.catch(() => {});
+                fail();
+                return;
+            }
+            const onAbort = () => fail();
+            s.addEventListener("abort", onAbort, { once: true });
+            settle.then(
+                (v) => {
+                    s.removeEventListener("abort", onAbort);
+                    resolve(v);
+                },
+                (err) => {
+                    s.removeEventListener("abort", onAbort);
+                    reject(err);
+                }
+            );
+        });
+    }
+
+    // Resolve on `ev`; reject on `failEv` or when the scope aborts.
+    function once(target, ev, scope, failEv) {
+        return new Promise((resolve, reject) => {
+            const s = scope.signal;
+            const cleanup = () => {
+                target.removeEventListener(ev, onOk);
+                if (failEv) target.removeEventListener(failEv, onBad);
+                s.removeEventListener("abort", onAbort);
+            };
+            const onOk = () => {
+                cleanup();
+                resolve();
+            };
+            const onBad = () => {
+                cleanup();
+                reject(vmError(`${failEv}-event`));
+            };
+            const onAbort = () => {
+                cleanup();
+                reject(scope.timedOut() ? vmError("timeout", "", true) : abortError());
+            };
+            if (s.aborted) {
+                onAbort();
+                return;
+            }
+            target.addEventListener(ev, onOk);
+            if (failEv) target.addEventListener(failEv, onBad);
+            s.addEventListener("abort", onAbort, { once: true });
+        });
+    }
+
+    function delay(ms, signal) {
+        return new Promise((resolve, reject) => {
+            throwIfAborted(signal);
+            let id = null;
+            const onAbort = () => {
+                cancel(id);
+                reject(abortError());
+            };
+            id = after(ms, () => {
+                if (signal && signal.removeEventListener) signal.removeEventListener("abort", onAbort);
+                resolve();
+            });
+            if (signal && signal.addEventListener) signal.addEventListener("abort", onAbort, { once: true });
+        });
+    }
+
+    function rememberNone(uri) {
+        negCache.delete(uri);
+        negCache.set(uri, true);
+        while (negCache.size > VIDEO_LIMITS.NEGATIVE_CACHE) {
+            const oldest = negCache.keys().next();
+            if (oldest.done) break;
+            negCache.delete(oldest.value);
+        }
+    }
+
+    // ---- resolve: which Canvas does this track have? ---------------------------
+
+    function findItem(uri) {
+        const d = Spicetify.Player && Spicetify.Player.data;
+        if (!d) return null;
+        if (d.item && d.item.uri === uri) return d.item;
+        const queue = Array.isArray(d.nextItems) ? d.nextItems : [];
+        return queue.find((i) => i && i.uri === uri) || null;
+    }
+
+    async function lookupGraphQL(uri, meta, signal) {
+        const gql = Spicetify.GraphQL;
+        if (!gql || typeof gql.Request !== "function" || !gql.Definitions || !gql.Definitions.canvas) throw vmError("no-graphql");
+        const scope = scoped(signal, T.LOOKUP_TIMEOUT_MS);
+        try {
+            const resp = await guard(gql.Request(gql.Definitions.canvas, { trackUri: uri }), scope);
+            if (resp && Array.isArray(resp.errors) && resp.errors.length && !resp.data) throw vmError("graphql-error");
+            return canvasFromGraphQL(resp, artUrlFromMetadata(meta));
+        } finally {
+            scope.done();
+        }
+    }
+
+    // Item metadata first (free). Its absence on a playing item means "unknown",
+    // never "no Canvas": GraphQL decides, and only its null is remembered.
+    async function resolveCanvas(uri, signal) {
+        const item = findItem(uri);
+        const meta = item && item.metadata;
+        let canvas = canvasFromMetadata(meta);
+        let source = "metadata";
+        if (canvas === undefined) {
+            source = "graphql";
+            if (negCache.has(uri)) {
+                rememberNone(uri);
+                return null;
+            }
+            canvas = await lookupGraphQL(uri, meta, signal);
+            if (canvas === null) rememberNone(uri);
+        }
+        throwIfAborted(signal);
+        if (canvas && canvas.kind === "video" && !vp9Supported()) canvas = null;
+        if (canvas && canvas.kind === "video" && isDegraded()) {
+            // Breaker open: no manifest or segment request at all; still Canvases keep working.
+            degradedSkip = { uri, until: degradedUntil };
+            canvas = null;
+        }
+        dbg("[SpoTUI-video]", "resolved", { uri, source, kind: canvas ? canvas.kind : "none" });
+        return canvas;
+    }
+
+    async function resolveAdapter(uri, signal) {
+        try {
+            return await resolveCanvas(uri, signal);
+        } catch (e) {
+            if (signal && signal.aborted) throw e;
+            throw e && e.vm ? e : vmError(describeError(e));
+        }
+    }
+
+    // ---- load: manifest, bytes, MediaSource ------------------------------------
+
+    async function fetchManifest(fileId, signal) {
+        const cosmos = Spicetify.CosmosAsync;
+        if (!cosmos || typeof cosmos.get !== "function") throw vmError("no-cosmos");
+        const url = CANVAS_MANIFEST_BASE + encodeURIComponent(fileId) + "/options/supports_drm";
+        for (let attempt = 0; ; attempt++) {
+            const scope = scoped(signal, T.MANIFEST_TIMEOUT_MS);
+            try {
+                const res = await guard(cosmos.get(url), scope);
+                return typeof res === "string" ? JSON.parse(res) : res;
+            } catch (e) {
+                throwIfAborted(signal);
+                if (attempt >= 1) throw vmError("manifest-failed", describeError(e));
+            } finally {
+                scope.done();
+            }
+            await delay(T.RETRY_DELAY_MS, signal);
+        }
+    }
+
+    async function fetchOne(url, scope, budget) {
+        let res;
+        try {
+            res = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer", signal: scope.signal });
+        } catch (e) {
+            throwIfAborted(scope.signal);
+            throw vmError("network", hostOf(url), true);
+        }
+        if (!res.ok) throw vmError(`http-${res.status}`, hostOf(url), res.status >= 500);
+        const declared = Number(res.headers && res.headers.get && res.headers.get("content-length"));
+        if (Number.isFinite(declared) && declared > VIDEO_LIMITS.MAX_TRACK_BYTES - budget.used) throw vmError("too-big");
+        const body = res.body;
+        if (!body || typeof body.getReader !== "function") {
+            const buf = await res.arrayBuffer();
+            budget.used += buf.byteLength;
+            if (budget.used > VIDEO_LIMITS.MAX_TRACK_BYTES) throw vmError("too-big");
+            return buf;
+        }
+        // Streamed: the running total is shared by every fetch of the track, so a
+        // body without Content-Length (or all of them together) stops at the cap
+        // instead of being read whole first.
+        const reader = body.getReader();
+        const chunks = [];
+        let size = 0;
+        try {
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (!value || !value.byteLength) continue;
+                budget.used += value.byteLength;
+                if (budget.used > VIDEO_LIMITS.MAX_TRACK_BYTES) throw vmError("too-big");
+                size += value.byteLength;
+                chunks.push(value);
+            }
+        } catch (e) {
+            chunks.length = 0;
+            try {
+                const c = reader.cancel();
+                if (c && typeof c.catch === "function") c.catch(() => {});
+            } catch (e2) {}
+            throw e;
+        }
+        const out = new Uint8Array(size);
+        let at = 0;
+        for (const c of chunks) {
+            out.set(c, at);
+            at += c.byteLength;
+        }
+        return out.buffer;
+    }
+
+    async function fetchAll(urls, signal, timeoutMs) {
+        const scope = scoped(signal, timeoutMs);
+        const budget = { used: 0 };
+        try {
+            const buffers = await Promise.all([urls.init, ...urls.segments].map((u) => fetchOne(u, scope, budget)));
+            return { buffers, bytes: budget.used };
+        } catch (e) {
+            scope.abort(); // cancel the siblings
+            throw scope.timedOut() ? vmError("timeout", "", true) : e;
+        } finally {
+            scope.done();
+        }
+    }
+
+    // One retry in total, only for a network error, a timeout or a 5xx: on the
+    // second CDN host when the manifest lists one, else on the same host after a
+    // pause. A 4xx or an oversized file fails at once.
+    async function downloadSet(manifest, profile, signal, timeoutMs) {
+        for (let attempt = 0; ; attempt++) {
+            const baseIndex = manifest.baseUrls.length > 1 ? attempt : 0;
+            const urls = segmentUrls(manifest, profile, baseIndex);
+            if (!urls) throw vmError("bad-urls");
+            try {
+                return await fetchAll(urls, signal, timeoutMs);
+            } catch (e) {
+                throwIfAborted(signal);
+                if (!(e && e.vm && e.retry) || attempt >= 1) throw e;
+            }
+            if (manifest.baseUrls.length <= 1) await delay(T.RETRY_DELAY_MS, signal);
+        }
+    }
+
+    async function downloadVideo(canvas, signal) {
+        const manifest = parseCanvasManifest(await fetchManifest(canvas.fileId, signal));
+        if (!manifest) throw vmError("bad-manifest");
+        throwIfAborted(signal);
+        // Every profile of a clip shares one aspect ratio. With object-fit: contain
+        // the clip is shown min(layerH, layerW / aspect) tall: pick the profile for that.
+        const top = manifest.profiles[manifest.profiles.length - 1];
+        const usedPenalty = penalty;
+        const targetHeight = Math.ceil(displayedHeight(...layerSize(), top.width, top.height) * deviceRatio());
+        const profile = chooseProfile(manifest.profiles, { targetHeight, penalty: usedPenalty });
+        if (!profile) throw vmError("no-profile");
+        let got;
+        try {
+            got = await downloadSet(manifest, profile, signal, segmentsTimeoutMs(profile));
+        } catch (e) {
+            // A timeout means "too slow", not "broken": the next load takes a smaller
+            // profile and the breaker stays out of it until the lowest step timed out too.
+            if (e && e.vm && e.message === "timeout" && !(signal && signal.aborted)) {
+                const lowest = penalty >= VIDEO_LIMITS.MAX_PENALTY;
+                penalty = Math.min(penalty + 1, VIDEO_LIMITS.MAX_PENALTY);
+                dbg("[SpoTUI-video]", "slow link", { penalty });
+                if (!lowest) e.noBreaker = true;
+            }
+            throw e;
+        }
+        return {
+            fileId: canvas.fileId,
+            buffers: got.buffers,
+            bytes: got.bytes,
+            durationSec: manifest.endMs / 1000,
+            segLenSec: manifest.segLenSec,
+            profileH: profile.height,
+            profileShort: Math.min(profile.width, profile.height),
+            penalty: usedPenalty,
+        };
+    }
+
+    function deviceRatio() {
+        const dpr = Number(window.devicePixelRatio);
+        return dpr > 0 && Number.isFinite(dpr) ? dpr : 1;
+    }
+
+    // [w, h] in CSS px of the box the clip is shown in, read once per load. A layer
+    // that is not laid out yet (0x0: TUI hidden mid-load) falls back to the window,
+    // then to a typical 1080p window: never 0, which would lock in the smallest profile.
+    function layerSize() {
+        const pos = (n) => (typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0);
+        const w = pos(layer && layer.clientWidth) || pos(window.innerWidth) || 1920;
+        const h = pos(layer && layer.clientHeight) || pos(window.innerHeight) || 1080;
+        return [w, h];
+    }
+
+    // At most MAX_SLOTS media in the DOM. Before a third one is appended drop, in
+    // this order: a slot whose load was cancelled but has not released it yet (its
+    // load is stale), then the oldest slot that is neither on screen nor loading
+    // (an outgoing crossfade slot). If every slot is on screen or loads for real,
+    // this load fails with a "retry later" error: not an error of the track, so
+    // neither the controller nor the breaker records it.
+    function enforceSlotCap() {
+        while (slots.size >= MAX_SLOTS) {
+            let victim = null;
+            for (const media of slots) {
+                if (media !== current && media.loading && media.signal && media.signal.aborted) {
+                    victim = media;
+                    break;
+                }
+            }
+            if (!victim) {
+                for (const media of slots) {
+                    if (media !== current && !media.loading) {
+                        victim = media;
+                        break;
+                    }
+                }
+            }
+            if (!victim) {
+                const e = vmError("no-free-slot");
+                e.retryLater = true;
+                e.noBreaker = true;
+                throw e;
+            }
+            release(victim);
+        }
+    }
+
+    function buildSlot(kind, artUrl) {
+        if (!layer) throw vmError("no-layer");
+        if (!layer.isConnected) {
+            const tui = document.getElementById("spotui-tui");
+            if (!tui) throw vmError("no-tui");
+            tui.appendChild(layer);
+        }
+        enforceSlotCap();
+        const slot = document.createElement("div");
+        slot.className = "spotui-video-slot";
+        const backdrop = document.createElement("div");
+        backdrop.className = "spotui-video-backdrop";
+        if (artUrl) backdrop.style.backgroundImage = `url("${artUrl}")`;
+        let media;
+        let video = null;
+        if (kind === "video") {
+            video = document.createElement("video");
+            video.muted = true;
+            video.defaultMuted = true;
+            video.playsInline = true;
+            video.preload = "auto";
+            video.loop = true;
+            video.disablePictureInPicture = true;
+            video.disableRemotePlayback = true;
+            video.tabIndex = -1;
+            video.setAttribute("muted", "");
+            video.setAttribute("playsinline", "");
+            video.setAttribute("loop", "");
+            video.setAttribute("aria-hidden", "true");
+            // Fallback for a stream that reports `ended` instead of looping.
+            video.addEventListener("ended", () => {
+                video.currentTime = 0;
+                if (!stillMode()) playVideo(video);
+            });
+            media = video;
+        } else {
+            media = document.createElement("div");
+        }
+        media.className = "spotui-video-media";
+        slot.appendChild(backdrop);
+        slot.appendChild(media);
+        layer.appendChild(slot);
+        return { slot, media, video };
+    }
+
+    // End (s) of the last buffered range; null when the build exposes no ranges.
+    function bufferedEnd(sb) {
+        try {
+            const b = sb.buffered;
+            if (!b || typeof b.length !== "number") return null;
+            return b.length > 0 ? b.end(b.length - 1) : 0;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // buffers[0] is the init segment, the rest the media segments in order. With
+    // offsets every media segment i is placed at i * segLenSec: for a stream whose
+    // segments carry timestamps relative to their own start.
+    async function appendSegments(sb, buffers, segLenSec, withOffsets, scope) {
+        for (let i = 0; i < buffers.length; i++) {
+            throwIfAborted(scope.signal);
+            if (withOffsets) sb.timestampOffset = i === 0 ? 0 : (i - 1) * segLenSec;
+            sb.appendBuffer(buffers[i]);
+            await once(sb, "updateend", scope, "error");
+        }
+    }
+
+    // Clear the buffer and append again with offsets.
+    async function rebuildWithOffsets(ms, sb, buffers, segLenSec, durationSec, scope) {
+        sb.abort();
+        try {
+            ms.duration = durationSec; // remove() needs a duration
+        } catch (e) {}
+        const b = sb.buffered;
+        if (b && b.length > 0) {
+            sb.remove(b.start(0), b.end(b.length - 1));
+            await once(sb, "updateend", scope, "error");
+        }
+        await appendSegments(sb, buffers, segLenSec, true, scope);
+    }
+
+    const round2 = (n) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n * 100) / 100 : null);
+
+    // Returns { bufferedEnd, duration } (s) for the log. If the buffered end falls
+    // short of the manifest length by more than half a segment with 2+ segments,
+    // the segments overwrote each other (relative timestamps): rebuild once with
+    // offsets and keep that mode for the session. Still short: use what is there.
+    async function attachMse(video, entry, signal) {
+        const { buffers, durationSec, segLenSec } = entry;
+        const scope = scoped(signal, T.SEGMENTS_TIMEOUT_MS);
+        try {
+            const ms = new MediaSource();
+            const url = URL.createObjectURL(ms);
+            video.src = url;
+            try {
+                await once(ms, "sourceopen", scope);
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+            const sb = ms.addSourceBuffer(VP9_MIME);
+            await appendSegments(sb, buffers, segLenSec, offsetMode, scope);
+            const segments = buffers.length - 1;
+            const short = (end) => end !== null && segments >= 2 && end < durationSec - segLenSec / 2;
+            let end = bufferedEnd(sb);
+            if (!offsetMode && short(end)) {
+                let rebuilt = null;
+                try {
+                    await rebuildWithOffsets(ms, sb, buffers, segLenSec, durationSec, scope);
+                    rebuilt = bufferedEnd(sb);
+                } catch (e) {
+                    if (scope.timedOut()) throw vmError("timeout", "", true);
+                    throwIfAborted(scope.signal);
+                }
+                if (rebuilt !== null && rebuilt > end) {
+                    offsetMode = true;
+                    dbg("[SpoTUI-video] mse offset mode");
+                }
+                if (rebuilt !== null) end = rebuilt;
+            }
+            // Trims the stream to the manifest length; a clip whose last frame ends a
+            // hair later keeps the buffered end instead (endOfStream sets it). A clip
+            // that is still short plays what is buffered rather than failing.
+            try {
+                ms.duration = short(end) && end > 0 ? end : durationSec;
+            } catch (e) {}
+            ms.endOfStream();
+            if (!(video.readyState >= 3)) await once(video, "canplay", scope, "error");
+            return { bufferedEnd: round2(end), duration: round2(ms.duration) };
+        } finally {
+            scope.done();
+        }
+    }
+
+    function isAbort(e, signal) {
+        return Boolean((signal && signal.aborted) || (e && e.name === "AbortError"));
+    }
+
+    function cachedEntry(uri, canvas) {
+        const entry = cache.get(uri);
+        if (entry && entry.fileId !== canvas.fileId) {
+            cache.delete(uri);
+            return undefined;
+        }
+        return entry;
+    }
+
+    // The next song's preload is still running when its turn comes: wait for it
+    // instead of downloading the same clip twice. Its failure is not ours.
+    async function joinPreload(job, signal) {
+        const scope = scoped(signal, 0);
+        try {
+            await guard(job.promise, scope);
+        } catch (e) {
+            throwIfAborted(signal);
+        } finally {
+            scope.done();
+        }
+    }
+
+    async function loadVideo(canvas, uri, signal) {
+        let media = null;
+        try {
+            let entry = cachedEntry(uri, canvas);
+            if (!entry && preloadJob && preloadJob.uri === uri) {
+                await joinPreload(preloadJob, signal);
+                entry = cachedEntry(uri, canvas);
+            }
+            if (!entry) {
+                entry = await downloadVideo(canvas, signal);
+                cache.set(uri, entry, entry.bytes);
+            }
+            throwIfAborted(signal);
+            const built = buildSlot("video", canvas.artUrl);
+            media = {
+                kind: "video",
+                uri,
+                slot: built.slot,
+                video: built.video,
+                profileH: entry.profileH,
+                profileShort: entry.profileShort,
+                penalty: entry.penalty,
+                loading: true,
+                released: false,
+                signal,
+                mse: null,
+            };
+            slots.add(media);
+            media.mse = await attachMse(built.video, entry, signal);
+            throwIfAborted(signal);
+            media.loading = false;
+            noteLoadSuccess();
+            return media;
+        } catch (e) {
+            if (media) release(media);
+            if (!isAbort(e, signal) && !(e && e.noBreaker)) noteLoadFailure(uri);
+            throw e;
+        }
+    }
+
+    async function loadImage(canvas, signal) {
+        throwIfAborted(signal);
+        const built = buildSlot("image", canvas.artUrl);
+        const media = { kind: "image", uri: null, slot: built.slot, video: null, profileH: 0, profileShort: 0, penalty: 0, loading: true, released: false, signal, mse: null };
+        slots.add(media);
+        const scope = scoped(signal, T.SEGMENTS_TIMEOUT_MS);
+        try {
+            built.media.style.backgroundImage = `url("${canvas.imageUrl}")`;
+            const probe = new Image();
+            probe.referrerPolicy = "no-referrer";
+            const loaded = once(probe, "load", scope, "error").catch((e) => {
+                throw e && e.vm && e.message === "error-event" ? vmError("image-failed", hostOf(canvas.imageUrl)) : e;
+            });
+            probe.src = canvas.imageUrl;
+            await loaded;
+            throwIfAborted(signal);
+            media.loading = false;
+            return media;
+        } catch (e) {
+            release(media);
+            throw e;
+        } finally {
+            scope.done();
+        }
+    }
+
+    async function loadAdapter(canvas, uri, signal) {
+        try {
+            return canvas.kind === "image" ? await loadImage(canvas, signal) : await loadVideo(canvas, uri, signal);
+        } catch (e) {
+            if (signal && signal.aborted) throw e;
+            throw e && e.vm ? e : vmError(describeError(e));
+        }
+    }
+
+    // ---- show / hide / resume / release ---------------------------------------
+
+    function playVideo(video) {
+        if (!video) return;
+        try {
+            const p = video.play();
+            if (p && typeof p.catch === "function") p.catch(() => {});
+        } catch (e) {}
+    }
+
+    function pauseVideo(video) {
+        if (!video) return;
+        try {
+            video.pause();
+        } catch (e) {}
+    }
+
+    function setShowingClass(on) {
+        if (!document.body) return;
+        if (on) document.body.classList.add(BODY_SHOWING_CLASS);
+        else document.body.classList.remove(BODY_SHOWING_CLASS);
+    }
+
+    function pauseWallpaper() {
+        const wp = document.getElementById("spotui-wallpaper");
+        if (wp && wp.tagName === "VIDEO" && !wp.paused) {
+            pauseVideo(wp);
+            pausedWallpaper = true;
+        }
+    }
+
+    function resumeWallpaper() {
+        if (!pausedWallpaper) return;
+        pausedWallpaper = false;
+        const wp = document.getElementById("spotui-wallpaper");
+        if (wp && wp.tagName === "VIDEO") playVideo(wp);
+    }
+
+    // A still: the first frame, never play() (reduced motion, or the quality guard froze it).
+    function showStill(video) {
+        if (!video) return;
+        pauseVideo(video);
+        try {
+            video.currentTime = 0;
+        } catch (e) {}
+    }
+
+    // The wallpaper <video> stops once it is fully covered: after the fade-in, at
+    // once when there is no fade (reduced motion).
+    function coverWallpaper(media) {
+        cancel(wpTimer);
+        wpTimer = null;
+        if (reducedMotion) {
+            wallpaperFaded = true;
+            pauseWallpaper();
+            return;
+        }
+        wpTimer = after(T.FADE_IN_MS, () => {
+            wpTimer = null;
+            if (current !== media) return;
+            wallpaperFaded = true;
+            pauseWallpaper();
+        });
+    }
+
+    // Fade a slot in (show and resume are the same thing for the DOM). Returns
+    // false when the media is gone (released, e.g. by the slot cap): the controller
+    // then loads the track again instead of believing it is on screen.
+    function present(media) {
+        if (!media || media.released || !slots.has(media)) return false;
+        zTop += 1;
+        media.slot.style.zIndex = String(zTop);
+        void media.slot.offsetWidth; // flush, so a just-built slot still transitions
+        media.slot.classList.remove("is-out");
+        media.slot.classList.add("is-in");
+        if (stillMode()) showStill(media.video);
+        else playVideo(media.video);
+        current = media;
+        wallpaperFaded = false;
+        setShowingClass(true);
+        coverWallpaper(media);
+        schedulePreload();
+        startQualitySampler();
+        return true;
+    }
+
+    function show(media) {
+        const shown = present(media);
+        // What the owner reads with tui -debug on: a buffered end well under the
+        // duration means the clip loops short.
+        if (shown && media.mse) dbg("[SpoTUI-video]", "shown", { buffered: media.mse.bufferedEnd, duration: media.mse.duration, offset: offsetMode });
+        return shown;
+    }
+
+    function resume(media) {
+        return present(media);
+    }
+
+    // Fade out everything on screen. Media stays alive (the controller decides
+    // whether to keep or release it); its video pauses once the fade is over.
+    function hide() {
+        cancel(wpTimer);
+        wpTimer = null;
+        wallpaperFaded = false;
+        current = null;
+        setShowingClass(false);
+        resumeWallpaper();
+        stopQualitySampler();
+        cancel(preloadTimer);
+        preloadTimer = null;
+        // The preload for the track now wanted survives: a swap-wait fade-out must not
+        // throw away the download the new track's load is joining. Any other is stale.
+        if (preloadJob && preloadJob.uri !== playingUri()) abortPreload();
+        for (const media of slots) {
+            if (!media.slot.classList.contains("is-in")) continue;
+            media.slot.classList.remove("is-in");
+            media.slot.classList.add("is-out");
+            if (reducedMotion) pauseVideo(media.video); // no fade to wait for
+            else {
+                after(T.FADE_OUT_MS, () => {
+                    if (current !== media) pauseVideo(media.video);
+                });
+            }
+        }
+    }
+
+    function release(media) {
+        if (!media) return;
+        media.released = true;
+        if (!slots.delete(media)) return;
+        if (current === media) {
+            current = null;
+            cancel(wpTimer);
+            wpTimer = null;
+            stopQualitySampler();
+        }
+        const v = media.video;
+        if (v) {
+            pauseVideo(v);
+            try {
+                v.removeAttribute("src");
+                v.load();
+            } catch (e) {}
+        }
+        media.slot.remove();
+    }
+
+    // setWallpaper re-plays a wallpaper <video> on every refresh: keep a covered one paused.
+    function notifyWallpaperChanged() {
+        if (current && wallpaperFaded) pauseWallpaper();
+    }
+
+    // ---- quality guard ---------------------------------------------------------
+
+    function readQuality(video) {
+        try {
+            const q = video && typeof video.getVideoPlaybackQuality === "function" ? video.getVideoPlaybackQuality() : null;
+            const total = q && q.totalVideoFrames;
+            const dropped = q && q.droppedVideoFrames;
+            if (!Number.isFinite(total) || !Number.isFinite(dropped)) return null;
+            return { video, total, dropped };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function stopQualitySampler() {
+        cancel(qualityTimer);
+        qualityTimer = null;
+        qualitySample = null;
+    }
+
+    // Every QUALITY_SAMPLE_MS while a video slot shows and is visible: diff the
+    // dropped/total frame counters. Too many drops lower the profile of the NEXT
+    // load (penalty); still too many at the lowest step freezes video Canvases on
+    // their first frame for the rest of the session. Image slots are never sampled.
+    function startQualitySampler() {
+        stopQualitySampler();
+        if (!running || stillMode() || !current || !current.video || !isVisible()) return;
+        qualitySample = readQuality(current.video);
+        if (!qualitySample) return; // no frame counters in this build: nothing to measure
+        qualityTimer = after(T.QUALITY_SAMPLE_MS, sampleQuality);
+    }
+
+    function freezeVideo(why) {
+        frozen = true;
+        stopQualitySampler();
+        dbg("[SpoTUI-video]", "frozen", { reason: why, penalty });
+        for (const media of slots) showStill(media.video);
+    }
+
+    function sampleQuality() {
+        qualityTimer = null;
+        const media = current;
+        if (!running || stillMode() || !media || !media.video || !isVisible()) {
+            qualitySample = null;
+            return;
+        }
+        const q = readQuality(media.video);
+        const prev = qualitySample;
+        qualitySample = q;
+        if (q && prev && prev.video === q.video) {
+            const total = q.total - prev.total;
+            const dropped = q.dropped - prev.dropped;
+            if (total >= VIDEO_LIMITS.MIN_FRAMES && dropped / total > VIDEO_LIMITS.DROP_RATIO) {
+                const ratio = dropped / total;
+                penalty = Math.min(penalty + 1, VIDEO_LIMITS.MAX_PENALTY);
+                dbg("[SpoTUI-video]", "dropping frames", { ratio: Math.round(ratio * 100) / 100, penalty });
+                // Frozen only when this clip already played at the lowest step and still drops.
+                if (media.penalty >= VIDEO_LIMITS.MAX_PENALTY && ratio > VIDEO_LIMITS.FREEZE_DROP_RATIO) {
+                    freezeVideo("drops at the lowest step");
+                    return;
+                }
+            }
+        }
+        qualityTimer = after(T.QUALITY_SAMPLE_MS, sampleQuality);
+    }
+
+    // ---- preload ---------------------------------------------------------------
+
+    function abortPreload() {
+        if (!preloadJob) return;
+        const job = preloadJob;
+        preloadJob = null;
+        try {
+            job.ac.abort();
+        } catch (e) {}
+    }
+
+    // After a Canvas has shown for PRELOAD_DELAY_MS: fetch the next song's clip
+    // into the LRU (bytes only: no slot, no MSE). One at a time, own AbortController.
+    // Its failure is silent: no toast, no breaker count, the track is not poisoned.
+    function schedulePreload() {
+        cancel(preloadTimer);
+        preloadTimer = null;
+        if (!running) return;
+        preloadTimer = after(T.PRELOAD_DELAY_MS, runPreload);
+    }
+
+    function runPreload() {
+        preloadTimer = null;
+        if (!running || !current || preloadJob || !isVisible()) return;
+        const d = Spicetify.Player && Spicetify.Player.data;
+        if (!d || d.isPaused) return;
+        if (typeof navigator !== "undefined" && navigator && navigator.onLine === false) return;
+        if (isDegraded() || !vp9Supported()) return;
+        const next = Array.isArray(d.nextItems) ? d.nextItems[0] : null;
+        if (!next || classifyItem(next) !== "track") return;
+        // Metadata only, never GraphQL: undefined (unknown), null, IMAGE: nothing to preload.
+        const canvas = canvasFromMetadata(next.metadata);
+        if (!canvas || canvas.kind !== "video") return;
+        const uri = next.uri;
+        if (uri === (d.item && d.item.uri) || preloadFailed.has(uri)) return;
+        const hit = cache.get(uri);
+        if (hit && hit.fileId === canvas.fileId) return;
+        const ac = new AbortController();
+        const job = { uri, ac, promise: null };
+        job.promise = downloadVideo(canvas, ac.signal)
+            .then(
+                (entry) => {
+                    if (ac.signal.aborted) return;
+                    cache.set(uri, entry, entry.bytes);
+                    dbg("[SpoTUI-video]", "preloaded", { uri, profile: entry.profileH, bytes: entry.bytes });
+                },
+                (e) => {
+                    if (isAbort(e, ac.signal)) return;
+                    preloadFailed.add(uri);
+                    while (preloadFailed.size > VIDEO_LIMITS.CACHE_TRACKS * 4) preloadFailed.delete(preloadFailed.values().next().value);
+                    dbg("[SpoTUI-video]", "preload-failed", { uri, message: describeError(e) });
+                }
+            )
+            .then(() => {
+                if (preloadJob === job) preloadJob = null;
+            });
+        preloadJob = job;
+    }
+
+    // ---- reduced motion --------------------------------------------------------
+
+    function onMotionChange(ev) {
+        const next = Boolean(ev && typeof ev.matches === "boolean" ? ev.matches : motionQuery && motionQuery.matches);
+        if (next === reducedMotion) return;
+        reducedMotion = next;
+        if (!running) return;
+        if (stillMode()) {
+            stopQualitySampler();
+            for (const media of slots) showStill(media.video);
+            if (current && !wallpaperFaded) coverWallpaper(current); // no fade left to wait for
+        } else if (current && current.video && isVisible()) {
+            playVideo(current.video);
+            startQualitySampler();
+        }
+    }
+
+    function watchMotion() {
+        reducedMotion = false;
+        motionQuery = null;
+        try {
+            if (typeof window.matchMedia !== "function") return;
+            const q = window.matchMedia("(prefers-reduced-motion: reduce)");
+            if (!q) return;
+            reducedMotion = Boolean(q.matches);
+            if (typeof q.addEventListener === "function") q.addEventListener("change", onMotionChange);
+            else if (typeof q.addListener === "function") q.addListener(onMotionChange);
+            motionQuery = q;
+        } catch (e) {
+            motionQuery = null;
+        }
+    }
+
+    function unwatchMotion() {
+        try {
+            if (motionQuery) {
+                if (typeof motionQuery.removeEventListener === "function") motionQuery.removeEventListener("change", onMotionChange);
+                else if (typeof motionQuery.removeListener === "function") motionQuery.removeListener(onMotionChange);
+            }
+        } catch (e) {}
+        motionQuery = null;
+        reducedMotion = false;
+    }
+
+    // ---- player + visibility ---------------------------------------------------
+
+    function readPlayer() {
+        const d = Spicetify.Player && Spicetify.Player.data;
+        return {
+            item: (d && d.item) || null,
+            isPaused: d ? Boolean(d.isPaused) : true, // never isBuffering
+            visible: isVisible(),
+        };
+    }
+
+    function playingUri() {
+        const d = Spicetify.Player && Spicetify.Player.data;
+        return d && d.item && typeof d.item.uri === "string" ? d.item.uri : null;
+    }
+
+    // A skip to another track aborts a preload that is not for it; the natural
+    // advance to the preloaded track lets it finish (the load joins it).
+    function onTrackChange(uri) {
+        cancel(preloadTimer);
+        preloadTimer = null;
+        if (preloadJob && preloadJob.uri !== uri) abortPreload();
+    }
+
+    function onPoke() {
+        if (!controller) return;
+        const uri = playingUri();
+        if (uri !== lastUri) {
+            lastUri = uri;
+            onTrackChange(uri);
+        }
+        controller.poke();
+    }
+
+    function onVisibility() {
+        if (!running) return;
+        const v = isVisible();
+        if (v === lastVisible) return;
+        lastVisible = v;
+        if (!v) {
+            for (const media of slots) pauseVideo(media.video);
+            stopQualitySampler();
+            cancel(preloadTimer);
+            preloadTimer = null;
+            abortPreload();
+        } else if (current) {
+            if (!stillMode()) playVideo(current.video);
+            schedulePreload();
+            startQualitySampler();
+        }
+        onPoke();
+    }
+
+    function makeController() {
+        return createController({
+            now: () => Date.now(),
+            setTimeout: (fn, ms) => setTimeout(fn, ms),
+            clearTimeout: (id) => clearTimeout(id),
+            readPlayer,
+            resolve: resolveAdapter,
+            load: loadAdapter,
+            show,
+            hide,
+            resume,
+            release,
+            instant: () => reducedMotion,
+            transientNone,
+            log: (code, detail) => dbg("[SpoTUI-video]", code, detail),
+        });
+    }
+
+    // ---- enable / disable ------------------------------------------------------
+
+    function mountLayer(tui) {
+        const stale = document.getElementById(LAYER_ID);
+        if (stale) stale.remove();
+        layer = document.createElement("div");
+        layer.id = LAYER_ID;
+        layer.setAttribute("aria-hidden", "true");
+        // After #spotui-wallpaper (always prepended) at the same z: paints over it.
+        tui.appendChild(layer);
+    }
+
+    function start(tui) {
+        starting = false;
+        mountLayer(tui);
+        controller = makeController();
+        lastVisible = isVisible();
+        lastUri = playingUri();
+        watchMotion();
+        Spicetify.Player.addEventListener("songchange", onPoke);
+        Spicetify.Player.addEventListener("onplaypause", onPoke);
+        pollTimer = setInterval(onPoke, T.POLL_MS); // boot with empty Player.data, restored paused sessions
+        document.addEventListener("visibilitychange", onVisibility);
+        if (typeof MutationObserver === "function") {
+            classObserver = new MutationObserver(onVisibility);
+            classObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+        }
+        running = true;
+        controller.enable();
+        controller.poke();
+        dbg("[SpoTUI-video]", "enabled", { vp9: vp9Supported() });
+    }
+
+    function attemptStart() {
+        startTimer = null;
+        if (!starting) return;
+        const tui = document.getElementById("spotui-tui");
+        const player = window.Spicetify && Spicetify.Player;
+        if (tui && player && typeof player.addEventListener === "function") {
+            start(tui);
+            return;
+        }
+        if (++startTries >= ENABLE_MAX_TRIES) {
+            starting = false;
+            gaveUp = true;
+            dbg("[SpoTUI-video]", "gave up waiting for the interface (retry with tui -video on)");
+            return;
+        }
+        startTimer = after(ENABLE_WAIT_MS, attemptStart);
+    }
+
+    function setOnClass(on) {
+        if (!document.body) return;
+        if (on) document.body.classList.add(BODY_ON_CLASS);
+        else document.body.classList.remove(BODY_ON_CLASS);
+    }
+
+    // A later enable (tui -video on, or any refresh while the key is on) starts from scratch.
+    function enable() {
+        if (running || starting) return;
+        starting = true;
+        gaveUp = false;
+        startTries = 0;
+        setOnClass(true);
+        attemptStart();
+    }
+
+    function disable() {
+        starting = false;
+        gaveUp = false;
+        setOnClass(false);
+        cancel(startTimer);
+        startTimer = null;
+        if (running) {
+            running = false;
+            try {
+                Spicetify.Player.removeEventListener("songchange", onPoke);
+                Spicetify.Player.removeEventListener("onplaypause", onPoke);
+            } catch (e) {}
+            clearInterval(pollTimer);
+            pollTimer = null;
+            document.removeEventListener("visibilitychange", onVisibility);
+            if (classObserver) classObserver.disconnect();
+            classObserver = null;
+            if (controller) controller.disable(); // aborts in-flight work, hides, releases
+            controller = null;
+        }
+        abortPreload();
+        unwatchMotion();
+        cancelAll();
+        preloadTimer = null;
+        qualityTimer = null;
+        qualitySample = null;
+        for (const media of Array.from(slots)) release(media);
+        current = null;
+        wpTimer = null;
+        wallpaperFaded = false;
+        setShowingClass(false);
+        resumeWallpaper();
+        if (layer) layer.remove();
+        layer = null;
+        cache.clear();
+        negCache.clear();
+        preloadFailed.clear();
+        // Session state (quality guard, circuit breaker) starts over with the next enable.
+        penalty = 0;
+        frozen = false;
+        failStreak = 0;
+        failUris.clear();
+        degradedUntil = 0;
+        halfOpen = false;
+        degradedSkip = null;
+        lastUri = null;
+        offsetMode = false;
+    }
+
+    // ---- public API ------------------------------------------------------------
+
+    // Boot: does nothing unless the saved look has video mode on.
+    function initVideoMode() {
+        if (window.__spotuiVideoInit) return;
+        window.__spotuiVideoInit = true;
+        refreshVideoMode();
+    }
+
+    // Make the running state follow the stored key. Idempotent.
+    function refreshVideoMode() {
+        if (isOn()) enable();
+        else disable();
+    }
+
+    function setVideoMode(arg) {
+        const a = String(arg || "").toLowerCase();
+        if (a !== "on" && a !== "off" && a !== "toggle") return false;
+        const on = a === "toggle" ? !isOn() : a === "on";
+        if (on) {
+            if (!storageSet(VIDEO_MODE_KEY, "1")) {
+                pinToast("video mode: could not save the setting (storage full?)");
+                return false;
+            }
+        } else {
+            storageRemove(VIDEO_MODE_KEY);
+        }
+        refreshVideoMode();
+        if (on) {
+            pinToast(
+                "video mode on — while a song plays, its Spotify Canvas replaces your background" +
+                    (vp9Supported() ? "" : "\n(video Canvases can't play in this Spotify build — still Canvases only)")
+            );
+        } else {
+            pinToast("video mode off — your background is back");
+        }
+        return true;
+    }
+
+    function videoModeStatus() {
+        if (!isOn()) return "video mode off (tui -video on)";
+        if (!running || !controller) {
+            return gaveUp ? "video mode ON · interface not found — run tui -video on again" : "video mode ON · starting…";
+        }
+        const s = controller.status();
+        let why;
+        switch (s.reason) {
+            case "showing":
+                if (!current) why = "loading Canvas…";
+                else if (current.kind === "image") why = "showing this song's still Canvas";
+                else if (reducedMotion) why = "showing this song's Canvas as a still (reduced motion)";
+                else if (frozen) why = "showing this song's Canvas as a still (performance)";
+                else why = `showing this song's Canvas (${current.profileShort || current.profileH}p)`;
+                break;
+            case "loading":
+                why = "loading Canvas…";
+                break;
+            case "no-canvas":
+                if (skippedByBreaker(s.uri)) why = "video Canvases unavailable right now — still Canvases only";
+                else {
+                    why = vp9Supported()
+                        ? "this song has no Canvas — your background stays"
+                        : "video Canvases can't play in this Spotify build — still Canvases only";
+                }
+                break;
+            case "unsupported":
+                why = "ads, podcasts and local files have no Canvas";
+                break;
+            case "hidden":
+                why = "hidden (Spotify mode / standby / minimised)";
+                break;
+            case "error":
+                why = "Canvas failed to load — background stays (tui -debug on for details)";
+                break;
+            default:
+                why = "paused — your background is back";
+        }
+        return `video mode ON · ${why}`;
+    }
+
+    function reportVideoMode() {
+        const line = videoModeStatus();
+        pinToast(line);
+        console.log("[SpoTUI] " + line);
+    }
+
     // Check if URL points to video file
     function isVideoWallpaperUrl(url) {
         try {
@@ -3578,6 +5765,8 @@ body.spotui-spotify-enabled, body {
         // Content stays above the wallpaper via the #spotui-tui > * rule in
         // styles.js (covers late-created nodes too); posters re-assert below.
         try { reassertPosterLayer(); } catch (e) {}
+        // A wallpaper <video> was just (re)played: keep it paused while a Canvas covers it.
+        try { notifyWallpaperChanged(); } catch (e) {}
         if (save) {
             storageSet(WP_URL_KEY, url);
             storageSet(WP_OPACITY_KEY, opacity);
@@ -3734,11 +5923,12 @@ body.spotui-spotify-enabled, body {
         parts.push(settings[SHADE_KEY] && isValidShade(settings[SHADE_KEY])
             ? `shade ${settings[SHADE_KEY]}`
             : (settings[SHADE_KEY] ? `shade ${settings[SHADE_KEY]} invalid, ignored` : "orange"));
+        if (settings[VIDEO_MODE_KEY] === "1") parts.push("video mode");
         return parts.join(" · ");
     }
 
     // Re-run the boot look-restore against current storage (mirrors main.js:
-    // appearance everywhere, wallpaper, wall, shade — no session resume).
+    // appearance everywhere, wallpaper, wall, shade, video mode — no session resume).
     function refreshLook() {
         toggleLogo(storageGet("spotui:logo-visible") === "off" ? "off" : "on");
         if (storageGet(ANIMATION_KEY) === "off") {
@@ -3771,6 +5961,7 @@ body.spotui-spotify-enabled, body {
             if (wp) wp.remove();
         }
         restoreWall();
+        refreshVideoMode();
     }
 
     // Theme apply restores the snapshot's exact wall: each poster back to its
@@ -3965,6 +6156,9 @@ body.spotui-spotify-enabled, body {
         "tui -wp off",
         "tui -shade ",
         "tui -shade off",
+        "tui -video on",
+        "tui -video off",
+        "tui -video toggle",
         "tui -posters on",
         "tui -posters off",
         "tui -posters shuffle",
@@ -5612,7 +7806,7 @@ body.spotui-spotify-enabled, body {
         "play", "pause", "p", "skip", "back", "shuffle", "like",
     ]);
     const KNOWN_TUI_SUBS = new Set([
-        "-l", "-a", "-debug", "-shade", "-wp", "-t", "bind", "unbind",
+        "-l", "-a", "-debug", "-shade", "-video", "-wp", "-t", "bind", "unbind",
         "actions", "restore", "-posters", "-poster", "-pin-board",
         "-pin-boards", "-pin-clear", "-pin-feed", "-pin-refresh", "-pin-token",
         "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs",
@@ -5706,6 +7900,13 @@ body.spotui-spotify-enabled, body {
                 if (!v) reportShade();
                 else if (v.toLowerCase() === "off") setShade("off");
                 else setShade(v);
+                return;
+            }
+            if (argsLower[0] === "-video") {
+                const v = (args[1] || "").toLowerCase();
+                if (!v) reportVideoMode();
+                else if (v === "on" || v === "off" || v === "toggle") setVideoMode(v);
+                else pinToast("usage: tui -video <on|off|toggle>  (bare tui -video shows the state)");
                 return;
             }
             if (argsLower.includes("-wp")) {
@@ -7775,6 +9976,9 @@ body.spotui-spotify-enabled, body {
         storageRemove(SHADE_KEY);
         applyShade();
 
+        storageRemove(VIDEO_MODE_KEY);
+        refreshVideoMode();
+
         storageRemove(LYRICS_ANIMATION_KEY);
         document.body.classList.add("spotui-lyrics-animation-on");
 
@@ -8155,7 +10359,7 @@ body.spotui-spotify-enabled, body {
 /* Keep TUI content above the wallpaper layer (replaces a per-swap DOM crawl
    that also missed late-created nodes). The absolute overlays are excluded:
    like the old crawl's static-only check, this must not relativize them. */
-#spotui-tui > :not(#spotui-wallpaper):not(#spotui-logo):not(#spotui-top-fade) {
+#spotui-tui > :not(#spotui-wallpaper):not(#spotui-video):not(#spotui-logo):not(#spotui-top-fade) {
     position: relative;
     z-index: 1;
 }
@@ -9556,6 +11760,74 @@ body.spotui-standby #spotui-popup,
 body.spotui-standby .Root__now-playing-bar {
     display: none !important;
 }
+
+/* Video mode: Spotify Canvas layer. Same z as the wallpaper (-1) but later
+   in the DOM, so it paints over it; posters (z 0) fade out by body class;
+   logo (z 0), panels/footer/visualizer (z 1) and top fade (z 2) stay above. */
+#spotui-video {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.spotui-video-slot {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    transition: opacity 600ms ease;
+}
+
+.spotui-video-slot.is-in {
+    opacity: 1;
+}
+
+.spotui-video-slot.is-out {
+    opacity: 0;
+    transition-duration: 800ms;
+}
+
+.spotui-video-backdrop {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    filter: blur(32px);
+    transform: scale(1.15);
+    opacity: 0.35;
+}
+
+.spotui-video-media {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: 0.6;
+}
+
+/* Only while video mode is on: other poster opacity changes (tui -posters) stay
+   instant, and turning video mode off drops the transition in the same style
+   change that drops the override, so the posters are back at once. */
+body.spotui-video-on #spotui-posters {
+    transition: opacity 600ms ease;
+}
+
+body.spotui-video-showing #spotui-posters {
+    opacity: 0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .spotui-video-slot,
+    body.spotui-video-on #spotui-posters {
+        transition: none;
+    }
+}
 `;
     // Inject theme CSS into document head
     function injectStyle() {
@@ -10032,6 +12304,8 @@ body.spotui-standby .Root__now-playing-bar {
         }
         // Restore UI shade (retries once; terminal may still be booting).
         setTimeout(() => { if (!applyShade()) setTimeout(applyShade, 2000); }, 2600);
+        // Video mode (saved look): starts only when its key is "1"; retries until the TUI exists.
+        setTimeout(initVideoMode, 2400);
         if (isPostersEnabled()) {
             dbg("[SpoTUI-pin] boot: wall ON,", getPosterImages().length, "stored image(s), boards:", getBoardCounts());
             setTimeout(() => { maybeAutoshuffle(); renderPosters(); startRotateTimer(); }, 2200);

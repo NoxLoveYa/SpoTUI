@@ -65,6 +65,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui actions delete <name>` | Delete an action |
 | `tui -wp off` | Remove wallpaper |
 | `tui -shade <#hex\|off>` | Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare `tui -shade` shows current |
+| `tui -video <on/off/toggle>` | Video mode: while a song plays, its Spotify Canvas (the short looping clip) replaces your background; paused, stopped, ads, podcasts or songs without a Canvas bring your wallpaper/posters back. Off by default, saved with your look; bare `tui -video` shows what it is doing |
 | `tui -debug <on/off>` | Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print) |
 | `tui -posters <on/off>` | Show the wall (pin images first) / hide it, images are kept |
 | `tui -posters <shuffle/clear/settings>` | Re-roll posters, spots and sizes / delete everything and switch the wall off / print current settings |
@@ -176,6 +177,33 @@ tui -shade #7fd4d4   # cyan UI, video + posters untouched
 tui -shade #111111   # near-black UI, selected rows flip to white text
 tui -shade off       # back to orange
 ```
+
+## Video mode
+
+While a song plays, its Spotify Canvas — the short looping clip artists add
+to a song — replaces your background. Pause, stop, an ad, a podcast, a local
+file or a song without a Canvas brings your wallpaper and posters back.
+
+```bash
+tui -video on                      # turn it on (saved with your look and in tui -t save)
+tui -video                         # what it is doing right now
+tui -video off                     # back to your own background
+tui bind "V" "tui -video toggle"   # Alt+V switches it
+```
+
+While a clip is showing, the next song's clip is fetched ahead when Spotify
+already lists one for it, so the switch is instant. On a slow machine or connection it steps the resolution down, or shows a still
+frame instead of the moving clip. With your OS "reduce motion" / animation
+setting on, Canvases are shown as stills. If Spotify's clip service keeps
+failing, video Canvases pause for 30 minutes (still Canvases keep working).
+
+Limits: Canvas only — full music videos are DRM-protected and cannot play
+in a theme. About a third of songs have a Canvas. A Canvas is never cropped:
+it plays whole and centred over a blurred album-art backdrop (portrait 9:16
+clips leave the most backdrop visible, landscape clips fill more of the
+window), dimmed so the terminal stays readable. Everything comes from
+Spotify's own servers; a song with a video Canvas costs roughly 0.3-4 MB of
+network (more in a bigger window), and nothing runs while video mode is off.
 
 ## Saved themes
 

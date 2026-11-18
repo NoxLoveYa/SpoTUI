@@ -19,6 +19,7 @@ import { enterStandby } from "./standby.js";
 import { applyTheme as applySavedTheme, deleteTheme, listThemes, saveTheme, savedThemeNames, wipeSpotuiStorage } from "./saves.js";
 import { setWallpaper } from "./wallpaper.js";
 import { reportShade, setShade } from "./shade.js";
+import { reportVideoMode, setVideoMode } from "./videomode.js";
 import { addPoster, applyPosterFlags, clearBoard, clearPosters, flagArg, getBoardCounts, refreshBoards, setPinToken, setPosterAutoshuffle, setPosterCount, setPosterDensity, setPosterOpacity, setPosterRotate, setPosterSymmetric, setPosterTheme, setPostersEnabled, showBoardList, showPosterSettings, shufflePosters, syncPinterestBoard, syncPinterestFeed } from "./posters.js";
 import { dbg, pinToast, playFresh } from "./utils.js";
 
@@ -52,7 +53,7 @@ const KNOWN_COMMANDS = new Set([
     "play", "pause", "p", "skip", "back", "shuffle", "like",
 ]);
 const KNOWN_TUI_SUBS = new Set([
-    "-l", "-a", "-debug", "-shade", "-wp", "-t", "bind", "unbind",
+    "-l", "-a", "-debug", "-shade", "-video", "-wp", "-t", "bind", "unbind",
     "actions", "restore", "-posters", "-poster", "-pin-board",
     "-pin-boards", "-pin-clear", "-pin-feed", "-pin-refresh", "-pin-token",
     "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs",
@@ -146,6 +147,13 @@ async function executeInner(cmd, opts = {}) {
             if (!v) reportShade();
             else if (v.toLowerCase() === "off") setShade("off");
             else setShade(v);
+            return;
+        }
+        if (argsLower[0] === "-video") {
+            const v = (args[1] || "").toLowerCase();
+            if (!v) reportVideoMode();
+            else if (v === "on" || v === "off" || v === "toggle") setVideoMode(v);
+            else pinToast("usage: tui -video <on|off|toggle>  (bare tui -video shows the state)");
             return;
         }
         if (argsLower.includes("-wp")) {

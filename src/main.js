@@ -13,6 +13,7 @@ import { applyShade } from "./shade.js";
 import { injectStyle } from "./styles.js";
 import { initSync } from "./sync.js";
 import { createTerminal } from "./terminal.js";
+import { initVideoMode } from "./videomode.js";
 import { restoreVisualizer } from "./visualizer.js";
 import { setWallpaper } from "./wallpaper.js";
 import { dbg } from "./utils.js";
@@ -79,6 +80,8 @@ try {
     }
     // Restore UI shade (retries once; terminal may still be booting).
     setTimeout(() => { if (!applyShade()) setTimeout(applyShade, 2000); }, 2600);
+    // Video mode (saved look): starts only when its key is "1"; retries until the TUI exists.
+    setTimeout(initVideoMode, 2400);
     if (isPostersEnabled()) {
         dbg("[SpoTUI-pin] boot: wall ON,", getPosterImages().length, "stored image(s), boards:", getBoardCounts());
         setTimeout(() => { maybeAutoshuffle(); renderPosters(); startRotateTimer(); }, 2200);

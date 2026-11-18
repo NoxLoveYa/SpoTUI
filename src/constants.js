@@ -23,6 +23,8 @@ export const WP_FIT_KEY = "spotui:wp-fit";
 export const WP_POS_KEY = "spotui:wp-pos";
 export const WP_RICH_KEY = "spotui:wp-rich";
 export const SHADE_KEY = "spotui:shade";
+// Video mode (Spotify Canvas as background): a look key, "1" = on, absent = off.
+export const VIDEO_MODE_KEY = "spotui:video-mode";
 export const DEBUG_KEY = "spotui:debug";
 
 // External endpoints used by the poster wall (kept here, not inline).
@@ -131,7 +133,7 @@ export const BIND_CMD_REGEX = /^tui\s+(bind|unbind)\b/i;
 // first-position branches of executeInner in commands.js.
 export const THEME_ALLOWED_COMMANDS = new Set(["lyrics", "visualizer"]);
 export const THEME_ALLOWED_TUI_SUBS = new Set([
-    "-l", "-a", "-wp", "-shade", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
+    "-l", "-a", "-wp", "-shade", "-video", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
 ]);
 // Poster-wall words a theme may not use: they add remote images or delete the user's pins.
 export const THEME_BLOCKED_POSTER_WORDS = new Set(["add", "clear"]);
@@ -154,6 +156,7 @@ export const COMMAND_LIST = [
     { cmd: "tui -wp &lt;url&gt; [-o &lt;0-1&gt;] [-fit &lt;cover/contain/fill/none&gt;] [-pos &lt;center/top/bottom/left/right&gt;] [-rich &lt;0-200&gt;]", desc: "Set wallpaper — bare tui -wp shows current, flags alone tweak it: opacity, fit, position, richness (100 = default, 0 = off)" },
     { cmd: "tui -wp off", desc: "Remove wallpaper" },
     { cmd: "tui -shade &lt;#hex|off&gt;", desc: "Set the UI accent to any hex color (exact hue, saturation, lightness — even gray/white/black); video + posters stay true; bare tui -shade shows current" },
+    { cmd: "tui -video &lt;on/off/toggle&gt;", desc: "Video mode: while a song plays, its Spotify Canvas (the short looping clip) replaces your background; paused, stopped, ads, podcasts or songs without a Canvas bring your wallpaper/posters back. Off by default, saved with your look; bare tui -video shows what it is doing" },
     { cmd: "tui -debug &lt;on/off&gt;", desc: "Verbose wallpaper/poster/shade logging for troubleshooting (warnings always print)" },
     { cmd: "tui -t pull &lt;theme_id&gt; [-live]", desc: "Apply a theme by its ID from the stable feed, or the live feed with -live (find IDs on our website)" },
     { cmd: "tui -t &lt;save &lt;name&gt;|list|apply &lt;name&gt;|delete &lt;name&gt;&gt;", desc: "Snapshot the current look locally (incl. poster wall layout); list opens the themes menu (Enter applies, Del/D fills in the delete command); restore/delete snapshots" },
