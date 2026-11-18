@@ -128,6 +128,8 @@ export function closeQueuePanel() {
     app.queuePanelOpen = false;
     app.queueGrab = -1;
     document.body.classList.remove("spotui-queue-panel");
+    const infoPopup = document.getElementById("spotui-queue-info-popup");
+    if (infoPopup) infoPopup.hidden = true;
     const panel = document.getElementById("spotui-queue-panel");
     if (panel) panel.hidden = true;
     const input = document.getElementById("spotui-input");

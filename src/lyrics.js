@@ -198,6 +198,8 @@ export function normalizeLrclibPayload(data) {
     return null;
 }
 
+const SPOLYRC_TIMEOUT_MS = 4000;
+
 export async function fetchSpolyrcLyrics(info) {
     const params = new URLSearchParams({
         title: info.title,
@@ -207,18 +209,28 @@ export async function fetchSpolyrcLyrics(info) {
     if (info.durationSec) params.set("duration", String(info.durationSec));
     if (info.uri) params.set("spotify_id", info.uri);
     const url = `https://spolyrc-spotui.root.sx/lyrics?${params}`;
+    // One shared deadline for the whole spolyrc attempt: a hung host must not
+    // block the Spotify/lrclib fallbacks.
+    const deadline = Date.now() + SPOLYRC_TIMEOUT_MS;
     let data = null;
     if (Spicetify.CosmosAsync?.get) {
+        let timer;
         try {
-            data = await Spicetify.CosmosAsync.get(url);
+            data = await Promise.race([
+                Spicetify.CosmosAsync.get(url),
+                new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("spolyrc timeout")), SPOLYRC_TIMEOUT_MS); }),
+            ]);
             if (typeof data === "string") {
                 try { data = JSON.parse(data); } catch { data = null; }
             }
         } catch { data = null; }
+        clearTimeout(timer);
     }
     if (!data || typeof data !== "object") {
+        const left = deadline - Date.now();
+        if (left <= 0) return null;
         try {
-            const res = await fetch(url);
+            const res = await fetch(url, { signal: AbortSignal.timeout(left) });
             if (!res.ok) return null;
             data = await res.json();
         } catch { return null; }

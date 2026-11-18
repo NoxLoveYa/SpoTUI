@@ -116,7 +116,19 @@ export const ORANGE_PALETTE_RGB = [
 // Validation and parsing patterns
 export const HEX_COLOR_REGEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 export const BIND_CMD_REGEX = /^tui\s+(bind|unbind)\b/i;
-export const THEME_SKIP_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b)/i;
+// Commands a remote theme (feed or theme panel) may run: look commands only.
+// Everything else (theme management, secrets, keybinds, actions, restore,
+// debug, jam, playback, search...) is skipped. Keep in sync with the
+// first-position branches of executeInner in commands.js.
+export const THEME_ALLOWED_COMMANDS = new Set(["lyrics", "visualizer"]);
+export const THEME_ALLOWED_TUI_SUBS = new Set([
+    "-l", "-wp", "-shade", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
+]);
+// Poster-wall words a theme may not use: they add remote images or delete the user's pins.
+export const THEME_BLOCKED_POSTER_WORDS = new Set(["add", "clear"]);
+
+// Pinterest API token: a secret, personal config rather than a look.
+export const PIN_TOKEN_KEY = "spotui:pin-token";
 export const F_KEY_REGEX = /^f\d{1,2}$/i; // Match F1-F12
 export const LRC_STAMP_REGEX = /\[(\d{1,2}):(\d{2}(?:\.\d+)?)\]/g; // LRC timestamp [mm:ss.ms]
 export const LRC_STAMP_STRIP_REGEX = /\[\d{1,2}:\d{2}(?:\.\d+)?\]/g;
@@ -139,9 +151,9 @@ export const COMMAND_LIST = [
     { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
     { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
     { cmd: "tui bind clear", desc: "Remove all keybinds" },
-    { cmd: "tui restore [-full]", desc: "Reset all settings to defaults and reload (keeps history, keybinds, actions; -full wipes everything)" },
+    { cmd: "tui restore [-full]", desc: "Reset all settings to defaults and reload (keeps history, keybinds, actions and your pin token; -full wipes everything)" },
     { cmd: "Ctrl+R", desc: "Reverse-search persistent command history (typing filters, Ctrl+R cycles older matches, Enter fills the bar, Esc aborts; unknown commands stay session-only)" },
-    { cmd: "Tab", desc: "Accept the ghost fill suggestion (repeat to cycle matches)" },
+    { cmd: "Tab", desc: "Accept the ghost fill suggestion in the command bar (repeat to cycle matches); also completes the last word of any known command, e.g. tui -viz -ga + Tab → tui -viz -gap" },
     { cmd: "Esc", desc: "Abort history search, or leave the command bar so Spotify gets its keys back" },
     { cmd: "tui actions create &lt;name&gt;", desc: "Create a named action" },
     { cmd: "tui actions &lt;name&gt; &lt;listener&gt; &lt;command&gt;", desc: "Bind an action to a listener" },
@@ -209,6 +221,13 @@ export const COMMAND_LIST = [
     { cmd: "help", desc: "Show this panel" },
 ];
 
+// Word vocabulary for ghost-text completion, derived from COMMAND_LIST:
+// alternatives ("a | b", "a / b") become separate names, each name stops at
+// its first placeholder or optional part, and key-binding rows (Ctrl+R,
+// Tab, Esc) are not commands.
+const KEY_ROW_REGEX = /\+|^(?:tab|esc|enter|up|down|left|right)$/i;
 export const COMMAND_NAMES = [...new Set(COMMAND_LIST.flatMap(({ cmd }) =>
-    cmd.replace(/(?:&lt;|<).*$/, "").split(" / ").map((name) => name.replace(/[\["\s]+$/, ""))
-))].filter(Boolean).sort();
+    cmd.split(/\s+[|/]\s+/)
+        .map((name) => name.replace(/(?:&lt;|<|\[).*$/, "").replace(/["\s]+$/, ""))
+        .filter((name) => name && !KEY_ROW_REGEX.test(name))
+))].sort();

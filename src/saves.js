@@ -1,6 +1,6 @@
-import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, applyVisualizerGap, toggleLogo } from "./appearance.js";
+import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, toggleLogo } from "./appearance.js";
 import { resetGrid } from "./ascii.js";
-import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, HISTORY_KEY, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, SHADE_KEY, UPDATE_BANNER_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, DEBUG_KEY, HISTORY_KEY, JAM_STATE_KEY, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_STORAGE_KEY, PIN_TOKEN_KEY, SHADE_KEY, UPDATE_BANNER_KEY, VISUALIZER_STORAGE_KEY, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { POSTERS_IMGS, POSTERS_LAYOUT, renderPosters, renderSavedLayout, startRotateTimer } from "./posters.js";
 import { applyShade, isValidShade } from "./shade.js";
 import { app } from "./state.js";
@@ -10,8 +10,8 @@ import { refreshVisualizer } from "./visualizer.js";
 import { setWallpaper } from "./wallpaper.js";
 
 // Local theme snapshots: everything a Spotify restart preserves, saved
-// under one name — except personal config (history, keybinds, actions),
-// which is yours, not a look. storage.js has no key enumeration, so this
+// under one name — except personal config and secrets (history, keybinds,
+// actions, pin token) and app/UI state, which are not a look. storage.js has no key enumeration, so this
 // module touches localStorage directly (guarded) for the snapshot/restore
 // loops only.
 const SAVES_KEY = "spotui:theme-saves";
@@ -24,14 +24,24 @@ const MAX_SAVES = 100;
 // until the next local mutation (save/delete are the only writers).
 let savesCache = null;
 
-// Personal config, not a look: never snapshotted, never wiped, and never
-// restored over live values (old snapshots may still carry these keys).
-const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY]);
+// Personal config and secrets, not a look: never snapshotted, never wiped,
+// and never restored over live values (old snapshots may still carry these
+// keys, e.g. the Pinterest token).
+const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY, PIN_TOKEN_KEY]);
 
-// App state, not a look either: applying an old snapshot must never delete
-// these (wiping launched re-triggers onboarding, wiping the banner flag
-// resurrects a dismissed banner).
-const NEVER_WIPE_KEYS = new Set([LAUNCHED_KEY, UPDATE_BANNER_KEY]);
+// App or UI state, not a look either: never snapshotted, never wiped, never
+// restored from an old snapshot (wiping launched re-triggers onboarding,
+// wiping the banner flag resurrects a dismissed banner, a stale jam-state
+// would try to rejoin a dead jam).
+const NEVER_WIPE_KEYS = new Set([LAUNCHED_KEY, UPDATE_BANNER_KEY, JAM_STATE_KEY, DEBUG_KEY, VISUALIZER_STORAGE_KEY, LYRICS_STORAGE_KEY]);
+
+// Only spotui:* keys that are actually a look take part in snapshots. The
+// library itself and its corrupt-blob backup are internal, not a look.
+function isLookKey(k) {
+    return Boolean(k) && k.startsWith("spotui:")
+        && k !== SAVES_KEY && k !== SAVES_KEY + ".corrupt"
+        && !PERSONAL_KEYS.has(k) && !NEVER_WIPE_KEYS.has(k);
+}
 
 function readSaves() {
     if (savesCache) return savesCache;
@@ -72,7 +82,7 @@ function snapshotSettings() {
     try {
         for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
-            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !PERSONAL_KEYS.has(k)) out[k] = localStorage.getItem(k);
+            if (isLookKey(k)) out[k] = localStorage.getItem(k);
         }
     } catch (e) {}
     return out;
@@ -119,7 +129,6 @@ function refreshLook() {
     applyLyricColors();
     applyLyricLineSpacing();
     applyVisualizerColor();
-    applyVisualizerGap();
     refreshVisualizer();
     applyPlayerBarColors();
     applyPlayerBarVisibility();
@@ -229,12 +238,12 @@ export function applyTheme(name) {
     try {
         const keep = new Set(Object.keys(snap.settings));
         for (const [k, v] of Object.entries(snap.settings)) {
-            if (PERSONAL_KEYS.has(k)) continue;
+            if (!isLookKey(k)) continue;
             localStorage.setItem(k, v);
         }
         for (let i = localStorage.length - 1; i >= 0; i--) {
             const k = localStorage.key(i);
-            if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !PERSONAL_KEYS.has(k) && !NEVER_WIPE_KEYS.has(k) && !keep.has(k)) localStorage.removeItem(k);
+            if (isLookKey(k) && !keep.has(k)) localStorage.removeItem(k);
         }
     } catch (e) {
         console.error("[SpoTUI] theme apply failed:", e.message);

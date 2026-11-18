@@ -1,5 +1,5 @@
 import { execute } from "./commands.js";
-import { BIND_CMD_REGEX, F_KEY_REGEX, KEYBIND_STORAGE_KEY, THEME_SKIP_CMD_REGEX } from "./constants.js";
+import { BIND_CMD_REGEX, F_KEY_REGEX, KEYBIND_STORAGE_KEY, THEME_ALLOWED_COMMANDS, THEME_ALLOWED_TUI_SUBS, THEME_BLOCKED_POSTER_WORDS } from "./constants.js";
 import { app, isInputBlockingPanelOpen } from "./state.js";
 import { readJsonObject, storageSet } from "./storage.js";
 
@@ -40,12 +40,19 @@ export function isBindCommand(cmd) {
     return BIND_CMD_REGEX.test(stripCommandPrefix(cmd));
 }
 
+// Remote themes (feed submissions) may only run look commands: allowlist.
+// Tokenizes exactly like executeInner (same prefix strip, same whitespace
+// split, case-insensitive), so what is checked is what would be dispatched.
 export function isRestrictedThemeCommand(cmd) {
-    const cleaned = stripCommandPrefix(cmd).toLowerCase();
-    const [command, sub] = cleaned.split(/\s+/);
-    if (command === "jam") return true;
-    if (command === "tui" && (sub === "bind" || sub === "unbind" || sub === "actions" || sub === "restore")) return true;
-    return THEME_SKIP_CMD_REGEX.test(cleaned);
+    const [command, sub, ...rest] = stripCommandPrefix(cmd).toLowerCase().split(/\s+/);
+    if (command === "tui") {
+        if (!THEME_ALLOWED_TUI_SUBS.has(sub)) return true;
+        // The wall's look is fine; adding remote images or clearing the
+        // user's pins is not.
+        if ((sub === "-posters" || sub === "-poster") && rest.some((word) => THEME_BLOCKED_POSTER_WORDS.has(word))) return true;
+        return false;
+    }
+    return !THEME_ALLOWED_COMMANDS.has(command);
 }
 
 // Too powerful for remote/store-and-fire paths: meta commands, secrets,

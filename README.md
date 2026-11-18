@@ -100,7 +100,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -inputs off` | Reset input colors |
 | `tui -panel -bg <#hex> -border <#hex> -text <#hex>` | Set help/playlist/theme/about panel colors |
 | `tui -panel off` | Reset panel colors |
-| `tui restore [-full]` | Reset all settings to defaults and reload (keeps history, keybinds, actions; `-full` wipes everything) |
+| `tui restore [-full]` | Reset all settings to defaults and reload (keeps history, keybinds, actions and your pin token; `-full` wipes everything) |
 | `playlist` / `list` `<playlist-name>` | Open playlist viewer or play a specific playlist |
 | `add2list` | Add the current song to a playlist |
 | `queue` | View and reorder the play queue |

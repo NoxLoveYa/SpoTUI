@@ -354,7 +354,11 @@ export function initSync() {
     Spicetify.Player.addEventListener("songchange", () => {
         lyricsCache = { uri: "", lines: [], synced: false, instrumental: false, error: "", loading: true };
         send();
-        refreshLyrics();
+        // refreshLyrics only feeds the SpoSync relay (the in-app lyrics panel
+        // loads its own via lyrics.js), so without a connection nothing
+        // consumes the result and no lyric request should leave the app. On
+        // connect, onopen fetches for the current track.
+        if (app.sposyncConnected) refreshLyrics();
     });
     Spicetify.Player.addEventListener("onplaypause", send);
     // onprogress fires many times per second; the 1s heartbeat already

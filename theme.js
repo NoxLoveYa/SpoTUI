@@ -118,7 +118,19 @@
 
     // Validation and parsing patterns
     const HEX_COLOR_REGEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-    const THEME_SKIP_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b)/i;
+    // Commands a remote theme (feed or theme panel) may run: look commands only.
+    // Everything else (theme management, secrets, keybinds, actions, restore,
+    // debug, jam, playback, search...) is skipped. Keep in sync with the
+    // first-position branches of executeInner in commands.js.
+    const THEME_ALLOWED_COMMANDS = new Set(["lyrics", "visualizer"]);
+    const THEME_ALLOWED_TUI_SUBS = new Set([
+        "-l", "-wp", "-shade", "-ly", "-viz", "-bar", "-progress", "-panel", "-inputs", "-posters", "-poster",
+    ]);
+    // Poster-wall words a theme may not use: they add remote images or delete the user's pins.
+    const THEME_BLOCKED_POSTER_WORDS = new Set(["add", "clear"]);
+
+    // Pinterest API token: a secret, personal config rather than a look.
+    const PIN_TOKEN_KEY = "spotui:pin-token";
     const LRC_STAMP_REGEX = /\[(\d{1,2}):(\d{2}(?:\.\d+)?)\]/g; // LRC timestamp [mm:ss.ms]
     const LRC_STAMP_STRIP_REGEX = /\[\d{1,2}:\d{2}(?:\.\d+)?\]/g;
 
@@ -140,9 +152,9 @@
         { cmd: 'tui bind "&lt;Letter&gt;" "&lt;command&gt;"', desc: "Bind Alt+&lt;Letter&gt; to run a TUI command (e.g. tui bind &quot;T&quot; &quot;tui -t list&quot; opens the themes menu on Alt+T; Ctrl combos never reach the page)" },
         { cmd: 'tui unbind "&lt;Letter&gt;"', desc: "Remove the Alt+&lt;Letter&gt; keybind" },
         { cmd: "tui bind clear", desc: "Remove all keybinds" },
-        { cmd: "tui restore [-full]", desc: "Reset all settings to defaults and reload (keeps history, keybinds, actions; -full wipes everything)" },
+        { cmd: "tui restore [-full]", desc: "Reset all settings to defaults and reload (keeps history, keybinds, actions and your pin token; -full wipes everything)" },
         { cmd: "Ctrl+R", desc: "Reverse-search persistent command history (typing filters, Ctrl+R cycles older matches, Enter fills the bar, Esc aborts; unknown commands stay session-only)" },
-        { cmd: "Tab", desc: "Accept the ghost fill suggestion (repeat to cycle matches)" },
+        { cmd: "Tab", desc: "Accept the ghost fill suggestion in the command bar (repeat to cycle matches); also completes the last word of any known command, e.g. tui -viz -ga + Tab → tui -viz -gap" },
         { cmd: "Esc", desc: "Abort history search, or leave the command bar so Spotify gets its keys back" },
         { cmd: "tui actions create &lt;name&gt;", desc: "Create a named action" },
         { cmd: "tui actions &lt;name&gt; &lt;listener&gt; &lt;command&gt;", desc: "Bind an action to a listener" },
@@ -210,9 +222,16 @@
         { cmd: "help", desc: "Show this panel" },
     ];
 
+    // Word vocabulary for ghost-text completion, derived from COMMAND_LIST:
+    // alternatives ("a | b", "a / b") become separate names, each name stops at
+    // its first placeholder or optional part, and key-binding rows (Ctrl+R,
+    // Tab, Esc) are not commands.
+    const KEY_ROW_REGEX = /\+|^(?:tab|esc|enter|up|down|left|right)$/i;
     const COMMAND_NAMES = [...new Set(COMMAND_LIST.flatMap(({ cmd }) =>
-        cmd.replace(/(?:&lt;|<).*$/, "").split(" / ").map((name) => name.replace(/[\["\s]+$/, ""))
-    ))].filter(Boolean).sort();
+        cmd.split(/\s+[|/]\s+/)
+            .map((name) => name.replace(/(?:&lt;|<|\[).*$/, "").replace(/["\s]+$/, ""))
+            .filter((name) => name && !KEY_ROW_REGEX.test(name))
+    ))].sort();
 
     function storageGet(key) {
         try {
@@ -1202,7 +1221,7 @@ body.spotui-spotify-enabled, body {
     // slot:{x,y,w,r}, mult}]. Snapshots pick it up automatically (spotui:*),
     // so theme apply re-pins each poster to its saved slot — no seed re-roll.
     const POSTERS_LAYOUT = "spotui:posters-layout";
-    const PIN_TOKEN = "spotui:pin-token";
+    const PIN_TOKEN = PIN_TOKEN_KEY;
 
     const MAX_STORED = 40;
 
@@ -2159,12 +2178,19 @@ body.spotui-spotify-enabled, body {
         return raw.startsWith("/") || raw.startsWith(".") ? raw.slice(1).trim() : raw;
     }
 
+    // Remote themes (feed submissions) may only run look commands: allowlist.
+    // Tokenizes exactly like executeInner (same prefix strip, same whitespace
+    // split, case-insensitive), so what is checked is what would be dispatched.
     function isRestrictedThemeCommand(cmd) {
-        const cleaned = stripCommandPrefix(cmd).toLowerCase();
-        const [command, sub] = cleaned.split(/\s+/);
-        if (command === "jam") return true;
-        if (command === "tui" && (sub === "bind" || sub === "unbind" || sub === "actions" || sub === "restore")) return true;
-        return THEME_SKIP_CMD_REGEX.test(cleaned);
+        const [command, sub, ...rest] = stripCommandPrefix(cmd).toLowerCase().split(/\s+/);
+        if (command === "tui") {
+            if (!THEME_ALLOWED_TUI_SUBS.has(sub)) return true;
+            // The wall's look is fine; adding remote images or clearing the
+            // user's pins is not.
+            if ((sub === "-posters" || sub === "-poster") && rest.some((word) => THEME_BLOCKED_POSTER_WORDS.has(word))) return true;
+            return false;
+        }
+        return !THEME_ALLOWED_COMMANDS.has(command);
     }
 
     // Too powerful for remote/store-and-fire paths: meta commands, secrets,
@@ -2978,6 +3004,8 @@ body.spotui-spotify-enabled, body {
         app.queuePanelOpen = false;
         app.queueGrab = -1;
         document.body.classList.remove("spotui-queue-panel");
+        const infoPopup = document.getElementById("spotui-queue-info-popup");
+        if (infoPopup) infoPopup.hidden = true;
         const panel = document.getElementById("spotui-queue-panel");
         if (panel) panel.hidden = true;
         const input = document.getElementById("spotui-input");
@@ -3545,8 +3573,8 @@ body.spotui-spotify-enabled, body {
     }
 
     // Local theme snapshots: everything a Spotify restart preserves, saved
-    // under one name — except personal config (history, keybinds, actions),
-    // which is yours, not a look. storage.js has no key enumeration, so this
+    // under one name — except personal config and secrets (history, keybinds,
+    // actions, pin token) and app/UI state, which are not a look. storage.js has no key enumeration, so this
     // module touches localStorage directly (guarded) for the snapshot/restore
     // loops only.
     const SAVES_KEY = "spotui:theme-saves";
@@ -3559,14 +3587,24 @@ body.spotui-spotify-enabled, body {
     // until the next local mutation (save/delete are the only writers).
     let savesCache = null;
 
-    // Personal config, not a look: never snapshotted, never wiped, and never
-    // restored over live values (old snapshots may still carry these keys).
-    const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY]);
+    // Personal config and secrets, not a look: never snapshotted, never wiped,
+    // and never restored over live values (old snapshots may still carry these
+    // keys, e.g. the Pinterest token).
+    const PERSONAL_KEYS = new Set([HISTORY_KEY, KEYBIND_STORAGE_KEY, ACTIONS_STORAGE_KEY, PIN_TOKEN_KEY]);
 
-    // App state, not a look either: applying an old snapshot must never delete
-    // these (wiping launched re-triggers onboarding, wiping the banner flag
-    // resurrects a dismissed banner).
-    const NEVER_WIPE_KEYS = new Set([LAUNCHED_KEY, UPDATE_BANNER_KEY]);
+    // App or UI state, not a look either: never snapshotted, never wiped, never
+    // restored from an old snapshot (wiping launched re-triggers onboarding,
+    // wiping the banner flag resurrects a dismissed banner, a stale jam-state
+    // would try to rejoin a dead jam).
+    const NEVER_WIPE_KEYS = new Set([LAUNCHED_KEY, UPDATE_BANNER_KEY, JAM_STATE_KEY, DEBUG_KEY, VISUALIZER_STORAGE_KEY, LYRICS_STORAGE_KEY]);
+
+    // Only spotui:* keys that are actually a look take part in snapshots. The
+    // library itself and its corrupt-blob backup are internal, not a look.
+    function isLookKey(k) {
+        return Boolean(k) && k.startsWith("spotui:")
+            && k !== SAVES_KEY && k !== SAVES_KEY + ".corrupt"
+            && !PERSONAL_KEYS.has(k) && !NEVER_WIPE_KEYS.has(k);
+    }
 
     function readSaves() {
         if (savesCache) return savesCache;
@@ -3607,7 +3645,7 @@ body.spotui-spotify-enabled, body {
         try {
             for (let i = 0; i < localStorage.length; i++) {
                 const k = localStorage.key(i);
-                if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !PERSONAL_KEYS.has(k)) out[k] = localStorage.getItem(k);
+                if (isLookKey(k)) out[k] = localStorage.getItem(k);
             }
         } catch (e) {}
         return out;
@@ -3654,7 +3692,6 @@ body.spotui-spotify-enabled, body {
         applyLyricColors();
         applyLyricLineSpacing();
         applyVisualizerColor();
-        applyVisualizerGap();
         refreshVisualizer();
         applyPlayerBarColors();
         applyPlayerBarVisibility();
@@ -3764,12 +3801,12 @@ body.spotui-spotify-enabled, body {
         try {
             const keep = new Set(Object.keys(snap.settings));
             for (const [k, v] of Object.entries(snap.settings)) {
-                if (PERSONAL_KEYS.has(k)) continue;
+                if (!isLookKey(k)) continue;
                 localStorage.setItem(k, v);
             }
             for (let i = localStorage.length - 1; i >= 0; i--) {
                 const k = localStorage.key(i);
-                if (k && k.startsWith("spotui:") && k !== SAVES_KEY && !PERSONAL_KEYS.has(k) && !NEVER_WIPE_KEYS.has(k) && !keep.has(k)) localStorage.removeItem(k);
+                if (isLookKey(k) && !keep.has(k)) localStorage.removeItem(k);
             }
         } catch (e) {
             console.error("[SpoTUI] theme apply failed:", e.message);
@@ -3920,9 +3957,10 @@ body.spotui-spotify-enabled, body {
         "jam leave",
     ];
 
-    // Word-by-word completion over every command in COMMAND_LIST: finishes the
-    // last partial word when the words before it match a known command
-    // ("tui -viz -ga" -> "tui -viz -gap"). Keeps a leading "/" or ".".
+    // Word-by-word completion over every command in COMMAND_LIST (see
+    // COMMAND_NAMES): finishes the last partial word when the words before it
+    // match a known command ("tui -viz -ga" -> "tui -viz -gap"). Keeps a
+    // leading "/" or ".".
     function wordCompletions(q) {
         const slash = /^[/.]/.test(q) ? q[0] : "";
         const body = slash ? q.slice(1) : q;
@@ -3938,6 +3976,10 @@ body.spotui-spotify-enabled, body {
                 && words.every((word, i) => cmd[i] === word)
                 && cmd[words.length].startsWith(lowerPartial)) next.add(cmd[words.length]);
         }
+        // "-live" may follow the theme id (or come before it); the fixed-width
+        // command names above cannot express a free-form id in the middle.
+        if (lowerPartial.startsWith("-") && "-live".startsWith(lowerPartial)
+            && /^tui\s+-t\s+pull\s/i.test(body) && !/\s-live(?:\s|$)/i.test(head)) next.add("-live");
         return [...next].map((word) => slash + head + word);
     }
 
@@ -4415,13 +4457,21 @@ body.spotui-spotify-enabled, body {
         card.appendChild(btn);
         return card;
     }
-    // Apply community theme by name
+    // Apply community theme by name. The theme is looked up before anything is
+    // reset, so an unknown name (or a feed that fails to load) leaves the user's
+    // look untouched and resolves to null.
     function applyThemeByName(themeName, opts = {}) {
         const skipNonTui = Boolean(opts.skipNonTui);
         const apply = async (themes) => {
-            resetAllSettings();
             const theme = (themes || []).find((t) => t.name === themeName);
-            if (theme && theme.commands) {
+            if (!theme) {
+                if (opts.channel) {
+                    pinToast(`theme not found on ${opts.channel}${opts.channel === "live" ? "" : " (try -live)"}`);
+                }
+                return null;
+            }
+            resetAllSettings();
+            if (theme.commands) {
                 const pending = [];
                 theme.commands.forEach((cmd, idx) => {
                     const text = String(cmd || "").trim();
@@ -4437,7 +4487,7 @@ body.spotui-spotify-enabled, body {
                 });
                 await Promise.all(pending);
             }
-            return theme || null;
+            return theme;
         };
         if (opts.channel) {
             return loadThemeChannel(opts.channel).then((themes) => apply(themes));
@@ -5367,11 +5417,27 @@ body.spotui-spotify-enabled, body {
         return t.length >= 2 && t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t;
     }
 
+    // `tui -t pull <id> [-live]`: the id is the first word after "pull" that is
+    // not a flag, and -live may sit anywhere (args = words after "tui").
+    function parsePullArgs(args) {
+        const rest = args.slice(2);
+        return {
+            id: rest.find((a) => !a.startsWith("-")) || "",
+            channel: rest.some((a) => a.toLowerCase() === "-live") ? "live" : "stable",
+        };
+    }
+
     async function executeInner(cmd, opts = {}) {
         const cleanedCmd = stripCommandPrefix(cmd);
         const [rawCommand, ...args] = cleanedCmd.split(/\s+/);
         const command = (rawCommand || "").toLowerCase();
-        const argText = args.join(" ").trim();    if (opts.fromTheme && isRestrictedThemeCommand(cleanedCmd)) return;
+        const argText = args.join(" ").trim();
+        // Remote themes run look commands only. Checked on the same normalized
+        // text that is dispatched below, so prefixes/case/spacing cannot dodge it.
+        if (opts.fromTheme && isRestrictedThemeCommand(cleanedCmd)) {
+            dbg("[SpoTUI] theme command skipped:", cleanedCmd);
+            return;
+        }
 
         const allowedOnboardingCommands = opts.bypassOnboarding ? null : getAllowedOnboardingCommands();
         if (allowedOnboardingCommands && !allowedOnboardingCommands.has(command)) return;
@@ -5568,14 +5634,21 @@ body.spotui-spotify-enabled, body {
                 }
                 if (tSub === "apply" || tSub === "load") { applyTheme(tName); return; }
                 if (tSub === "delete" || tSub === "rm" || tSub === "remove") { deleteTheme(tName); return; }
-                if (tSub === "pull" && args[2]) {
-                    const base64Name = args[2];
-                    const channel = argsLower.includes("-live") ? "live" : "stable";
+                if (tSub === "pull") {
+                    const { id, channel } = parsePullArgs(args);
+                    if (!id) {
+                        console.warn("[SpoTUI] usage: tui -t pull <theme_id> [-live]");
+                        return;
+                    }
+                    let themeName;
                     try {
-                        const themeName = atob(base64Name);
-                        applyThemeByName(themeName, { channel });
-                    } catch (e) {}
-                } else if (tSub !== "pull") {
+                        themeName = atob(id);
+                    } catch (e) {
+                        pinToast("invalid theme id");
+                        return;
+                    }
+                    applyThemeByName(themeName, { channel }).catch((e) => pinToast(`theme pull failed (${channel} feed): ${e.message}`));
+                } else {
                     console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id> [-live]>");
                 }
                 return;
@@ -5678,7 +5751,6 @@ body.spotui-spotify-enabled, body {
                     handleColorArgs(filteredArgs, { "-color": VISUALIZER_COLOR });
                     applyVisualizerColor();
                 }
-                applyVisualizerGap();
                 refreshVisualizer();
                 return;
             }
@@ -5811,9 +5883,11 @@ body.spotui-spotify-enabled, body {
                 const keybindsValue = storageGet(KEYBIND_STORAGE_KEY);
                 const actionsValue = storageGet(ACTIONS_STORAGE_KEY);
                 const historyValue = storageGet(HISTORY_KEY);
+                const pinTokenValue = storageGet(PIN_TOKEN_KEY);
                 storageClear();
                 invalidateSavesCache();
                 if (!fullRestore) {
+                    if (pinTokenValue !== null) storageSet(PIN_TOKEN_KEY, pinTokenValue);
                     if (launchedValue !== null) storageSet(LAUNCHED_KEY, launchedValue);
                     if (bannerValue !== null) storageSet(UPDATE_BANNER_KEY, bannerValue);
                     if (keybindsValue !== null) storageSet(KEYBIND_STORAGE_KEY, keybindsValue);
@@ -6375,6 +6449,8 @@ body.spotui-spotify-enabled, body {
         return null;
     }
 
+    const SPOLYRC_TIMEOUT_MS = 4000;
+
     async function fetchSpolyrcLyrics(info) {
         const params = new URLSearchParams({
             title: info.title,
@@ -6384,18 +6460,28 @@ body.spotui-spotify-enabled, body {
         if (info.durationSec) params.set("duration", String(info.durationSec));
         if (info.uri) params.set("spotify_id", info.uri);
         const url = `https://spolyrc-spotui.root.sx/lyrics?${params}`;
+        // One shared deadline for the whole spolyrc attempt: a hung host must not
+        // block the Spotify/lrclib fallbacks.
+        const deadline = Date.now() + SPOLYRC_TIMEOUT_MS;
         let data = null;
         if (Spicetify.CosmosAsync?.get) {
+            let timer;
             try {
-                data = await Spicetify.CosmosAsync.get(url);
+                data = await Promise.race([
+                    Spicetify.CosmosAsync.get(url),
+                    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("spolyrc timeout")), SPOLYRC_TIMEOUT_MS); }),
+                ]);
                 if (typeof data === "string") {
                     try { data = JSON.parse(data); } catch { data = null; }
                 }
             } catch { data = null; }
+            clearTimeout(timer);
         }
         if (!data || typeof data !== "object") {
+            const left = deadline - Date.now();
+            if (left <= 0) return null;
             try {
-                const res = await fetch(url);
+                const res = await fetch(url, { signal: AbortSignal.timeout(left) });
                 if (!res.ok) return null;
                 data = await res.json();
             } catch { return null; }
@@ -6869,10 +6955,6 @@ body.spotui-spotify-enabled, body {
 
     function applyVisualizerColor() {
         applyCssVar(VISUALIZER_COLOR, "--visualizer-color");
-    }
-
-    function applyVisualizerGap() {
-        applyCssVar(VISUALIZER_GAP, "--visualizer-gap");
     }
 
     // Apply stored player bar color preferences from localStorage
@@ -7447,7 +7529,6 @@ body.spotui-spotify-enabled, body {
         applyVisualizerColor();
 
         storageRemove(VISUALIZER_GAP);
-        applyVisualizerGap();
 
         storageRemove(VISUALIZER_BARS);
         storageRemove(VISUALIZER_SMOOTH);
@@ -9616,7 +9697,11 @@ body.spotui-standby .Root__now-playing-bar {
         Spicetify.Player.addEventListener("songchange", () => {
             lyricsCache = { uri: "", lines: [], synced: false, instrumental: false, error: "", loading: true };
             send();
-            refreshLyrics();
+            // refreshLyrics only feeds the SpoSync relay (the in-app lyrics panel
+            // loads its own via lyrics.js), so without a connection nothing
+            // consumes the result and no lyric request should leave the app. On
+            // connect, onopen fetches for the current track.
+            if (app.sposyncConnected) refreshLyrics();
         });
         Spicetify.Player.addEventListener("onplaypause", send);
         // onprogress fires many times per second; the 1s heartbeat already

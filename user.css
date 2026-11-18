@@ -953,7 +953,7 @@ body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist .main-gridContain
 body.spotui-spotify-enabled .main-yourLibraryX-libraryRootlist [data-encore-id="card"] {
     background: #000 !important;
     border: 1px solid var(--spotui-accent, #ff8c42) !important;
-    box-shadow: inset 0 0 0 1px rgb(var(--spotui-accent-rgb, 255, 140, 66) / 0.18) !important;
+    box-shadow: inset 0 0 0 1px rgba(var(--spotui-accent-rgb, 255, 140, 66), 0.18) !important;
     border-radius: 0 !important;
     height: 100% !important;
     padding: 6px !important;

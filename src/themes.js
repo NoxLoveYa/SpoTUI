@@ -3,6 +3,7 @@ import { execute } from "./commands.js";
 import { FIRST_BOOT_THEME_IDS, THEME_CHANNELS, THEME_HOST } from "./constants.js";
 import { isRestrictedThemeCommand } from "./keybinds.js";
 import { app } from "./state.js";
+import { pinToast } from "./utils.js";
 
 // Singleton promise for theme feed
 
@@ -116,13 +117,21 @@ export function createThemeCard(theme) {
     card.appendChild(btn);
     return card;
 }
-// Apply community theme by name
+// Apply community theme by name. The theme is looked up before anything is
+// reset, so an unknown name (or a feed that fails to load) leaves the user's
+// look untouched and resolves to null.
 export function applyThemeByName(themeName, opts = {}) {
     const skipNonTui = Boolean(opts.skipNonTui);
     const apply = async (themes) => {
-        resetAllSettings();
         const theme = (themes || []).find((t) => t.name === themeName);
-        if (theme && theme.commands) {
+        if (!theme) {
+            if (opts.channel) {
+                pinToast(`theme not found on ${opts.channel}${opts.channel === "live" ? "" : " (try -live)"}`);
+            }
+            return null;
+        }
+        resetAllSettings();
+        if (theme.commands) {
             const pending = [];
             theme.commands.forEach((cmd, idx) => {
                 const text = String(cmd || "").trim();
@@ -138,7 +147,7 @@ export function applyThemeByName(themeName, opts = {}) {
             });
             await Promise.all(pending);
         }
-        return theme || null;
+        return theme;
     };
     if (opts.channel) {
         return loadThemeChannel(opts.channel).then((themes) => apply(themes));

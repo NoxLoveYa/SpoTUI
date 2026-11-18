@@ -1,4 +1,4 @@
-import { HEX_COLOR_REGEX, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
+import { HEX_COLOR_REGEX, PIN_TOKEN_KEY, PINTEREST_API_BASE, PINTEREST_WIDGET_BASE, PINTEREST_WWW_BASE } from "./constants.js";
 import { storageGet, storageRemove, storageSet } from "./storage.js";
 import { dbg, pinToast } from "./utils.js";
 
@@ -19,7 +19,7 @@ const POSTERS_SYMMETRIC = "spotui:posters-symmetric";
 // slot:{x,y,w,r}, mult}]. Snapshots pick it up automatically (spotui:*),
 // so theme apply re-pins each poster to its saved slot — no seed re-roll.
 export const POSTERS_LAYOUT = "spotui:posters-layout";
-const PIN_TOKEN = "spotui:pin-token";
+const PIN_TOKEN = PIN_TOKEN_KEY;
 
 const MAX_STORED = 40;
 

@@ -1,8 +1,8 @@
 import { handleActionsCommand } from "./actions.js";
-import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, applyVisualizerGap, handleColorArgs, toggleLogo, updateCustomBar } from "./appearance.js";
+import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, handleColorArgs, toggleLogo, updateCustomBar } from "./appearance.js";
 import { resetGrid, startAsciiPaintLoop } from "./ascii.js";
 import { initUpdateBanner, showRestartPopup } from "./banner.js";
-import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, HISTORY_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, VISUALIZER_BARS, VISUALIZER_COLOR, VISUALIZER_GAP, VISUALIZER_MODE, VISUALIZER_SMOOTH, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ACTIONS_STORAGE_KEY, ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, HISTORY_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, KEYBIND_STORAGE_KEY, LAUNCHED_KEY, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PIN_TOKEN_KEY, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, VISUALIZER_BARS, VISUALIZER_COLOR, VISUALIZER_GAP, VISUALIZER_MODE, VISUALIZER_SMOOTH, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { getAllowedJamGuestCommands, jamCreate, jamJoin, jamLeave, jamSay } from "./jam.js";
 import { getKeybinds, isRestrictedThemeCommand, saveKeybinds, stripCommandPrefix } from "./keybinds.js";
 import { handleLyricsCommand, syncLyricsHighlight } from "./lyrics.js";
@@ -75,11 +75,27 @@ function unquote(s) {
     return t.length >= 2 && t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t;
 }
 
+// `tui -t pull <id> [-live]`: the id is the first word after "pull" that is
+// not a flag, and -live may sit anywhere (args = words after "tui").
+export function parsePullArgs(args) {
+    const rest = args.slice(2);
+    return {
+        id: rest.find((a) => !a.startsWith("-")) || "",
+        channel: rest.some((a) => a.toLowerCase() === "-live") ? "live" : "stable",
+    };
+}
+
 async function executeInner(cmd, opts = {}) {
     const cleanedCmd = stripCommandPrefix(cmd);
     const [rawCommand, ...args] = cleanedCmd.split(/\s+/);
     const command = (rawCommand || "").toLowerCase();
-    const argText = args.join(" ").trim();    if (opts.fromTheme && isRestrictedThemeCommand(cleanedCmd)) return;
+    const argText = args.join(" ").trim();
+    // Remote themes run look commands only. Checked on the same normalized
+    // text that is dispatched below, so prefixes/case/spacing cannot dodge it.
+    if (opts.fromTheme && isRestrictedThemeCommand(cleanedCmd)) {
+        dbg("[SpoTUI] theme command skipped:", cleanedCmd);
+        return;
+    }
 
     const allowedOnboardingCommands = opts.bypassOnboarding ? null : getAllowedOnboardingCommands();
     if (allowedOnboardingCommands && !allowedOnboardingCommands.has(command)) return;
@@ -276,14 +292,21 @@ async function executeInner(cmd, opts = {}) {
             }
             if (tSub === "apply" || tSub === "load") { applySavedTheme(tName); return; }
             if (tSub === "delete" || tSub === "rm" || tSub === "remove") { deleteTheme(tName); return; }
-            if (tSub === "pull" && args[2]) {
-                const base64Name = args[2];
-                const channel = argsLower.includes("-live") ? "live" : "stable";
+            if (tSub === "pull") {
+                const { id, channel } = parsePullArgs(args);
+                if (!id) {
+                    console.warn("[SpoTUI] usage: tui -t pull <theme_id> [-live]");
+                    return;
+                }
+                let themeName;
                 try {
-                    const themeName = atob(base64Name);
-                    applyThemeByName(themeName, { channel });
-                } catch (e) {}
-            } else if (tSub !== "pull") {
+                    themeName = atob(id);
+                } catch (e) {
+                    pinToast("invalid theme id");
+                    return;
+                }
+                applyThemeByName(themeName, { channel }).catch((e) => pinToast(`theme pull failed (${channel} feed): ${e.message}`));
+            } else {
                 console.warn("[SpoTUI] usage: tui -t <save <name>|list|apply <name>|delete <name>|pull <theme_id> [-live]>");
             }
             return;
@@ -386,7 +409,6 @@ async function executeInner(cmd, opts = {}) {
                 handleColorArgs(filteredArgs, { "-color": VISUALIZER_COLOR });
                 applyVisualizerColor();
             }
-            applyVisualizerGap();
             refreshVisualizer();
             return;
         }
@@ -519,9 +541,11 @@ async function executeInner(cmd, opts = {}) {
             const keybindsValue = storageGet(KEYBIND_STORAGE_KEY);
             const actionsValue = storageGet(ACTIONS_STORAGE_KEY);
             const historyValue = storageGet(HISTORY_KEY);
+            const pinTokenValue = storageGet(PIN_TOKEN_KEY);
             storageClear();
             invalidateSavesCache();
             if (!fullRestore) {
+                if (pinTokenValue !== null) storageSet(PIN_TOKEN_KEY, pinTokenValue);
                 if (launchedValue !== null) storageSet(LAUNCHED_KEY, launchedValue);
                 if (bannerValue !== null) storageSet(UPDATE_BANNER_KEY, bannerValue);
                 if (keybindsValue !== null) storageSet(KEYBIND_STORAGE_KEY, keybindsValue);

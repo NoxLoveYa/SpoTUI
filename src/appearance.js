@@ -52,10 +52,6 @@ export function applyVisualizerColor() {
     applyCssVar(VISUALIZER_COLOR, "--visualizer-color");
 }
 
-export function applyVisualizerGap() {
-    applyCssVar(VISUALIZER_GAP, "--visualizer-gap");
-}
-
 // Apply stored player bar color preferences from localStorage
 export function applyPlayerBarColors() {
     try {
@@ -628,7 +624,6 @@ export function resetAllSettings() {
     applyVisualizerColor();
 
     storageRemove(VISUALIZER_GAP);
-    applyVisualizerGap();
 
     storageRemove(VISUALIZER_BARS);
     storageRemove(VISUALIZER_SMOOTH);

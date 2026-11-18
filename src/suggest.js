@@ -72,9 +72,10 @@ const STATIC_SUGGESTIONS = [
     "jam leave",
 ];
 
-// Word-by-word completion over every command in COMMAND_LIST: finishes the
-// last partial word when the words before it match a known command
-// ("tui -viz -ga" -> "tui -viz -gap"). Keeps a leading "/" or ".".
+// Word-by-word completion over every command in COMMAND_LIST (see
+// COMMAND_NAMES): finishes the last partial word when the words before it
+// match a known command ("tui -viz -ga" -> "tui -viz -gap"). Keeps a
+// leading "/" or ".".
 function wordCompletions(q) {
     const slash = /^[/.]/.test(q) ? q[0] : "";
     const body = slash ? q.slice(1) : q;
@@ -90,6 +91,10 @@ function wordCompletions(q) {
             && words.every((word, i) => cmd[i] === word)
             && cmd[words.length].startsWith(lowerPartial)) next.add(cmd[words.length]);
     }
+    // "-live" may follow the theme id (or come before it); the fixed-width
+    // command names above cannot express a free-form id in the middle.
+    if (lowerPartial.startsWith("-") && "-live".startsWith(lowerPartial)
+        && /^tui\s+-t\s+pull\s/i.test(body) && !/\s-live(?:\s|$)/i.test(head)) next.add("-live");
     return [...next].map((word) => slash + head + word);
 }
 
