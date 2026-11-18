@@ -35,7 +35,11 @@
 - Only ever write inside `Themes/SpoTUI-debug/`; never into `Backup`,
   `Extracted`, or another installed theme.
 - Commit scope: `src/`, `user.css`, `color.ini` (intentional only),
-  `manifest.json`, `scripts/`, docs. No secrets, no local paths, no user data.
+  `manifest.json`, `scripts/`, `sposync/` source files (`app.py`,
+  `test_relay.py`, `requirements*.txt`, `build-*.{cmd,sh}`), `.gitattributes`
+  (`*.sh` stay LF, `*.cmd` are CRLF in the working tree), docs. Never commit
+  `sposync/bin`, `sposync/venv`, `build/`, `dist/` or `*.spec`.
+  No secrets, no local paths, no user data.
   Before commit, `git diff --stat` must show only intended files (revert any
   debug prints; run the rollup build so `theme.js` matches `src/`).
 
@@ -54,5 +58,7 @@
 - Keys: Chromium swallows `Ctrl+Letter` before the page — only `Alt+Letter`
   (via `tui bind`) and bare keys are bindable. Capture-phase listeners run
   first: open menus own bare keys, modifiers stay global.
+- SpoSync accepts Origin `https://xpui.app.spotify.com` or none; never widen
+  `THEME_ORIGINS` or relay client messages to other clients.
 - Reverts remove code + docs + tests traces; prove it with grep. Stub-test
   failures need a stack trace before any app code is blamed.
