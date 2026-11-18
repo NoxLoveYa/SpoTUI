@@ -3465,8 +3465,10 @@ body.spotui-spotify-enabled, body {
     const FILE_ID_REGEX = /^[A-Za-z0-9_-]{8,128}$/;
     const IMAGE_ID_REGEX = /^[0-9a-f]{40}$/i;
     const FILE_TYPE_REGEX = /^[a-z0-9]{1,8}$/i;
-    const MAX_URL_LENGTH = 2000;
-    const MAX_TEMPLATE_LENGTH = 1000;
+    // The templates end in a signed query string that is long on a live manifest (the
+    // recorded fixtures have it cut to ?sig=REDACTED): these caps only bound untrusted input.
+    const MAX_URL_LENGTH = 8400;
+    const MAX_TEMPLATE_LENGTH = 8192;
     const MAX_PROFILE_ENTRIES = 256;
     const MAX_BASE_URLS = 16;
     const MAX_SEGMENT_LENGTH_SEC = 60;
@@ -4224,8 +4226,12 @@ body.spotui-spotify-enabled, body {
     }
 
     // Video mode: while a song plays, its Spotify Canvas replaces the theme
-    // background (layer #spotui-video, same z as the wallpaper but later in the
-    // DOM). The state machine lives in videocanvas.js; this file is the adapters:
+    // background (layer #spotui-video). TUI mode: inside #spotui-tui, same z as the
+    // wallpaper but later in the DOM. Spotify mode (the native UI, #spotui-tui is
+    // display: none and the page is plain black): a fixed layer on <body> behind
+    // the native UI, whose containers turn transparent while a clip shows (CSS
+    // scoped by body.spotui-video-showing). The layer follows the mode.
+    // The state machine lives in videocanvas.js; this file is the adapters:
     // Spicetify player, DOM, fetch and MediaSource. Look key "spotui:video-mode":
     // "1" = on, absent = off. Off means zero work: no listeners, timers, observers
     // or DOM. Nothing here reads or sends the Spotify access token: the manifest is
@@ -4355,9 +4361,43 @@ body.spotui-spotify-enabled, body {
         }
     }
 
+    // Both modes show a Canvas; a minimised or fully covered window (document.hidden)
+    // and standby do not.
     function isVisible() {
+        return !document.hidden && !document.body.classList.contains("spotui-standby");
+    }
+
+    function inSpotifyMode() {
         const cls = document.body.classList;
-        return !document.hidden && !cls.contains("spotui-tui-hidden") && !cls.contains("spotui-standby");
+        return cls.contains("spotui-spotify-enabled") || cls.contains("spotui-tui-hidden");
+    }
+
+    // Where the layer lives now: <body> in Spotify mode, #spotui-tui otherwise (null
+    // while the TUI is not built yet).
+    function layerHost() {
+        return inSpotifyMode() ? document.body : document.getElementById("spotui-tui");
+    }
+
+    // Put the layer into the host of the current mode. A move removes the media
+    // from the document, which pauses it: moveBefore keeps it playing where the
+    // engine has it, else the current clip is played again.
+    function syncHost() {
+        if (!layer) return false;
+        const host = layerHost();
+        if (!host) return false;
+        if (layer.parentNode === host && layer.isConnected) return true;
+        let moved = false;
+        if (layer.isConnected && typeof host.moveBefore === "function") {
+            try {
+                host.moveBefore(layer, null);
+                moved = true;
+            } catch (e) {}
+        }
+        if (!moved) {
+            host.appendChild(layer);
+            if (current && current.video && !stillMode() && isVisible()) playVideo(current.video);
+        }
+        return true;
     }
 
     // Video Canvases shown as a still (frame 0, never play()): reduced motion, or
@@ -4777,11 +4817,7 @@ body.spotui-spotify-enabled, body {
 
     function buildSlot(kind, artUrl) {
         if (!layer) throw vmError("no-layer");
-        if (!layer.isConnected) {
-            const tui = document.getElementById("spotui-tui");
-            if (!tui) throw vmError("no-tui");
-            tui.appendChild(layer);
-        }
+        if (!syncHost()) throw vmError("no-tui");
         enforceSlotCap();
         const slot = document.createElement("div");
         slot.className = "spotui-video-slot";
@@ -5367,6 +5403,7 @@ body.spotui-spotify-enabled, body {
 
     function onVisibility() {
         if (!running) return;
+        syncHost(); // a mode switch (Enable Spotify / Back) moves the layer
         const v = isVisible();
         if (v === lastVisible) return;
         lastVisible = v;
@@ -5410,8 +5447,9 @@ body.spotui-spotify-enabled, body {
         layer = document.createElement("div");
         layer.id = LAYER_ID;
         layer.setAttribute("aria-hidden", "true");
-        // After #spotui-wallpaper (always prepended) at the same z: paints over it.
-        tui.appendChild(layer);
+        // TUI mode: after #spotui-wallpaper (always prepended) at the same z, so it
+        // paints over it. Spotify mode: on <body>, behind the native UI.
+        (layerHost() || tui).appendChild(layer);
     }
 
     function start(tui) {
@@ -5587,7 +5625,7 @@ body.spotui-spotify-enabled, body {
                 why = "ads, podcasts and local files have no Canvas";
                 break;
             case "hidden":
-                why = "hidden (Spotify mode / standby / minimised)";
+                why = "hidden (standby, or the Spotify window is minimised or covered)";
                 break;
             case "error":
                 why = "Canvas failed to load — background stays (tui -debug on for details)";
@@ -11822,10 +11860,100 @@ body.spotui-video-showing #spotui-posters {
     opacity: 0 !important;
 }
 
+/* Spotify mode: #spotui-tui is display: none and the layer sits on <body>, behind
+   the native UI (z -1 paints over the root background but under .Root). user.css
+   paints the whole page black there, so while a clip shows the containers that
+   do it go transparent (body too: html keeps the black, so body paints itself),
+   the side panels translucent, and the clip is dimmer so text stays readable.
+   Extra classes beat the !important black rules in user.css by specificity. */
+body > #spotui-video {
+    position: fixed;
+}
+
+body > #spotui-video .spotui-video-media {
+    opacity: 0.4;
+}
+
+body.spotui-spotify-enabled.spotui-video-showing,
+body.spotui-spotify-enabled.spotui-video-showing #main,
+body.spotui-spotify-enabled.spotui-video-showing .Root,
+body.spotui-spotify-enabled.spotui-video-showing .Root__top-container,
+body.spotui-spotify-enabled.spotui-video-showing .Root__main-view,
+body.spotui-spotify-enabled.spotui-video-showing .main-view-container,
+body.spotui-spotify-enabled.spotui-video-showing .main-view-container__scroll-node,
+body.spotui-spotify-enabled.spotui-video-showing .os-viewport {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Inner content blocks of the main view: Spotify paints them with
+   var(--background-base) (black here) and user.css forces some of them black,
+   so the outer containers alone leave the main view opaque. Transparent here;
+   cards stay opaque on purpose (user.css), as do the top bar, the player bar,
+   the native lyrics page and the now-playing panel. */
+body.spotui-spotify-enabled.spotui-video-showing .playlist-playlist-playlistContent,
+body.spotui-spotify-enabled.spotui-video-showing .playlist-playlist-concertsFooter,
+body.spotui-spotify-enabled.spotui-video-showing .main-entityHeader-backgroundColor,
+body.spotui-spotify-enabled.spotui-video-showing .main-entityHeader-overlay,
+body.spotui-spotify-enabled.spotui-video-showing .main-home-homeHeader,
+body.spotui-spotify-enabled.spotui-video-showing .main-view-container__mh-footer-container {
+    background: transparent !important;
+    background-color: transparent !important;
+    background-image: none !important;
+}
+
+/* Sticky or banded bars: translucent, not transparent, so scrolled content
+   under their text stays out of the way. */
+body.spotui-spotify-enabled.spotui-video-showing .main-actionBarBackground-background,
+body.spotui-spotify-enabled.spotui-video-showing .main-home-filterChipsSection,
+body.spotui-spotify-enabled.spotui-video-showing .artist-artistDiscography-headerContainer,
+body.spotui-spotify-enabled.spotui-video-showing .e-101111-table-container--sticky-header .e-101111-table-header-cell {
+    background: rgba(0, 0, 0, 0.55) !important;
+    background-color: rgba(0, 0, 0, 0.55) !important;
+    background-image: none !important;
+}
+
+/* Side panels: only the two OUTER panels are translucent. The blocks nested in
+   them are transparent, otherwise the 0.55 would stack (0.8, 0.9) and the
+   entry points keep Spotify's solid background. */
+body.spotui-spotify-enabled.spotui-video-showing .Root__nav-bar,
+body.spotui-spotify-enabled.spotui-video-showing .Root__right-sidebar {
+    background: rgba(0, 0, 0, 0.55) !important;
+    background-color: rgba(0, 0, 0, 0.55) !important;
+}
+
+body.spotui-spotify-enabled.spotui-video-showing .main-yourLibraryX-libraryContainer,
+body.spotui-spotify-enabled.spotui-video-showing .YourLibraryX,
+body.spotui-spotify-enabled.spotui-video-showing .main-yourLibraryX-entryPoints,
+body.spotui-spotify-enabled.spotui-video-showing .main-buddy-list {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Fade the page black back in with the clip (only while video mode is on).
+   :where() keeps the class list at the specificity of the scope; #main gets its
+   own rule. The right sidebar keeps Spotify's margin transition (it slides). */
+body.spotui-spotify-enabled.spotui-video-on,
+body.spotui-spotify-enabled.spotui-video-on #main,
+body.spotui-spotify-enabled.spotui-video-on :where(.Root, .Root__top-container, .Root__main-view, .main-view-container, .main-view-container__scroll-node, .os-viewport, .Root__nav-bar, .main-yourLibraryX-libraryContainer, .YourLibraryX, .main-yourLibraryX-entryPoints, .main-buddy-list) {
+    transition: background-color 600ms ease;
+}
+
+body.spotui-spotify-enabled.spotui-video-on .Root__right-sidebar {
+    transition: margin 0.3s ease-in-out, background-color 600ms ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .spotui-video-slot,
-    body.spotui-video-on #spotui-posters {
+    body.spotui-video-on #spotui-posters,
+    body.spotui-spotify-enabled.spotui-video-on,
+    body.spotui-spotify-enabled.spotui-video-on #main,
+    body.spotui-spotify-enabled.spotui-video-on :where(.Root, .Root__top-container, .Root__main-view, .main-view-container, .main-view-container__scroll-node, .os-viewport, .Root__nav-bar, .main-yourLibraryX-libraryContainer, .YourLibraryX, .main-yourLibraryX-entryPoints, .main-buddy-list) {
         transition: none;
+    }
+
+    body.spotui-spotify-enabled.spotui-video-on .Root__right-sidebar {
+        transition: margin 0.3s ease-in-out;
     }
 }
 `;

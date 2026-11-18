@@ -1482,10 +1482,100 @@ body.spotui-video-showing #spotui-posters {
     opacity: 0 !important;
 }
 
+/* Spotify mode: #spotui-tui is display: none and the layer sits on <body>, behind
+   the native UI (z -1 paints over the root background but under .Root). user.css
+   paints the whole page black there, so while a clip shows the containers that
+   do it go transparent (body too: html keeps the black, so body paints itself),
+   the side panels translucent, and the clip is dimmer so text stays readable.
+   Extra classes beat the !important black rules in user.css by specificity. */
+body > #spotui-video {
+    position: fixed;
+}
+
+body > #spotui-video .spotui-video-media {
+    opacity: 0.4;
+}
+
+body.spotui-spotify-enabled.spotui-video-showing,
+body.spotui-spotify-enabled.spotui-video-showing #main,
+body.spotui-spotify-enabled.spotui-video-showing .Root,
+body.spotui-spotify-enabled.spotui-video-showing .Root__top-container,
+body.spotui-spotify-enabled.spotui-video-showing .Root__main-view,
+body.spotui-spotify-enabled.spotui-video-showing .main-view-container,
+body.spotui-spotify-enabled.spotui-video-showing .main-view-container__scroll-node,
+body.spotui-spotify-enabled.spotui-video-showing .os-viewport {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Inner content blocks of the main view: Spotify paints them with
+   var(--background-base) (black here) and user.css forces some of them black,
+   so the outer containers alone leave the main view opaque. Transparent here;
+   cards stay opaque on purpose (user.css), as do the top bar, the player bar,
+   the native lyrics page and the now-playing panel. */
+body.spotui-spotify-enabled.spotui-video-showing .playlist-playlist-playlistContent,
+body.spotui-spotify-enabled.spotui-video-showing .playlist-playlist-concertsFooter,
+body.spotui-spotify-enabled.spotui-video-showing .main-entityHeader-backgroundColor,
+body.spotui-spotify-enabled.spotui-video-showing .main-entityHeader-overlay,
+body.spotui-spotify-enabled.spotui-video-showing .main-home-homeHeader,
+body.spotui-spotify-enabled.spotui-video-showing .main-view-container__mh-footer-container {
+    background: transparent !important;
+    background-color: transparent !important;
+    background-image: none !important;
+}
+
+/* Sticky or banded bars: translucent, not transparent, so scrolled content
+   under their text stays out of the way. */
+body.spotui-spotify-enabled.spotui-video-showing .main-actionBarBackground-background,
+body.spotui-spotify-enabled.spotui-video-showing .main-home-filterChipsSection,
+body.spotui-spotify-enabled.spotui-video-showing .artist-artistDiscography-headerContainer,
+body.spotui-spotify-enabled.spotui-video-showing .e-101111-table-container--sticky-header .e-101111-table-header-cell {
+    background: rgba(0, 0, 0, 0.55) !important;
+    background-color: rgba(0, 0, 0, 0.55) !important;
+    background-image: none !important;
+}
+
+/* Side panels: only the two OUTER panels are translucent. The blocks nested in
+   them are transparent, otherwise the 0.55 would stack (0.8, 0.9) and the
+   entry points keep Spotify's solid background. */
+body.spotui-spotify-enabled.spotui-video-showing .Root__nav-bar,
+body.spotui-spotify-enabled.spotui-video-showing .Root__right-sidebar {
+    background: rgba(0, 0, 0, 0.55) !important;
+    background-color: rgba(0, 0, 0, 0.55) !important;
+}
+
+body.spotui-spotify-enabled.spotui-video-showing .main-yourLibraryX-libraryContainer,
+body.spotui-spotify-enabled.spotui-video-showing .YourLibraryX,
+body.spotui-spotify-enabled.spotui-video-showing .main-yourLibraryX-entryPoints,
+body.spotui-spotify-enabled.spotui-video-showing .main-buddy-list {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Fade the page black back in with the clip (only while video mode is on).
+   :where() keeps the class list at the specificity of the scope; #main gets its
+   own rule. The right sidebar keeps Spotify's margin transition (it slides). */
+body.spotui-spotify-enabled.spotui-video-on,
+body.spotui-spotify-enabled.spotui-video-on #main,
+body.spotui-spotify-enabled.spotui-video-on :where(.Root, .Root__top-container, .Root__main-view, .main-view-container, .main-view-container__scroll-node, .os-viewport, .Root__nav-bar, .main-yourLibraryX-libraryContainer, .YourLibraryX, .main-yourLibraryX-entryPoints, .main-buddy-list) {
+    transition: background-color 600ms ease;
+}
+
+body.spotui-spotify-enabled.spotui-video-on .Root__right-sidebar {
+    transition: margin 0.3s ease-in-out, background-color 600ms ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .spotui-video-slot,
-    body.spotui-video-on #spotui-posters {
+    body.spotui-video-on #spotui-posters,
+    body.spotui-spotify-enabled.spotui-video-on,
+    body.spotui-spotify-enabled.spotui-video-on #main,
+    body.spotui-spotify-enabled.spotui-video-on :where(.Root, .Root__top-container, .Root__main-view, .main-view-container, .main-view-container__scroll-node, .os-viewport, .Root__nav-bar, .main-yourLibraryX-libraryContainer, .YourLibraryX, .main-yourLibraryX-entryPoints, .main-buddy-list) {
         transition: none;
+    }
+
+    body.spotui-spotify-enabled.spotui-video-on .Root__right-sidebar {
+        transition: margin 0.3s ease-in-out;
     }
 }
 `;

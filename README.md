@@ -184,6 +184,13 @@ While a song plays, its Spotify Canvas — the short looping clip artists add
 to a song — replaces your background. Pause, stop, an ad, a podcast, a local
 file or a song without a Canvas brings your wallpaper and posters back.
 
+It works in both modes. In TUI mode the clip replaces the wallpaper and the
+posters. In Spotify mode ("Enable Spotify"), where the page is plain black, the
+clip plays behind the native UI: the main view turns transparent, the side
+panels translucent, and the clip is dimmer so text stays readable. Cards, the
+top bar and the player bar stay solid. It pauses
+while the window is minimised or fully covered, and in standby.
+
 ```bash
 tui -video on                      # turn it on (saved with your look and in tui -t save)
 tui -video                         # what it is doing right now

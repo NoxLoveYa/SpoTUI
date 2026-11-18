@@ -20,8 +20,12 @@ import {
 } from "./videocanvas.js";
 
 // Video mode: while a song plays, its Spotify Canvas replaces the theme
-// background (layer #spotui-video, same z as the wallpaper but later in the
-// DOM). The state machine lives in videocanvas.js; this file is the adapters:
+// background (layer #spotui-video). TUI mode: inside #spotui-tui, same z as the
+// wallpaper but later in the DOM. Spotify mode (the native UI, #spotui-tui is
+// display: none and the page is plain black): a fixed layer on <body> behind
+// the native UI, whose containers turn transparent while a clip shows (CSS
+// scoped by body.spotui-video-showing). The layer follows the mode.
+// The state machine lives in videocanvas.js; this file is the adapters:
 // Spicetify player, DOM, fetch and MediaSource. Look key "spotui:video-mode":
 // "1" = on, absent = off. Off means zero work: no listeners, timers, observers
 // or DOM. Nothing here reads or sends the Spotify access token: the manifest is
@@ -151,9 +155,43 @@ function vp9Supported() {
     }
 }
 
+// Both modes show a Canvas; a minimised or fully covered window (document.hidden)
+// and standby do not.
 function isVisible() {
+    return !document.hidden && !document.body.classList.contains("spotui-standby");
+}
+
+function inSpotifyMode() {
     const cls = document.body.classList;
-    return !document.hidden && !cls.contains("spotui-tui-hidden") && !cls.contains("spotui-standby");
+    return cls.contains("spotui-spotify-enabled") || cls.contains("spotui-tui-hidden");
+}
+
+// Where the layer lives now: <body> in Spotify mode, #spotui-tui otherwise (null
+// while the TUI is not built yet).
+function layerHost() {
+    return inSpotifyMode() ? document.body : document.getElementById("spotui-tui");
+}
+
+// Put the layer into the host of the current mode. A move removes the media
+// from the document, which pauses it: moveBefore keeps it playing where the
+// engine has it, else the current clip is played again.
+function syncHost() {
+    if (!layer) return false;
+    const host = layerHost();
+    if (!host) return false;
+    if (layer.parentNode === host && layer.isConnected) return true;
+    let moved = false;
+    if (layer.isConnected && typeof host.moveBefore === "function") {
+        try {
+            host.moveBefore(layer, null);
+            moved = true;
+        } catch (e) {}
+    }
+    if (!moved) {
+        host.appendChild(layer);
+        if (current && current.video && !stillMode() && isVisible()) playVideo(current.video);
+    }
+    return true;
 }
 
 // Video Canvases shown as a still (frame 0, never play()): reduced motion, or
@@ -573,11 +611,7 @@ function enforceSlotCap() {
 
 function buildSlot(kind, artUrl) {
     if (!layer) throw vmError("no-layer");
-    if (!layer.isConnected) {
-        const tui = document.getElementById("spotui-tui");
-        if (!tui) throw vmError("no-tui");
-        tui.appendChild(layer);
-    }
+    if (!syncHost()) throw vmError("no-tui");
     enforceSlotCap();
     const slot = document.createElement("div");
     slot.className = "spotui-video-slot";
@@ -1163,6 +1197,7 @@ function onPoke() {
 
 function onVisibility() {
     if (!running) return;
+    syncHost(); // a mode switch (Enable Spotify / Back) moves the layer
     const v = isVisible();
     if (v === lastVisible) return;
     lastVisible = v;
@@ -1206,8 +1241,9 @@ function mountLayer(tui) {
     layer = document.createElement("div");
     layer.id = LAYER_ID;
     layer.setAttribute("aria-hidden", "true");
-    // After #spotui-wallpaper (always prepended) at the same z: paints over it.
-    tui.appendChild(layer);
+    // TUI mode: after #spotui-wallpaper (always prepended) at the same z, so it
+    // paints over it. Spotify mode: on <body>, behind the native UI.
+    (layerHost() || tui).appendChild(layer);
 }
 
 function start(tui) {
@@ -1383,7 +1419,7 @@ export function videoModeStatus() {
             why = "ads, podcasts and local files have no Canvas";
             break;
         case "hidden":
-            why = "hidden (Spotify mode / standby / minimised)";
+            why = "hidden (standby, or the Spotify window is minimised or covered)";
             break;
         case "error":
             why = "Canvas failed to load — background stays (tui -debug on for details)";

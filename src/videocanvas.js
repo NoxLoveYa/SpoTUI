@@ -45,8 +45,10 @@ const MEDIA_HOST_REGEX = /^(?:[a-z0-9-]+\.)*(?:scdn\.co|spotifycdn\.com)$/i;
 const FILE_ID_REGEX = /^[A-Za-z0-9_-]{8,128}$/;
 const IMAGE_ID_REGEX = /^[0-9a-f]{40}$/i;
 const FILE_TYPE_REGEX = /^[a-z0-9]{1,8}$/i;
-const MAX_URL_LENGTH = 2000;
-const MAX_TEMPLATE_LENGTH = 1000;
+// The templates end in a signed query string that is long on a live manifest (the
+// recorded fixtures have it cut to ?sig=REDACTED): these caps only bound untrusted input.
+const MAX_URL_LENGTH = 8400;
+const MAX_TEMPLATE_LENGTH = 8192;
 const MAX_PROFILE_ENTRIES = 256;
 const MAX_BASE_URLS = 16;
 const MAX_SEGMENT_LENGTH_SEC = 60;
