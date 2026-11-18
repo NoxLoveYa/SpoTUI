@@ -9,9 +9,9 @@
 set -euo pipefail
 
 # Whatever makes the script stop (set -e, a signal, fail), the exit code is 1.
-trap 'rc=$?; if [ "$rc" -ne 0 ]; then exit 1; fi' EXIT
+trap '[ "$?" -eq 0 ] || exit 1' EXIT
 
-CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/.."
+CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.."
 
 fail() {
     printf 'build-linux: %s\n' "$1" >&2
@@ -54,7 +54,8 @@ if [ ! -x "$VPY" ] || ! python_ok "$VPY"; then
     "$PYTHON" -m venv --clear "$VENV"
 fi
 
-"$VPY" -m pip install --disable-pip-version-check -r sposync/requirements-build.txt
+# Wheels only: no package may run a build script at install time.
+"$VPY" -m pip install --disable-pip-version-check --only-binary=:all: -r sposync/requirements-build.txt
 
 "$VPY" -m PyInstaller --noconfirm --clean --onefile --name "$NAME" \
     --specpath build --workpath build --distpath dist \

@@ -14,7 +14,6 @@ rgb() {
     printf '%s[38;2;%d;%d;%dm' "$ESC" "$1" "$2" "$3"
 }
 
-ORANGE_LIGHT=$(rgb 255 140 66)
 ORANGE_DARK=$(rgb 224 123 57)
 ORANGE_MID=$(rgb 240 131 61)
 GREEN_ANSI=$(rgb 140 255 140)
@@ -79,7 +78,6 @@ CHECK_MARK=$'\xe2\x9c\x93'  # U+2713
 CROSS_MARK=$'\xe2\x9c\x95'  # U+2715
 CR=$'\r'
 
-STEP_OUTPUT=""
 STEP_FILE=""
 
 invoke_step() {
@@ -121,7 +119,6 @@ invoke_step() {
 
     tput cnorm 2>/dev/null
 
-    STEP_OUTPUT=$(cat "$out_file")
     STEP_FILE="$out_file"
     rm -f "$err_file"
     return "$failed"

@@ -300,8 +300,13 @@ if ($runCli -and $ok) {
 # ---------------------------------------------------------------------------
 
 $SpoSyncRepo      = "NoxLoveYa/SpoTUI"
-$SpoSyncTag       = ""   # release tag holding sposync-win64.exe; empty = none published
-$SpoSyncSha256    = ""   # lowercase hex of that asset; tag and hash must both be set to use the download path
+# Pinned release. Fill these three after a release is published, either with
+# scripts\release\pin-sposync.ps1 -Tag <tag>, or by hand: the tag (sposync-vX.Y.Z); the
+# lowercase hex for sposync-win64.exe from the release's SHA256SUMS; the tagged commit
+# (git rev-list -n 1 <tag>) for the source fallback.
+# The download is used only when the tag and the hash are both set.
+$SpoSyncTag       = ""   # release tag holding sposync-win64.exe; empty = no prebuilt pinned
+$SpoSyncSha256    = ""   # lowercase hex of sposync-win64.exe
 $SpoSyncSourceRef = ""   # full commit SHA for the source archive; empty = only a local checkout can build
 $SpoSyncPort      = 8765
 $SpoSyncDir       = Join-Path $env:LOCALAPPDATA "SpoTUI\sposync"
@@ -443,15 +448,38 @@ function Resolve-SpoSyncSource {
         return $null
     }
 
-    # b. pinned release asset from this fork
+    # b. pinned release asset from this fork. The file is downloaded into a private
+    #    temporary folder and compared with the pinned hash before it is copied or run.
     if ($SpoSyncTag -and $SpoSyncSha256) {
+        # The pins are constants, but they go into a URL: refuse anything but a release tag.
+        if ($SpoSyncTag -cnotmatch '^sposync-v[0-9]+\.[0-9]+\.[0-9]+\z') {
+            Write-SpoSyncError "The release tag pinned in this installer is malformed. SpoSync was not installed."
+            $script:SpoSyncStatus = "failed"
+            return $null
+        }
+        if ($SpoSyncSha256 -cnotmatch '^[0-9a-fA-F]{64}\z') {
+            Write-SpoSyncError "The SHA256 pinned in this installer is not a valid checksum. SpoSync was not installed."
+            $script:SpoSyncStatus = "failed"
+            return $null
+        }
         $tmp  = New-SpoSyncTemp
         $file = Join-Path $tmp "sposync-win64.exe"
         $url  = "https://github.com/$SpoSyncRepo/releases/download/$SpoSyncTag/sposync-win64.exe"
         $step = Invoke-Step "Downloading SpoSync $SpoSyncTag" {
             $ProgressPreference = 'SilentlyContinue'
             try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
-            Invoke-WebRequest -Uri $using:url -OutFile $using:file -UseBasicParsing
+            try {
+                $r = Invoke-WebRequest -Uri $using:url -OutFile $using:file -UseBasicParsing -TimeoutSec 120 -MaximumRedirection 5 -PassThru
+            } catch {
+                $code = $null
+                try { $code = [int]$_.Exception.Response.StatusCode } catch {}
+                if ($code -eq 404) { throw "HTTP 404: release $using:SpoSyncTag or its sposync-win64.exe asset does not exist." }
+                throw
+            }
+            # Redirects are followed (assets are served from another host), but only over HTTPS.
+            $base  = $r.BaseResponse
+            $final = if ($base.ResponseUri) { $base.ResponseUri } else { $base.RequestMessage.RequestUri }
+            if ($final.Scheme -ne "https") { throw "The download was served over $($final.Scheme), not HTTPS." }
         }
         if (-not $step.Success) {
             Write-SpoSyncNote "URL: $url"
@@ -460,7 +488,7 @@ function Resolve-SpoSyncSource {
         }
         $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLower()
         if ($actual -ne $SpoSyncSha256.ToLower()) {
-            Write-SpoSyncError "Checksum mismatch. Expected $SpoSyncSha256 but got $actual. SpoSync was not installed."
+            Write-SpoSyncError "Checksum mismatch. Expected $($SpoSyncSha256.ToLower()) but got $actual. SpoSync was not installed."
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
             $script:SpoSyncTemp = $null
             $script:SpoSyncStatus = "failed"
@@ -482,6 +510,12 @@ function Resolve-SpoSyncSource {
             }
         }
         if (-not $root -and $SpoSyncSourceRef) {
+            # The ref goes into a URL: refuse anything but a full commit SHA.
+            if ($SpoSyncSourceRef -cnotmatch '^[0-9a-f]{40}\z') {
+                Write-SpoSyncError "The source ref pinned in this installer is malformed. SpoSync was not installed."
+                $script:SpoSyncStatus = "failed"
+                return $null
+            }
             $tmp = New-SpoSyncTemp
             $zip = Join-Path $tmp "source.zip"
             # Short extraction path: the build tree gets deep and old Windows APIs stop at 260 characters.
@@ -563,11 +597,11 @@ function Resolve-SpoSyncSource {
     # d. nothing usable
     Write-Host ""
     if ($py) {
-        Write-Host ("  " + $RedAnsi + "!" + $Reset + "  SpoSync skipped: no prebuilt SpoSync is published yet and no SpoSync source is available.")
+        Write-Host ("  " + $RedAnsi + "!" + $Reset + "  SpoSync skipped: this installer has no prebuilt SpoSync to download and no SpoSync source is available.")
         Write-SpoSyncNote "Run the installer from a SpoTUI checkout (scripts\install\windows\install.ps1 -SpoSyncOnly), or see README > SpoSync."
     }
     else {
-        Write-Host ("  " + $RedAnsi + "!" + $Reset + "  SpoSync skipped: no prebuilt SpoSync is published yet and Python 3.12 to 3.15 was not found.")
+        Write-Host ("  " + $RedAnsi + "!" + $Reset + "  SpoSync skipped: this installer has no prebuilt SpoSync to download and Python 3.12 to 3.15 was not found.")
         Write-SpoSyncNote "Install Python from python.org and re-run with -SpoSyncOnly, or see README > SpoSync."
     }
     return $null

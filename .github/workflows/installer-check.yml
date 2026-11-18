@@ -1,0 +1,280 @@
+name: installer check
+
+# Runs the real installers against the pinned SpoSync release: the script has to download the
+# release asset, check it against the pinned SHA256, install it, start it, and the uninstaller
+# has to remove it again. build-sposync.yml tests the installers with a local binary only.
+#
+# While SpoSync is not pinned in the installers (before the first release) every job prints
+# a notice and passes without doing anything, so pushing the branch stays green.
+
+on:
+  push:
+    branches:
+      - live
+    paths:
+      - 'scripts/install/**'
+      - '.github/workflows/installer-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: linux (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    defaults:
+      run:
+        shell: bash
+    env:
+      TERM: dumb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: read the pins from install.sh
+        id: pins
+        run: |
+          set -euo pipefail
+          f=scripts/install/linux/install.sh
+          pin() { sed -n 's/^'"$1"'="\([^"]*\)".*$/\1/p' "$f" | head -n 1; }
+          tag="$(pin SPOSYNC_TAG)"
+          case "$(uname -m)" in
+            x86_64) hash="$(pin SPOSYNC_SHA256_AMD64)" ;;
+            aarch64) hash="$(pin SPOSYNC_SHA256_ARM64)" ;;
+            *) echo "::error::unexpected CPU $(uname -m)"; exit 1 ;;
+          esac
+          if [ -z "$tag" ] || [ -z "$hash" ]; then
+            echo "::notice::SpoSync is not pinned in $f for $(uname -m) yet (no release published): nothing to check."
+            echo "pinned=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "pinned=true"
+            echo "tag=$tag"
+            echo "hash=$hash"
+          } >> "$GITHUB_OUTPUT"
+          echo "pinned: $tag, sha256 $hash"
+
+      - name: install the pinned release
+        if: steps.pins.outputs.pinned == 'true'
+        env:
+          TAG: ${{ steps.pins.outputs.tag }}
+          HASH: ${{ steps.pins.outputs.hash }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          sandbox="$RUNNER_TEMP/sandbox"
+          rm -rf "$sandbox"
+          mkdir -p "$sandbox"
+          {
+            echo "XDG_DATA_HOME=$sandbox/data"
+            echo "XDG_CONFIG_HOME=$sandbox/config"
+            echo "XDG_STATE_HOME=$sandbox/state"
+            echo "BIN=$sandbox/data/sposync/sposync"
+            echo "DESKTOP=$sandbox/config/autostart/sposync.desktop"
+            echo "LOG=$sandbox/state/sposync/sposync.log"
+          } >> "$GITHUB_ENV"
+          export XDG_DATA_HOME="$sandbox/data" XDG_CONFIG_HOME="$sandbox/config" XDG_STATE_HOME="$sandbox/state"
+          bin="$XDG_DATA_HOME/sposync/sposync"
+
+          for t in ss pgrep pkill setsid curl sha256sum install; do
+            command -v "$t" > /dev/null || fail "the runner has no $t"
+          done
+          if [ -n "$(ss -Hltn 'sport = :8765')" ]; then
+            ss -Hltnp 'sport = :8765' || true
+            fail "port 8765 is already in use on this runner"
+          fi
+          uname -a
+          ldd --version | sed -n 1p
+
+          # No --sposync-bin: the script has to download the release asset and check its hash itself.
+          out="$RUNNER_TEMP/install.out"
+          set +e
+          bash scripts/install/linux/install.sh --sposync-only > "$out" 2>&1 < /dev/null
+          rc=$?
+          set -e
+          cat "$out"
+          [ "$rc" -eq 0 ] || fail "installer exited $rc, expected 0"
+          grep -aqF "Source: release $TAG" "$out" || fail "installer did not say the source is release $TAG"
+          grep -aqF "SHA256: ${HASH,,}" "$out" || fail "installer did not print the pinned SHA256"
+          grep -aq 'SpoSync: installed and running' "$out" || fail "installer summary is not 'installed and running'"
+
+          [ -f "$bin" ] || fail "binary missing: $bin"
+          [ "$(sha256sum "$bin" | cut -d ' ' -f 1)" = "${HASH,,}" ] || fail "the installed binary is not the pinned file"
+          [ "$("$bin" --version)" = "${TAG#sposync-v}" ] || fail "the installed binary does not print version ${TAG#sposync-v}"
+          [ -f "$DESKTOP" ] || fail "autostart entry missing: $DESKTOP"
+
+          # The process that listens on 8765 must be the installed binary.
+          pids="$(pgrep -u "$(id -u)" -f -- "^${bin}( |\$)" | sort -n || true)"
+          [ -n "$pids" ] || fail "no process runs $bin"
+          lp="$(ss -Hltnp 'sport = :8765' | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -un || true)"
+          [ -n "$lp" ] || fail "nothing listens on 8765"
+          owned=0
+          for p in $lp; do
+            if printf '%s\n' "$pids" | grep -qx -- "$p"; then owned=1; fi
+          done
+          [ "$owned" -eq 1 ] || fail "the listener on 8765 ($lp) is not the installed binary ($pids)"
+          grep -q 'listening on' "$LOG" || fail "no 'listening on' line in $LOG"
+          echo "ok: installed from release $TAG, running, owns port 8765"
+
+      - name: uninstall
+        if: steps.pins.outputs.pinned == 'true'
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          out="$RUNNER_TEMP/uninstall.out"
+          set +e
+          bash scripts/uninstall/linux/uninstall.sh --sposync-only > "$out" 2>&1 < /dev/null
+          rc=$?
+          set -e
+          cat "$out"
+          [ "$rc" -eq 0 ] || fail "uninstaller exited $rc, expected 0"
+          grep -aq 'SpoSync has been removed.' "$out" || fail "uninstaller did not say SpoSync was removed"
+          [ ! -e "$XDG_DATA_HOME/sposync" ] || fail "binary folder is still there"
+          [ ! -e "$XDG_STATE_HOME/sposync" ] || fail "state folder is still there"
+          [ ! -e "$DESKTOP" ] || fail "autostart entry is still there"
+          for _ in $(seq 1 30); do
+            if [ -z "$(pgrep -u "$(id -u)" -f -- "^${BIN}( |\$)" || true)" ] && [ -z "$(ss -Hltn 'sport = :8765')" ]; then break; fi
+            sleep 0.5
+          done
+          [ -z "$(pgrep -u "$(id -u)" -f -- "^${BIN}( |\$)" || true)" ] || fail "a SpoSync process still runs"
+          [ -z "$(ss -Hltn 'sport = :8765')" ] || fail "something still listens on 8765"
+          echo "ok: nothing left"
+
+      - name: clean up and show the helper log
+        if: always() && steps.pins.outputs.pinned == 'true'
+        run: |
+          if [ -n "${BIN:-}" ]; then
+            "$BIN" --quit > /dev/null 2>&1 || true
+            pkill -u "$(id -u)" -f -- "^${BIN}( |\$)" || true
+          fi
+          if [ -n "${LOG:-}" ] && [ -f "$LOG" ]; then
+            echo "::group::$LOG"
+            cat "$LOG"
+            echo "::endgroup::"
+          fi
+
+  windows:
+    name: windows (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: read the pins from install.ps1
+        id: pins
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $text = [System.IO.File]::ReadAllText("scripts\install\windows\install.ps1")
+          function Get-Pin([string]$name) {
+            $m = [regex]::Match($text, '(?m)^\$' + $name + '\s*=\s*"([^"]*)"')
+            if (-not $m.Success) { throw "install.ps1 has no `$$name line" }
+            return $m.Groups[1].Value
+          }
+          $tag  = Get-Pin 'SpoSyncTag'
+          $hash = Get-Pin 'SpoSyncSha256'
+          if (-not $tag -or -not $hash) {
+            Write-Output "::notice::SpoSync is not pinned in install.ps1 yet (no release published): nothing to check."
+            "pinned=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+          "pinned=true", "tag=$tag", "hash=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Output "pinned: $tag, sha256 $hash"
+
+      - name: install the pinned release
+        if: steps.pins.outputs.pinned == 'true'
+        env:
+          TAG: ${{ steps.pins.outputs.tag }}
+          HASH: ${{ steps.pins.outputs.hash }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Fail([string]$msg) { Write-Output "::error::$msg"; exit 1 }
+          $hash = $env:HASH.ToLower()
+          $version = $env:TAG -replace '^sposync-v', ''
+          if (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue) { Fail "port 8765 is already in use on this runner" }
+
+          # Windows PowerShell 5.1 runs the installer, as it does for a user. It exits 0 whatever happens,
+          # so the checks below read what it prints and what it left behind.
+          $ErrorActionPreference = 'Continue'
+          $text = (& powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install\windows\install.ps1 -SpoSyncOnly 2>&1 | Out-String)
+          $ErrorActionPreference = 'Stop'
+          $plain = [regex]::Replace($text, "\x1b\[[0-9;]*m", "")
+          Write-Output $plain
+          if ($plain -notmatch [regex]::Escape("SpoSync source: release $env:TAG")) { Fail "installer did not say the source is release $env:TAG" }
+          if ($plain -notmatch [regex]::Escape("SHA256: $hash")) { Fail "installer did not print the pinned SHA256" }
+          if ($plain -notmatch 'SpoSync: installed and running') { Fail "installer summary is not 'installed and running'" }
+
+          $exe = Join-Path $env:LOCALAPPDATA "SpoTUI\sposync\sposync.exe"
+          if (-not (Test-Path -LiteralPath $exe)) { Fail "binary missing: $exe" }
+          if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLower() -ne $hash) { Fail "the installed binary is not the pinned file" }
+          $ver = ((@(& $exe --version 2>$null)) -join ' ').Trim()
+          if ($ver -ne $version) { Fail "the installed binary prints '$ver', expected '$version'" }
+
+          # Autostart: the Run value starts the installed exe through conhost, in the tray.
+          $run = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name SpoSync -ErrorAction Stop).SpoSync
+          $want = '"' + (Join-Path $env:SystemRoot 'System32\conhost.exe') + '" "' + $exe + '" --tray'
+          if ($run -ne $want) { Fail "Run value is '$run', expected '$want'" }
+
+          # The helper owns port 8765. The tray itself may not start on a headless runner; the port and the log show that the helper works.
+          $conn = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $conn) { Fail "nothing listens on 8765" }
+          $owner = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+          $ownerPath = $null
+          try { if ($owner) { $ownerPath = $owner.Path } } catch {}
+          if ($ownerPath -ne $exe) { Fail "the listener on 8765 is '$ownerPath', not $exe" }
+          $log = Join-Path $env:LOCALAPPDATA "SpoTUI\sposync\sposync.log"
+          if (-not (Test-Path -LiteralPath $log) -or -not (Select-String -LiteralPath $log -Pattern 'listening on' -Quiet)) { Fail "no 'listening on' line in $log" }
+          Write-Output "ok: installed from release $env:TAG, running, owns port 8765"
+
+      - name: uninstall
+        if: steps.pins.outputs.pinned == 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Fail([string]$msg) { Write-Output "::error::$msg"; exit 1 }
+          $ErrorActionPreference = 'Continue'
+          $text = (& powershell -NoProfile -ExecutionPolicy Bypass -File scripts\uninstall\windows\uninstall.ps1 -SpoSyncOnly 2>&1 | Out-String)
+          $ErrorActionPreference = 'Stop'
+          $plain = [regex]::Replace($text, "\x1b\[[0-9;]*m", "")
+          Write-Output $plain
+          if ($plain -notmatch 'SpoSync has been uninstalled\.') { Fail "uninstaller did not say SpoSync was uninstalled" }
+          $dir = Join-Path $env:LOCALAPPDATA "SpoTUI\sposync"
+          if (Test-Path -LiteralPath $dir) { Fail "$dir is still there" }
+          if ($null -ne (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name SpoSync -ErrorAction SilentlyContinue)) { Fail "the Run value is still there" }
+          $deadline = (Get-Date).AddSeconds(15)
+          while ((Get-Date) -lt $deadline -and (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 500 }
+          if (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue) { Fail "something still listens on 8765" }
+          if (@(Get-Process -Name 'sposync*' -ErrorAction SilentlyContinue).Count -gt 0) { Fail "a sposync process still runs" }
+          Write-Output "ok: nothing left"
+
+      - name: clean up and show the helper log
+        if: always() && steps.pins.outputs.pinned == 'true'
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA "SpoTUI\sposync\sposync.exe"
+          if (Test-Path -LiteralPath $exe) { try { & $exe --quit *> $null } catch {} }
+          foreach ($p in @(Get-Process -Name 'sposync*' -ErrorAction SilentlyContinue)) {
+            $path = $null
+            try { $path = $p.Path } catch {}
+            if ($path -eq $exe) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          }
+          $log = Join-Path $env:LOCALAPPDATA "SpoTUI\sposync\sposync.log"
+          if (Test-Path -LiteralPath $log) {
+            Write-Output "::group::$log"
+            Get-Content -LiteralPath $log
+            Write-Output "::endgroup::"
+          }

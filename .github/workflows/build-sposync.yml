@@ -1,0 +1,761 @@
+name: build sposync
+
+# Builds SpoSync on three runners, tests every binary, tests the Linux installer
+# against the amd64 binary, and on a release tag publishes a GitHub release with
+# provenance attestations and a SHA256SUMS file.
+#
+#   tag push  sposync-vX.Y.Z      -> build, test, publish (X.Y.Z must equal __version__ in sposync/app.py)
+#   tag push  sposync-dryrun-*    -> build and test only; never publishes, the tag name is free
+#   dispatch  publish: false      -> build and test only (a dry run). Dispatch needs this file on the default branch.
+#   dispatch  publish: true       -> same as a release tag push, and only on a sposync-vX.Y.Z tag
+#
+# Any other tag that matches sposync-v* (sposync-v1.2.0-rc1, sposync-v1.2) fails the check job.
+# Nothing runs on ordinary branch pushes or pull requests.
+
+on:
+  push:
+    tags:
+      - 'sposync-v*'
+      - 'sposync-dryrun-*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a release (only on a tag ref). Leave off for a dry run.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sposync-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: check tag and version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: read the version, compare it with the tag
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          WANT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^__version__ = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' sposync/app.py)"
+          if [ -z "$version" ] || [ "$(printf '%s\n' "$version" | wc -l)" -ne 1 ]; then
+            echo "::error::could not read exactly one x.y.z __version__ from sposync/app.py"
+            exit 1
+          fi
+
+          # A dry-run tag builds and tests; it never publishes and its name is free.
+          # Every other tag is a release tag: sposync-vX.Y.Z, equal to sposync-v + __version__.
+          dryrun=false
+          if [ "$REF_TYPE" = "tag" ]; then
+            case "$REF_NAME" in
+              sposync-dryrun-*)
+                dryrun=true
+                ;;
+              *)
+                if ! [[ "$REF_NAME" =~ ^sposync-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                  echo "::error::tag '$REF_NAME' is not a release tag (sposync-vX.Y.Z) or a dry-run tag (sposync-dryrun-*)"
+                  exit 1
+                fi
+                if [ "$REF_NAME" != "sposync-v$version" ]; then
+                  echo "::error::tag '$REF_NAME' does not match sposync/app.py, which says __version__ = $version (expected sposync-v$version)"
+                  exit 1
+                fi
+                ;;
+            esac
+          fi
+
+          publish=false
+          if [ "$EVENT" = "push" ] || [ "$WANT_PUBLISH" = "true" ]; then
+            if [ "$REF_TYPE" != "tag" ]; then
+              echo "::error::publishing needs a tag ref; this run is on $REF_TYPE '$REF_NAME'"
+              exit 1
+            fi
+            if [ "$dryrun" = "true" ]; then
+              # A push of a dry-run tag is a build only; asking to publish on one is a mistake.
+              if [ "$WANT_PUBLISH" = "true" ]; then
+                echo "::error::'$REF_NAME' is a dry-run tag and never publishes; run the workflow on a sposync-vX.Y.Z tag"
+                exit 1
+              fi
+            else
+              publish=true
+            fi
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "SpoSync $version, publish=$publish" >> "$GITHUB_STEP_SUMMARY"
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: bash -n and shellcheck
+        run: |
+          set -euo pipefail
+          files=(scripts/install/linux/install.sh scripts/uninstall/linux/uninstall.sh sposync/build-linux.sh)
+          for f in "${files[@]}"; do bash -n "$f"; done
+          shellcheck --version
+          shellcheck -S warning "${files[@]}"
+
+  build:
+    name: build ${{ matrix.asset }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: sposync-win64.exe
+            reqs: sposync-win64-requirements.txt
+            os: windows-latest
+            venv_python: sposync/venv/Scripts/python.exe
+          # ubuntu-22.04: the oldest glibc (2.35) on a hosted runner, so the binary runs on the most systems.
+          # That image and its arm twin retire on 2027-04-17. Before then the Linux builds must move
+          # into a python:3.12-slim-bookworm container (glibc 2.36) or a similar fixed base, or the
+          # glibc floor in the release notes and the README changes with the next runner image.
+          - asset: sposync-linux-amd64
+            reqs: sposync-linux-amd64-requirements.txt
+            os: ubuntu-22.04
+            venv_python: sposync/venv/linux-amd64/bin/python
+          # arm64 runners are free for public repositories (GitHub changelog 2025-01-16).
+          - asset: sposync-linux-arm64
+            reqs: sposync-linux-arm64-requirements.txt
+            os: ubuntu-22.04-arm
+            venv_python: sposync/venv/linux-arm64/bin/python
+    defaults:
+      run:
+        shell: bash
+    env:
+      ASSET: ${{ matrix.asset }}
+      REQS: ${{ matrix.reqs }}
+      VENV_PYTHON: ${{ matrix.venv_python }}
+      EXPECTED_VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 3.12 is the oldest Python the pinned packages support (the build scripts accept 3.12 to 3.15).
+      # A release is built with one fixed minor version: the runners resolve '3.12' to the latest
+      # patch release (3.12.10 on Windows, 3.12.16 on Linux when this was written).
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Linux packages for the build
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # PyInstaller imports soundcard and pystray while it collects them. On a headless runner
+          # both imports can fail (soundcard needs libpulse, pystray needs a display); PyInstaller only
+          # warns then, and the app imports both lazily inside try, so a missing one never breaks the
+          # binary. libpulse0 is installed so the soundcard import works during collection.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: build (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call sposync\build-win.cmd
+          if errorlevel 1 exit /b 1
+
+      - name: build (Linux)
+        if: runner.os == 'Linux'
+        env:
+          PYTHON: python
+        run: |
+          set -euo pipefail
+          bash sposync/build-linux.sh
+
+      # Every package of the build venv with its exact version, for forensics. The top-level pins are
+      # in sposync/requirements*.txt; this file also names what they pulled in below the top level.
+      - name: record the build packages
+        run: |
+          set -euo pipefail
+          "$VENV_PYTHON" -m pip freeze --disable-pip-version-check | tr -d '\r' > "sposync/bin/$REQS"
+          [ -s "sposync/bin/$REQS" ] || { echo "::error::pip freeze printed nothing"; exit 1; }
+          grep -qi '^pyinstaller==' "sposync/bin/$REQS" || { echo "::error::pip freeze has no pyinstaller line"; exit 1; }
+          {
+            echo "### $ASSET packages"
+            echo ""
+            echo '```'
+            cat "sposync/bin/$REQS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: unit tests
+        run: |
+          set -euo pipefail
+          "$VENV_PYTHON" --version
+          "$VENV_PYTHON" -m unittest discover -s sposync -p "test_*.py"
+
+      - name: run the binary (version, start, ping, quit)
+        run: |
+          set -euo pipefail
+          bin="sposync/bin/$ASSET"
+          [ -f "$bin" ] || { echo "::error::$bin was not built"; exit 1; }
+
+          ver="$("$bin" --version | tr -d '\r')"
+          echo "$ASSET prints: $ver"
+          if [ "$ver" != "$EXPECTED_VERSION" ]; then
+            echo "::error::--version printed '$ver', expected '$EXPECTED_VERSION'"
+            exit 1
+          fi
+
+          # 18765 when nothing holds it, otherwise a port the system picks. Never the real 8765.
+          port="$("$VENV_PYTHON" -I - <<'PY'
+          import socket
+          for p in (18765, 0):
+              s = socket.socket()
+              try:
+                  s.bind(("127.0.0.1", p))
+                  print(s.getsockname()[1])
+                  break
+              except OSError:
+                  pass
+              finally:
+                  s.close()
+          PY
+          )"
+          if [ -z "$port" ] || [ "$port" = "8765" ]; then
+            echo "::error::no usable test port (got '$port')"
+            exit 1
+          fi
+          echo "test port: $port"
+
+          # The helper writes its log under a private state folder, so it can be read here.
+          home="$RUNNER_TEMP/sposync-smoke"
+          rm -rf "$home"
+          mkdir -p "$home"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            LOCALAPPDATA="$(cygpath -w "$home")"
+            export LOCALAPPDATA
+            log="$home/SpoTUI/sposync/sposync.log"
+          else
+            export XDG_STATE_HOME="$home"
+            log="$home/sposync/sposync.log"
+          fi
+
+          cat > "$RUNNER_TEMP/ping.py" <<'PY'
+          import asyncio
+          import json
+          import os
+
+          from websockets.asyncio.client import connect
+
+
+          async def main():
+              port = int(os.environ["SMOKE_PORT"])
+              # No Origin header: this is the local control path, the same one --quit uses.
+              async with connect(f"ws://localhost:{port}", open_timeout=5, close_timeout=5) as ws:
+                  await ws.send(json.dumps({"type": "control", "action": "ping"}))
+                  print(await asyncio.wait_for(ws.recv(), 5))
+
+
+          asyncio.run(main())
+          PY
+
+          out="$RUNNER_TEMP/sposync-stdout.txt"
+          "$bin" --headless --port "$port" > "$out" 2>&1 &
+          pid=$!
+          cleanup() {
+            "$bin" --quit --port "$port" > /dev/null 2>&1 || true
+            kill "$pid" 2> /dev/null || true
+          }
+          trap cleanup EXIT
+
+          reply=""
+          for _ in $(seq 1 120); do
+            if ! kill -0 "$pid" 2> /dev/null; then
+              echo "::error::SpoSync exited before it answered"
+              exit 1
+            fi
+            if reply="$(SMOKE_PORT="$port" "$VENV_PYTHON" -I "$RUNNER_TEMP/ping.py" 2> /dev/null)"; then
+              break
+            fi
+            reply=""
+            sleep 1
+          done
+          if [ -z "$reply" ]; then
+            echo "::error::no ping reply within 120 s"
+            exit 1
+          fi
+          SMOKE_REPLY="$reply" "$VENV_PYTHON" -I -c '
+          import json, os, sys
+          r = json.loads(os.environ["SMOKE_REPLY"])
+          want = os.environ["EXPECTED_VERSION"]
+          if r.get("app") != "sposync" or r.get("version") != want or r.get("ok") is not True:
+              sys.exit("unexpected ping reply: %r (wanted app sposync, version %s)" % (r, want))
+          print("ping reply:", r)
+          '
+
+          # The peer check starts with a self-test; its first attempt has finished once a ping is answered.
+          peer=""
+          for _ in $(seq 1 20); do
+            if grep -q 'peer check on' "$log" 2> /dev/null; then peer=on; break; fi
+            if grep -qE 'peer check (self-test failed|unavailable|disabled)' "$log" 2> /dev/null; then break; fi
+            sleep 1
+          done
+          {
+            echo "### $ASSET"
+            echo ""
+            echo "- version \`$ver\`, $(stat -c %s "$bin") bytes, sha256 \`$(sha256sum "$bin" | cut -d ' ' -f 1)\`"
+            if [ "$peer" = "on" ]; then
+              echo "- peer check: on (\`peer check on\` in the log)"
+            else
+              echo "- peer check: **not confirmed on**. Log lines:"
+              echo ""
+              echo '```'
+              grep 'peer check' "$log" 2> /dev/null || echo "(no peer check line in the log)"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$peer" != "on" ]; then
+            echo "::warning::$ASSET: peer check not confirmed on: $(grep 'peer check' "$log" 2> /dev/null | tail -n 1 || true)"
+          fi
+
+          set +e
+          "$bin" --quit --port "$port"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::--quit exited $rc, expected 0"
+            exit 1
+          fi
+          for _ in $(seq 1 30); do
+            kill -0 "$pid" 2> /dev/null || break
+            sleep 0.5
+          done
+          if kill -0 "$pid" 2> /dev/null; then
+            echo "::error::SpoSync still runs 15 s after --quit"
+            exit 1
+          fi
+          set +e
+          wait "$pid"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::the helper exited with code $rc after --quit, expected 0"
+            exit 1
+          fi
+          echo "ok: version, start, ping, quit"
+
+      - name: show the helper log
+        if: failure()
+        run: |
+          for f in "$RUNNER_TEMP/sposync-stdout.txt" "$RUNNER_TEMP"/sposync-smoke/sposync/sposync.log "$RUNNER_TEMP"/sposync-smoke/SpoTUI/sposync/sposync.log; do
+            if [ -f "$f" ]; then
+              echo "::group::$f"
+              cat "$f"
+              echo "::endgroup::"
+            fi
+          done
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            sposync/bin/${{ matrix.asset }}
+            sposync/bin/${{ matrix.reqs }}
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+  smoke-install:
+    name: installer smoke (${{ matrix.os }})
+    needs: [check, build]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    defaults:
+      run:
+        shell: bash
+    env:
+      TERM: dumb
+      EXPECTED_VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sposync-linux-amd64
+          path: ${{ runner.temp }}/artifact
+
+      - name: prepare the sandbox
+        run: |
+          set -euo pipefail
+          sandbox="$RUNNER_TEMP/sandbox"
+          rm -rf "$sandbox"
+          mkdir -p "$sandbox"
+          {
+            echo "XDG_DATA_HOME=$sandbox/data"
+            echo "XDG_CONFIG_HOME=$sandbox/config"
+            echo "XDG_STATE_HOME=$sandbox/state"
+            echo "ARTIFACT=$RUNNER_TEMP/artifact/sposync-linux-amd64"
+            echo "BIN=$sandbox/data/sposync/sposync"
+            echo "DESKTOP=$sandbox/config/autostart/sposync.desktop"
+            echo "LOG=$sandbox/state/sposync/sposync.log"
+          } >> "$GITHUB_ENV"
+
+          test -f "$RUNNER_TEMP/artifact/sposync-linux-amd64"
+          for t in ss pgrep pkill setsid sudo python3 curl sha256sum install; do
+            command -v "$t" > /dev/null || { echo "::error::the runner has no $t"; exit 1; }
+          done
+          if [ -n "$(ss -Hltn 'sport = :8765')" ]; then
+            echo "::error::port 8765 is already in use on this runner"
+            ss -Hltnp 'sport = :8765' || true
+            exit 1
+          fi
+          uname -a
+          ldd --version | sed -n 1p
+
+          # Helpers shared by the scenario steps below.
+          cat > "$RUNNER_TEMP/smoke-lib.sh" <<'LIB'
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          # in_list ITEM LIST: ITEM is a line of LIST (grep reads it all, so no SIGPIPE under pipefail)
+          in_list() { printf '%s\n' "$2" | grep -x -- "$1" > /dev/null; }
+          # alive PID: a process that is running (a zombie that was not reaped yet does not count)
+          alive() { [ -r "/proc/$1/status" ] && ! grep -q '^State:[[:space:]]*Z' "/proc/$1/status"; }
+          # pids that listen on 8765, one per line
+          listener_pids() { ss -Hltnp 'sport = :8765' 2> /dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -un || true; }
+          # pids whose command line starts with the installed binary, one per line
+          bin_pids() { pgrep -u "$(id -u)" -f -- "^${BIN}( |\$)" | sort -n || true; }
+          wait_gone() {
+            local i
+            for i in $(seq 1 30); do
+              if [ -z "$(bin_pids)" ] && [ -z "$(listener_pids)" ]; then return 0; fi
+              sleep 0.5
+            done
+            return 1
+          }
+          # install_run LABEL ARGS...: runs the installer, prints its output, sets RC
+          install_run() {
+            local label="$1"
+            shift
+            echo "::group::$label"
+            set +e
+            bash scripts/install/linux/install.sh "$@" > "$RUNNER_TEMP/install.out" 2>&1 < /dev/null
+            RC=$?
+            set -e
+            cat "$RUNNER_TEMP/install.out"
+            echo "::endgroup::"
+            echo "installer exit code: $RC"
+          }
+          out_has() { grep -aq -- "$1" "$RUNNER_TEMP/install.out"; }
+          # assert_running_installed: the helper runs from the installed path and owns port 8765
+          assert_running_installed() {
+            local pids lp p owned=0
+            [ -f "$BIN" ] || fail "binary missing: $BIN"
+            [ "$(stat -c %a "$BIN")" = "755" ] || fail "binary mode is $(stat -c %a "$BIN"), expected 755"
+            pids="$(bin_pids)"
+            [ -n "$pids" ] || fail "no process runs $BIN"
+            lp="$(listener_pids)"
+            [ -n "$lp" ] || fail "nothing listens on 8765"
+            for p in $lp; do
+              if in_list "$p" "$pids"; then owned=1; fi
+            done
+            [ "$owned" -eq 1 ] || fail "the listener on 8765 ($lp) is not the installed binary ($pids)"
+            grep -q 'listening on' "$LOG" || fail "no 'listening on' line in $LOG"
+          }
+          LIB
+
+      - name: fresh install
+        run: |
+          . "$RUNNER_TEMP/smoke-lib.sh"
+          install_run "fresh install" --sposync-only --sposync-bin "$ARTIFACT"
+          [ "$RC" -eq 0 ] || fail "installer exited $RC, expected 0"
+          assert_running_installed
+          [ "$("$BIN" --version)" = "$EXPECTED_VERSION" ] || fail "the installed binary does not print version $EXPECTED_VERSION"
+          [ ! -e "$BIN.new" ] || fail "$BIN.new was left behind"
+          [ -f "$DESKTOP" ] || fail "autostart entry missing: $DESKTOP"
+          grep -qxF "Exec=\"$BIN\" --headless" "$DESKTOP" || { cat "$DESKTOP"; fail "wrong Exec line in $DESKTOP"; }
+          out_has 'is running in the background' || fail "installer did not report a running helper"
+          out_has 'SpoSync: installed and running' || fail "installer summary is not 'installed and running'"
+          bin_pids > "$RUNNER_TEMP/pids-before"
+          listener_pids > "$RUNNER_TEMP/listener-before"
+          echo "helper pids: $(tr '\n' ' ' < "$RUNNER_TEMP/pids-before"), listener: $(cat "$RUNNER_TEMP/listener-before")"
+
+      - name: update over the running helper
+        run: |
+          . "$RUNNER_TEMP/smoke-lib.sh"
+          install_run "update" --sposync-only --sposync-bin "$ARTIFACT"
+          [ "$RC" -eq 0 ] || fail "installer exited $RC, expected 0"
+          assert_running_installed
+          while IFS= read -r p; do
+            if alive "$p"; then fail "old process $p is still alive (orphan)"; fi
+          done < "$RUNNER_TEMP/pids-before"
+          for p in $(listener_pids); do
+            if grep -qx "$p" "$RUNNER_TEMP/listener-before"; then fail "the listener is still the old process $p"; fi
+          done
+          [ "$(bin_pids | wc -l)" -eq "$(wc -l < "$RUNNER_TEMP/pids-before")" ] || fail "process count changed: before $(tr '\n' ' ' < "$RUNNER_TEMP/pids-before"), now $(bin_pids | tr '\n' ' ')"
+          [ ! -e "$BIN.new" ] || fail "$BIN.new was left behind"
+          out_has 'SpoSync: installed and running' || fail "installer summary is not 'installed and running'"
+
+      - name: foreign listener on 8765
+        run: |
+          . "$RUNNER_TEMP/smoke-lib.sh"
+          http_pid=""
+          stop_http() {
+            if [ -n "$http_pid" ]; then kill "$http_pid" 2> /dev/null || true; fi
+          }
+          trap stop_http EXIT
+          "$BIN" --quit || true
+          wait_gone || fail "the helper did not stop"
+          python3 -m http.server 8765 --bind 127.0.0.1 > "$RUNNER_TEMP/http.log" 2>&1 &
+          http_pid=$!
+          for _ in $(seq 1 20); do
+            if in_list "$http_pid" "$(listener_pids)"; then break; fi
+            sleep 0.5
+          done
+          in_list "$http_pid" "$(listener_pids)" || fail "the test listener did not come up"
+
+          install_run "install with the port taken" --sposync-only --sposync-bin "$ARTIFACT"
+          [ "$RC" -eq 0 ] || fail "installer exited $RC; installed but not running is documented as exit 0"
+          out_has 'Port 8765 is used by another program' || fail "installer did not name the busy port"
+          if out_has 'installed and running' || out_has 'is running in the background'; then
+            fail "installer claimed SpoSync runs while another program holds the port"
+          fi
+          out_has 'SpoSync: installed, not running' || fail "installer summary is not 'installed, not running'"
+          [ -z "$(bin_pids)" ] || fail "a SpoSync process runs: $(bin_pids | tr '\n' ' ')"
+          in_list "$http_pid" "$(listener_pids)" || fail "the test listener lost the port"
+          [ -f "$BIN" ] || fail "binary missing: $BIN"
+          stop_http
+          http_pid=""
+          wait_gone || fail "the test listener did not stop"
+
+      - name: uninstall
+        run: |
+          . "$RUNNER_TEMP/smoke-lib.sh"
+          install_run "install before uninstall" --sposync-only --sposync-bin "$ARTIFACT"
+          [ "$RC" -eq 0 ] || fail "installer exited $RC, expected 0"
+          assert_running_installed
+          set +e
+          bash scripts/uninstall/linux/uninstall.sh --sposync-only > "$RUNNER_TEMP/uninstall.out" 2>&1 < /dev/null
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/uninstall.out"
+          [ "$rc" -eq 0 ] || fail "uninstaller exited $rc, expected 0"
+          [ ! -e "$XDG_DATA_HOME/sposync" ] || fail "binary folder is still there"
+          [ ! -e "$XDG_STATE_HOME/sposync" ] || fail "state folder is still there"
+          [ ! -e "$DESKTOP" ] || fail "autostart entry is still there"
+          [ -z "$(bin_pids)" ] || fail "a SpoSync process still runs"
+          [ -z "$(listener_pids)" ] || fail "something still listens on 8765"
+
+      - name: install from a pipe (no terminal)
+        run: |
+          . "$RUNNER_TEMP/smoke-lib.sh"
+          echo "::group::curl | bash"
+          set +e
+          # The cat is the point: the script arrives on stdin, as with curl | bash.
+          # shellcheck disable=SC2002
+          cat scripts/install/linux/install.sh | bash -s -- --sposync-only --sposync-bin "$ARTIFACT" > "$RUNNER_TEMP/install.out" 2>&1
+          rc="${PIPESTATUS[1]}"
+          set -e
+          cat "$RUNNER_TEMP/install.out"
+          echo "::endgroup::"
+          [ "$rc" -eq 0 ] || fail "piped installer exited $rc, expected 0"
+          assert_running_installed
+          out_has 'SpoSync: installed and running' || fail "installer summary is not 'installed and running'"
+          bash scripts/uninstall/linux/uninstall.sh --sposync-only > /dev/null 2>&1 < /dev/null
+          wait_gone || fail "cleanup after the pipe test failed"
+
+      - name: refuse to run as root
+        run: |
+          . "$RUNNER_TEMP/smoke-lib.sh"
+          echo "::group::sudo -E install.sh"
+          set +e
+          # The redirect is meant to run as the runner user, not as root.
+          # shellcheck disable=SC2024
+          sudo -E bash scripts/install/linux/install.sh --sposync-only --sposync-bin "$ARTIFACT" > "$RUNNER_TEMP/install.out" 2>&1 < /dev/null
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/install.out"
+          echo "::endgroup::"
+          [ "$rc" -eq 1 ] || fail "installer exited $rc as root, expected 1"
+          out_has 'SpoSync is a per-user helper. Re-run the installer as your normal user, without sudo.' || fail "the root refusal message is missing"
+          [ ! -e "$BIN" ] || fail "a binary was installed as root"
+          [ ! -e "$DESKTOP" ] || fail "an autostart entry was written as root"
+          [ ! -e "$XDG_DATA_HOME/sposync" ] || fail "a folder was created as root"
+          [ -z "$(bin_pids)" ] || fail "a SpoSync process runs"
+
+      - name: bad arguments
+        run: |
+          . "$RUNNER_TEMP/smoke-lib.sh"
+          for args in "--bogus" "--sposync-only --no-sposync" "--sposync --no-sposync"; do
+            set +e
+            # shellcheck disable=SC2086
+            bash scripts/install/linux/install.sh $args > /dev/null 2>&1 < /dev/null
+            rc=$?
+            set -e
+            [ "$rc" -eq 2 ] || fail "install.sh $args exited $rc, expected 2"
+          done
+          set +e
+          bash scripts/uninstall/linux/uninstall.sh --bogus > /dev/null 2>&1 < /dev/null
+          rc=$?
+          set -e
+          [ "$rc" -eq 2 ] || fail "uninstall.sh --bogus exited $rc, expected 2"
+          [ ! -e "$XDG_DATA_HOME/sposync" ] || fail "a folder was created"
+
+      - name: clean up and show the helper log
+        if: always()
+        run: |
+          if [ -n "${BIN:-}" ]; then
+            "$BIN" --quit > /dev/null 2>&1 || true
+            pkill -u "$(id -u)" -f -- "^${BIN}( |\$)" || true
+          fi
+          pkill -u "$(id -u)" -f -- 'http.server 8765' || true
+          if [ -n "${LOG:-}" ] && [ -f "$LOG" ]; then
+            echo "::group::$LOG"
+            cat "$LOG"
+            echo "::endgroup::"
+          fi
+
+  publish:
+    name: publish the release
+    if: needs.check.outputs.publish == 'true'
+    needs: [check, shellcheck, build, smoke-install]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sposync-*
+          merge-multiple: true
+          path: dist
+
+      # Before anything is attested or published: the tag on GitHub must still be the commit that was
+      # built (a tag can be deleted and pushed again while the jobs run), and no release may exist yet.
+      - name: guard the tag and the release
+        run: |
+          set -euo pipefail
+          tag_sha="$(gh api "repos/$GH_REPO/commits/refs/tags/$TAG" --jq .sha)"
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::tag $TAG points at $tag_sha on GitHub, but this run built $GITHUB_SHA. The tag moved while the workflow ran; nothing was published."
+            exit 1
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::a release for $TAG already exists, so an earlier run published (or half published) it. Delete that release first (gh release delete $TAG, keep the tag), then re-run this workflow. Nothing was overwritten."
+            exit 1
+          fi
+
+      - name: checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          files=(
+            sposync-linux-amd64 sposync-linux-amd64-requirements.txt
+            sposync-linux-arm64 sposync-linux-arm64-requirements.txt
+            sposync-win64.exe sposync-win64-requirements.txt
+          )
+          for f in "${files[@]}"; do
+            [ -s "$f" ] || { echo "::error::artifact $f is missing or empty"; exit 1; }
+          done
+          [ "$(printf '%s\n' * | wc -l)" -eq 6 ] || { echo "::error::unexpected files in dist: $(printf '%s ' *)"; exit 1; }
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      # SHA256SUMS is attested too: the installers are pinned from it, so it needs the same provenance.
+      - name: attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/sposync-win64.exe
+            dist/sposync-linux-amd64
+            dist/sposync-linux-arm64
+            dist/sposync-win64-requirements.txt
+            dist/sposync-linux-amd64-requirements.txt
+            dist/sposync-linux-arm64-requirements.txt
+            dist/SHA256SUMS
+
+      - name: release notes
+        run: |
+          set -euo pipefail
+          cat > notes.md <<'NOTES'
+          SpoSync @VERSION@: the optional local helper of the SpoTUI Spicetify theme (live audio for the visualizer, a terminal that mirrors lyrics). It listens on `localhost:8765` only.
+
+          ## Install
+
+          Use the SpoTUI installers (see the SpoSync section of the README). When this release is pinned in them, they download the file for your system and check its SHA256 before installing anything.
+
+          | File | System |
+          |------|--------|
+          | `sposync-win64.exe` | Windows, 64-bit |
+          | `sposync-linux-amd64` | Linux x86_64, glibc 2.35 or newer (built on Ubuntu 22.04) |
+          | `sposync-linux-arm64` | Linux aarch64, glibc 2.35 or newer (built on Ubuntu 22.04) |
+          | `sposync-*-requirements.txt` | `pip freeze` of the build environment of each binary (for forensics) |
+          | `SHA256SUMS` | SHA256 of every file above |
+
+          ## Verify a download
+
+          Every file, `SHA256SUMS` included, has a build provenance attestation.
+
+          ```
+          sha256sum -c SHA256SUMS --ignore-missing
+          gh attestation verify <file> -R @REPO@
+          ```
+
+          On Windows, compare `(Get-FileHash .\sposync-win64.exe -Algorithm SHA256).Hash` with the line in `SHA256SUMS`.
+
+          The builds are not reproducible: building the same commit again gives a different hash. Check a file against this release's `SHA256SUMS` and attestation, not against a build of your own.
+          NOTES
+          sed -i -e "s|@VERSION@|$VERSION|g" -e "s|@REPO@|$GH_REPO|g" notes.md
+          cat notes.md
+
+      - name: create the release
+        run: |
+          set -euo pipefail
+          # The tag is checked again right before the release is made. gh release create never
+          # overwrites: it fails when the release exists, and --verify-tag fails when the tag is gone.
+          tag_sha="$(gh api "repos/$GH_REPO/commits/refs/tags/$TAG" --jq .sha)"
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::tag $TAG points at $tag_sha on GitHub, but this run built $GITHUB_SHA. Nothing was published."
+            exit 1
+          fi
+          # --latest=false: this release must not take the "latest" mark from the theme's releases.
+          gh release create "$TAG" \
+            dist/sposync-win64.exe dist/sposync-linux-amd64 dist/sposync-linux-arm64 \
+            dist/sposync-win64-requirements.txt dist/sposync-linux-amd64-requirements.txt dist/sposync-linux-arm64-requirements.txt \
+            dist/SHA256SUMS \
+            --verify-tag \
+            --title "SpoSync $VERSION" \
+            --notes-file notes.md \
+            --latest=false
+          gh release view "$TAG" --json url,assets --jq '.url, (.assets[] | "  " + .name + " " + (.size | tostring))' | tee -a "$GITHUB_STEP_SUMMARY"

@@ -36,7 +36,8 @@
   `Extracted`, or another installed theme.
 - Commit scope: `src/`, `user.css`, `color.ini` (intentional only),
   `manifest.json`, `scripts/`, `sposync/` source files (`app.py`,
-  `test_relay.py`, `requirements*.txt`, `build-*.{cmd,sh}`), `.gitattributes`
+  `test_relay.py`, `requirements*.txt`, `build-*.{cmd,sh}`), `.github/workflows/`
+  (the SpoSync release CI), `.gitattributes`
   (`*.sh` stay LF, `*.cmd` are CRLF in the working tree), docs. Never commit
   `sposync/bin`, `sposync/venv`, `build/`, `dist/` or `*.spec`.
   No secrets, no local paths, no user data.

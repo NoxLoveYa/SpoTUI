@@ -31,7 +31,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-"%VENV%\Scripts\python.exe" -m pip install --disable-pip-version-check -r sposync\requirements-build.txt
+rem Wheels only: no package may run a build script at install time.
+"%VENV%\Scripts\python.exe" -m pip install --disable-pip-version-check --only-binary=:all: -r sposync\requirements-build.txt
 if errorlevel 1 exit /b 1
 
 "%VENV%\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --name sposync-win64 --hide-console hide-early ^

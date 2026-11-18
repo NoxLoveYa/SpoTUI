@@ -14,7 +14,6 @@ rgb() {
     printf '%s[38;2;%d;%d;%dm' "$ESC" "$1" "$2" "$3"
 }
 
-ORANGE_LIGHT=$(rgb 255 140 66)
 ORANGE_DARK=$(rgb 224 123 57)
 ORANGE_MID=$(rgb 240 131 61)
 GREEN_ANSI=$(rgb 140 255 140)
@@ -445,8 +444,14 @@ fi
 # ---------------------------------------------------------------------------
 
 SPOSYNC_REPO="NoxLoveYa/SpoTUI"
-SPOSYNC_TAG=""             # release tag holding sposync-linux-amd64; empty = none published
-SPOSYNC_SHA256_AMD64=""    # lowercase hex of that asset; tag and hash must both be set to download
+# Pinned release. Fill these four after a release is published, either with
+# scripts/release/pin-sposync.ps1 -Tag <tag>, or by hand: the tag (sposync-vX.Y.Z); the
+# lowercase hex for sposync-linux-amd64 and sposync-linux-arm64 from the release's
+# SHA256SUMS; the tagged commit (git rev-list -n 1 <tag>) for the source fallback.
+# The download is used only when the tag and the hash for this CPU are both set.
+SPOSYNC_TAG=""             # release tag holding sposync-linux-amd64 and -arm64; empty = no prebuilt pinned
+SPOSYNC_SHA256_AMD64=""    # lowercase hex of sposync-linux-amd64
+SPOSYNC_SHA256_ARM64=""    # lowercase hex of sposync-linux-arm64
 SPOSYNC_SOURCE_REF=""      # full commit SHA of a source archive; empty = only a local checkout can build
 
 # XDG base directory: the variable when it is an absolute path (spec), else a
@@ -604,7 +609,7 @@ sposync_ask() {
 # Sets SPOSYNC_SRC to the binary to install. Returns 1 (status already set,
 # message printed) when there is nothing to install.
 sposync_resolve_source() {
-    local arch asset actual py pycmd script cand root built where
+    local arch asset want url code actual py pycmd script cand root built where
     SPOSYNC_SRC=""
     arch=$(sposync_arch)
 
@@ -621,29 +626,59 @@ sposync_resolve_source() {
         return 0
     fi
 
-    # b. release asset from this fork, pinned SHA256 (skipped while unpinned)
-    if [ -n "$SPOSYNC_TAG" ] && [ -n "$SPOSYNC_SHA256_AMD64" ] && [ "$arch" = "amd64" ]; then
+    # b. release asset from this fork, pinned SHA256. Skipped while unpinned, or when no
+    #    asset is built for this CPU. The file is downloaded into a private temporary
+    #    folder and compared with the pinned hash before it is made executable, copied or run.
+    asset=""
+    want=""
+    case "$arch" in
+        amd64) asset="sposync-linux-amd64"; want="$SPOSYNC_SHA256_AMD64" ;;
+        arm64) asset="sposync-linux-arm64"; want="$SPOSYNC_SHA256_ARM64" ;;
+    esac
+    if [ -n "$SPOSYNC_TAG" ] && [ -n "$want" ]; then
+        # The pins are constants, but they go into a URL: refuse anything but a release tag.
+        if ! [[ "$SPOSYNC_TAG" =~ ^sposync-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            sposync_fail "The release tag pinned in this installer is malformed. SpoSync was not installed."
+            SPOSYNC_STATUS="failed"
+            return 1
+        fi
+        if ! [[ "$want" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            sposync_fail "The SHA256 pinned in this installer for $asset is not a valid checksum. SpoSync was not installed."
+            SPOSYNC_STATUS="failed"
+            return 1
+        fi
         if ! need_cmd curl; then
             sposync_fail "Downloading SpoSync requires curl. Please install it and re-run."
             SPOSYNC_STATUS="failed"
             return 1
         fi
-        asset="sposync-linux-amd64"
+        url="https://github.com/${SPOSYNC_REPO}/releases/download/${SPOSYNC_TAG}/${asset}"
         sposync_new_tmpdir || { sposync_fail "Could not create a temporary directory."; SPOSYNC_STATUS="failed"; return 1; }
-        if ! invoke_step "Downloading SpoSync" curl -fsSL -o "$NEW_TMP/$asset" "https://github.com/${SPOSYNC_REPO}/releases/download/${SPOSYNC_TAG}/${asset}"; then
-            rm -f "$STEP_FILE"
+        # HTTPS only, also across redirects (release assets are served from another host).
+        # -w prints the HTTP status, which names a missing release.
+        if ! invoke_step "Downloading SpoSync ${SPOSYNC_TAG}" curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 30 --speed-limit 1000 --speed-time 60 --max-time 900 \
+            -o "$NEW_TMP/$asset" -w '%{http_code}' "$url"; then
+            code="$STEP_OUTPUT"
+            rm -f "$STEP_FILE" "$NEW_TMP/$asset"
+            if [ "$code" = "404" ]; then
+                sposync_note "HTTP 404: release ${SPOSYNC_TAG} or its ${asset} asset does not exist."
+            fi
+            sposync_note "URL: $url"
             SPOSYNC_STATUS="failed"
             return 1
         fi
         rm -f "$STEP_FILE"
         actual=$(sha256_of "$NEW_TMP/$asset")
         actual="${actual,,}"
-        if [ "$actual" != "${SPOSYNC_SHA256_AMD64,,}" ]; then
-            sposync_fail "Checksum mismatch. Expected ${SPOSYNC_SHA256_AMD64,,} but got $actual. SpoSync was not installed."
+        if [ "$actual" != "${want,,}" ]; then
+            rm -f "$NEW_TMP/$asset"
+            sposync_fail "Checksum mismatch. Expected ${want,,} but got $actual. SpoSync was not installed."
             SPOSYNC_STATUS="failed"
             return 1
         fi
         SPOSYNC_SRC="$NEW_TMP/$asset"
+        sposync_note "Source: release ${SPOSYNC_TAG}"
         sposync_note "SHA256: $actual"
         return 0
     fi
@@ -663,7 +698,7 @@ sposync_resolve_source() {
 
     if [ -z "$py" ]; then
         echo ""
-        echo "  ${GRAY_ANSI}SpoSync skipped: no prebuilt SpoSync is published yet and Python 3.12 to 3.15 (with venv) was not found.${RESET}"
+        echo "  ${GRAY_ANSI}SpoSync skipped: this installer has no prebuilt SpoSync to download and Python 3.12 to 3.15 (with venv) was not found.${RESET}"
         echo "  ${GRAY_ANSI}Install python3 and python3-venv (or python3.X-venv for the version used) and re-run with --sposync-only, or see README > SpoSync.${RESET}"
         return 1
     fi
@@ -681,12 +716,18 @@ sposync_resolve_source() {
         *) script="" ;;
     esac
     if [ -n "$script" ] && [ -f "$script" ]; then
-        cand=$(CDPATH= cd -- "$(dirname "$script")/../../.." 2>/dev/null && pwd) || cand=""
+        cand=$(CDPATH='' cd -- "$(dirname "$script")/../../.." 2>/dev/null && pwd) || cand=""
         if [ -n "$cand" ] && [ -f "$cand/sposync/build-linux.sh" ] && [ -f "$cand/sposync/app.py" ]; then
             root="$cand"
         fi
     fi
     if [ -z "$root" ] && [ -n "$SPOSYNC_SOURCE_REF" ] && need_cmd curl && need_cmd tar; then
+        # The ref goes into a URL and a bash -c string: refuse anything but a full commit SHA.
+        if ! [[ "$SPOSYNC_SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            sposync_fail "The source ref pinned in this installer is malformed. SpoSync was not installed."
+            SPOSYNC_STATUS="failed"
+            return 1
+        fi
         sposync_new_tmpdir || { sposync_fail "Could not create a temporary directory."; SPOSYNC_STATUS="failed"; return 1; }
         if ! invoke_step "Downloading SpoSync source" bash -c "set -o pipefail; curl -fsSL 'https://github.com/${SPOSYNC_REPO}/archive/${SPOSYNC_SOURCE_REF}.tar.gz' | tar -xz --strip-components=1 -C '$NEW_TMP'"; then
             rm -f "$STEP_FILE"
@@ -699,7 +740,7 @@ sposync_resolve_source() {
 
     if [ -z "$root" ]; then
         echo ""
-        echo "  ${GRAY_ANSI}SpoSync skipped: no prebuilt SpoSync is published yet and this installer is not running from a SpoTUI checkout.${RESET}"
+        echo "  ${GRAY_ANSI}SpoSync skipped: this installer has no prebuilt SpoSync to download and is not running from a SpoTUI checkout.${RESET}"
         echo "  ${GRAY_ANSI}Clone the repository and run scripts/install/linux/install.sh --sposync-only, or pass --sposync-bin <path>.${RESET}"
         echo "  ${GRAY_ANSI}See README > SpoSync.${RESET}"
         return 1
@@ -751,6 +792,9 @@ sposync_stage() {
     if ! "$SPOSYNC_BIN.new" --version >/dev/null 2>&1; then
         rm -f "$SPOSYNC_BIN.new"
         echo "This file does not run on this system: $SPOSYNC_SRC" >&2
+        if [ -z "$SPOSYNC_BIN_ARG" ] && [ -n "$SPOSYNC_TAG" ]; then
+            echo "The prebuilt SpoSync needs a 64-bit Linux with glibc 2.35 or newer. Pass --sposync-bin <path> for a binary you built, or build from a clone of the repository." >&2
+        fi
         return 1
     fi
 }
@@ -857,7 +901,8 @@ sposync_verify() {
         gone=0
         for ((i = 0; i < 120; i++)); do
             if sposync_owns_port; then
-                ver=$("$SPOSYNC_BIN" --version 2>/dev/null | head -n 1)
+                # </dev/null: piped into bash (curl | bash), stdin is this script, which no child may read.
+                ver=$("$SPOSYNC_BIN" --version 2>/dev/null </dev/null | head -n 1)
                 echo "  ${GREEN_ANSI}${CHECK_MARK}${RESET}  SpoSync ${ver} is running in the background (localhost:${SPOSYNC_PORT})."
                 SPOSYNC_STATUS="running"
                 return 0
@@ -899,7 +944,7 @@ sposync_verify() {
         fi
         new=$(sposync_log_new "$before")
         if printf '%s\n' "$new" | grep -q 'listening on'; then
-            ver=$("$SPOSYNC_BIN" --version 2>/dev/null | head -n 1)
+            ver=$("$SPOSYNC_BIN" --version 2>/dev/null </dev/null | head -n 1)
             echo "  ${GREEN_ANSI}${CHECK_MARK}${RESET}  SpoSync ${ver} started and reports it is listening on localhost:${SPOSYNC_PORT}."
             sposync_note "Not double-checked: this system has no usable ${missing}."
             SPOSYNC_STATUS="running"
