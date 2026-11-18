@@ -449,10 +449,10 @@ SPOSYNC_REPO="NoxLoveYa/SpoTUI"
 # lowercase hex for sposync-linux-amd64 and sposync-linux-arm64 from the release's
 # SHA256SUMS; the tagged commit (git rev-list -n 1 <tag>) for the source fallback.
 # The download is used only when the tag and the hash for this CPU are both set.
-SPOSYNC_TAG=""             # release tag holding sposync-linux-amd64 and -arm64; empty = no prebuilt pinned
-SPOSYNC_SHA256_AMD64=""    # lowercase hex of sposync-linux-amd64
-SPOSYNC_SHA256_ARM64=""    # lowercase hex of sposync-linux-arm64
-SPOSYNC_SOURCE_REF=""      # full commit SHA of a source archive; empty = only a local checkout can build
+SPOSYNC_TAG="sposync-v1.2.0"             # release tag holding sposync-linux-amd64 and -arm64; empty = no prebuilt pinned
+SPOSYNC_SHA256_AMD64="1b01bf5c1ea4fbffeb5b013c71ea060054d574b4b32b405ef8c7733b104d0e40"    # lowercase hex of sposync-linux-amd64
+SPOSYNC_SHA256_ARM64="9c548eb24f35f6004763d2ff32da1340fb2a1bacf2d04c8c7717dc8001de9a58"    # lowercase hex of sposync-linux-arm64
+SPOSYNC_SOURCE_REF="4ef1274e2acec412caa56259833870a83967f9c3"      # full commit SHA of a source archive; empty = only a local checkout can build
 
 # XDG base directory: the variable when it is an absolute path (spec), else a
 # path under $HOME. Prints nothing when there is neither (HOME unset).

@@ -305,9 +305,9 @@ $SpoSyncRepo      = "NoxLoveYa/SpoTUI"
 # lowercase hex for sposync-win64.exe from the release's SHA256SUMS; the tagged commit
 # (git rev-list -n 1 <tag>) for the source fallback.
 # The download is used only when the tag and the hash are both set.
-$SpoSyncTag       = ""   # release tag holding sposync-win64.exe; empty = no prebuilt pinned
-$SpoSyncSha256    = ""   # lowercase hex of sposync-win64.exe
-$SpoSyncSourceRef = ""   # full commit SHA for the source archive; empty = only a local checkout can build
+$SpoSyncTag       = "sposync-v1.2.0"   # release tag holding sposync-win64.exe; empty = no prebuilt pinned
+$SpoSyncSha256    = "b5674f770abb85634b09616dcc53788f3fe6271790695ab59f88bcb723097270"   # lowercase hex of sposync-win64.exe
+$SpoSyncSourceRef = "4ef1274e2acec412caa56259833870a83967f9c3"   # full commit SHA for the source archive; empty = only a local checkout can build
 $SpoSyncPort      = 8765
 $SpoSyncDir       = Join-Path $env:LOCALAPPDATA "SpoTUI\sposync"
 $SpoSyncTarget    = Join-Path $SpoSyncDir "sposync.exe"
