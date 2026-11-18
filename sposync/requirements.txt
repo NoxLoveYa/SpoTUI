@@ -1,6 +1,7 @@
-textual
-websockets
-numpy
-soundcard
-pystray
-pillow
+textual==8.2.8
+rich==15.0.0
+websockets==17.4
+numpy==2.5.5
+soundcard==0.4.6
+pystray==0.19.5
+pillow==13.0.0

@@ -1,0 +1,6 @@
+# Shell scripts must keep LF line endings (bash fails on CRLF), whatever
+# core.autocrlf says on the machine that checks them out.
+*.sh text eol=lf
+
+# Batch files want CRLF in the working tree; the index keeps LF.
+*.cmd text eol=crlf
