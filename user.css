@@ -599,7 +599,7 @@ body.spotui-spotify-enabled #spotui-back-btn {
     font-size: 13px !important;
     line-height: 1.2 !important;
     color: var(--input-text-color, #000) !important;
-    background: var(--input-bg-color, #ff8c42) !important;
+    background: var(--input-bg-color, var(--spotui-accent, #ff8c42)) !important;
     border-radius: 0 !important;
     pointer-events: auto !important;
     z-index: 10020 !important;

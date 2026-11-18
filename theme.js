@@ -8526,7 +8526,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     z-index: 6;
     min-width: 180px;
     padding: 10px;
-    border: 1px solid var(--panel-border-color, #ff8c42);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
     border-radius: 4px;
     background: #000;
 }
@@ -8543,7 +8543,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     z-index: 6;
     width: 220px;
     padding: 8px 10px;
-    border: 1px solid var(--panel-border-color, #ff8c42);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
     border-radius: 4px;
     background: #000;
     color: #ddd;
@@ -8567,7 +8567,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     padding: 0;
     border: none;
     background: transparent;
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -8590,7 +8590,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
     right: 10px;
     z-index: 7;
     padding: 8px 12px;
-    border: 1px solid var(--panel-border-color, #ff8c42);
+    border: 1px solid var(--panel-border-color, var(--spotui-accent, #ff8c42));
     border-radius: 4px;
     background: #000;
     color: #ddd;
@@ -8604,7 +8604,7 @@ body.spotui-playlist-panel #spotui-playlist-panel {
 }
 
 #spotui-playlist-info-popup span, #spotui-queue-info-popup span, #spotui-search-info-popup span {
-    color: var(--panel-text-color, #ff8c42);
+    color: var(--panel-text-color, var(--spotui-accent, #ff8c42));
 }
 
 #spotui-add2list-panel, #spotui-queue-panel {
