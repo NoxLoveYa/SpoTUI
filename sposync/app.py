@@ -1675,7 +1675,7 @@ class Relay:
             return
         try:
             data = json.loads(raw)
-        except (ValueError, RecursionError):  # RecursionError: a deeply nested array
+        except (ValueError, RecursionError, MemoryError):  # RecursionError: a deeply nested array
             data = None
         action = data.get("action") if isinstance(data, dict) and data.get("type") == "control" else None
         if action not in ("ping", "show", "quit"):
@@ -1723,7 +1723,7 @@ class Relay:
             async for message in ws:
                 try:
                     data = json.loads(message)
-                except (ValueError, RecursionError) as e:  # RecursionError: a deeply nested array
+                except (ValueError, RecursionError, MemoryError) as e:  # RecursionError: a deeply nested array
                     self._bad_message(c, None, e)
                     continue
                 if not isinstance(data, dict):

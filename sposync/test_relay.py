@@ -382,6 +382,10 @@ class CaptureCase(unittest.TestCase):
             while "capture started" not in self.log_lines.lines and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertIn("capture started", self.log_lines.lines)
+            # The log line comes before the first block is read and analysed: wait for the spectrum.
+            deadline = time.monotonic() + 3
+            while not any(v > 0 for v in app.S.spectrum) and time.monotonic() < deadline:
+                time.sleep(0.01)
             self.assertTrue(any(v > 0 for v in app.S.spectrum))
             cap.set_wanted(False)
             deadline = time.monotonic() + 3
@@ -1514,25 +1518,74 @@ class HostileInputCase(RelayHarness):
         self.addCleanup(logger.removeHandler, handler)
         return handler
 
+    # What the JSON decoder does with a deep message depends on the CPython build: its C recursion budget
+    # is 3000 levels on Windows and 10000 elsewhere (3.12), so 5000 levels are refused on one and
+    # decoded (or rejected as unterminated) on the other. The helper must not care which: a deep message
+    # is either counted as a bad message or ignored as a harmless non-dict, and nothing else happens.
+    OLD_DEPTH = 5000
+    DEEP = 100_000  # past every decoder's budget
+    DECODER_ERRORS = ("RecursionError", "JSONDecodeError", "MemoryError")
+
+    def deep_messages(self):
+        for n in (self.OLD_DEPTH, self.DEEP):
+            yield "[" * n  # never closed
+            yield "[" * n + "]" * n
+            yield '{"a":' * n  # never closed
+            yield '{"a":' * n + "1" + "}" * n
+            yield '{"type":"update","title":' + "[" * n + "]" * n + "}"
+
     async def test_deeply_nested_json_is_a_bad_message_not_a_dead_connection(self):
         ws_errors = self.watch_websockets_log()
+        sent = 0
         async with self.theme() as ws:
             await recv_type(ws, "status")
-            for _ in range(3):
-                await ws.send("[" * 5000)
-                await ws.send('{"a":' * 5000)
-            await ws.send(json.dumps({"type": "update", "title": "still alive"}))
-            self.assertTrue(await until(lambda: app.S.title == "still alive"))
-            self.assertEqual(self.relay.clients and next(iter(self.relay.clients)).bad, 6)
-        self.assertTrue(any("bad message type=other error=RecursionError" in line for line in self.log_lines.lines))
+            for round_ in range(2):
+                for message in self.deep_messages():
+                    await ws.send(message)
+                    sent += 1
+                await ws.send(json.dumps({"type": "update", "title": f"still alive {round_}"}))
+                self.assertTrue(await until(lambda: app.S.title == f"still alive {round_}", 10))
+            c = next(iter(self.relay.clients))
+            # The decoder refused some of them and took the others: the count is only bounded. An
+            # unterminated message is invalid for every decoder, so those (2 per round) were counted.
+            self.assertLessEqual(c.bad, sent)
+            self.assertGreaterEqual(c.bad, 2 * 2)
+        state, reply = await app.probe("127.0.0.1", self.relay.port)  # the server still answers a control ping
+        self.assertEqual(state, "sposync")
+        bad = [line for line in self.log_lines.lines if line.startswith("bad message type=")]
+        self.assertTrue(bad)
+        self.assertLessEqual(len(bad), app.MAX_BAD_LOGS)
+        for line in bad:
+            m = re.fullmatch(r"bad message type=other error=(\w+)", line)
+            self.assertTrue(m and m.group(1) in self.DECODER_ERRORS, line)
         self.assertFalse([lvl for lvl in ws_errors.levels if lvl >= logging.ERROR])
+
+    async def test_a_deep_value_that_decodes_is_dropped_by_every_field(self):
+        # Wherever the decoder takes it, a nested value in a field is no string, number or list of dicts.
+        depth = 2000  # under the 3000 of the narrowest decoder
+        nested = "[" * depth + "]" * depth
+        async with self.theme() as ws:
+            await recv_type(ws, "status")
+            for kind in ("update", "playlists", "songs", "search"):
+                await ws.send('{"type":"%s","title":%s,"artist":%s,"playlists":%s,"songs":%s,"results":%s,"query":%s,'
+                              '"lyrics":{"lines":%s,"error":%s},"colors":%s,"progress_chars":%s}'
+                              % ((kind,) + (nested,) * 10))
+            await ws.send(json.dumps({"type": "update", "title": "end"}))
+            self.assertTrue(await until(lambda: app.S.title == "end", 10))
+            self.assertEqual(next(iter(self.relay.clients)).bad, 0)
+        assert_sane(self)
 
     async def test_deeply_nested_control_message_is_closed_and_the_relay_keeps_answering(self):
         ws_errors = self.watch_websockets_log()
-        async with self.control() as ws:
-            await ws.send("[" * 5000)
-            with self.assertRaises(ConnectionClosed):
-                await asyncio.wait_for(ws.recv(), 2)
+        # A control message over CONTROL_MAX_BYTES is closed before it is decoded: the first two depths
+        # fit under it (they reach the decoder), the others do not.
+        for n in (700, 2000, self.OLD_DEPTH, self.DEEP):
+            for message in ("[" * n, "[" * n + "]" * n, '{"a":' * n):
+                with self.subTest(depth=n, closed=message.endswith("]")):
+                    async with self.control() as ws:
+                        await ws.send(message)
+                        with self.assertRaises(ConnectionClosed):
+                            await asyncio.wait_for(ws.recv(), 2)
         state, reply = await app.probe("127.0.0.1", self.relay.port)
         self.assertEqual(state, "sposync")
         self.assertFalse([lvl for lvl in ws_errors.levels if lvl >= logging.ERROR])
@@ -2078,10 +2131,76 @@ class PeerWindowsCase(unittest.TestCase):
         self.assertEqual(app._win_port(socket.htons(54321)), 54321)
         self.assertEqual(app._win_port(0xFFFF0000 | socket.htons(80)), 80)  # only the low 16 bits count
 
-    def test_another_users_process_looks_denied_or_foreign_never_ours(self):
-        # pid 4 is System: an unelevated helper cannot open it, an elevated one reads SYSTEM's SID.
+    # What a process of another account looks like depends on who runs the test: an unelevated user is
+    # denied at OpenProcess (denied), an elevated administrator opens it but is denied its token
+    # (notoken), and one that can read the token sees a foreign SID (other). Never "same".
+    NOT_OURS = (app.PEER_DENIED, app.PEER_OTHER, app.PEER_NOTOKEN, app.PEER_GONE)
+
+    @staticmethod
+    def system_processes():
+        """[(pid, exe name)] of the processes that only ever run as SYSTEM, from a toolhelp snapshot
+        (no process is opened)."""
+        import ctypes
+        from ctypes import wintypes
+
+        class ProcessEntry(ctypes.Structure):  # PROCESSENTRY32W
+            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                        ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                        ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                        ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.Process32FirstW.argtypes = k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+        k32.Process32FirstW.restype = k32.Process32NextW.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+        if snap in (None, wintypes.HANDLE(-1).value):
+            return []
+        # Not svchost.exe: its per-user service instances run as the signed-in user.
+        names = {"smss.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "spoolsv.exe"}
+        found = []
+        try:
+            entry = ProcessEntry()
+            entry.dwSize = ctypes.sizeof(entry)
+            ok = k32.Process32FirstW(snap, ctypes.byref(entry))
+            while ok:
+                if entry.szExeFile.lower() in names and entry.th32ProcessID not in (0, os.getpid()):
+                    found.append((entry.th32ProcessID, entry.szExeFile))
+                ok = k32.Process32NextW(snap, ctypes.byref(entry))
+        finally:
+            k32.CloseHandle(snap)
+        return found
+
+    def test_another_accounts_process_is_never_ours(self):
         api = app._win_api()
-        self.assertIn(app._windows_pid_verdict(api, 4, app._windows_sid()), (app.PEER_DENIED, app.PEER_OTHER))
+        own = app._windows_sid()
+        # pid 4 is System, a process of the SYSTEM account, whoever runs the test.
+        verdict = app._windows_pid_verdict(api, 4, own)
+        self.assertIn(verdict, self.NOT_OURS)
+        self.assertNotEqual(verdict, app.PEER_SAME)
+        # Our own is ours, so "never same" above is not a verdict that is always given.
+        self.assertEqual(app._windows_pid_verdict(api, os.getpid(), own), app.PEER_SAME)
+
+    def test_system_processes_are_never_ours_unless_the_test_runs_as_system(self):
+        own = app._windows_sid()
+        if own == "S-1-5-18":
+            self.skipTest("this test process runs as SYSTEM")
+        api = app._win_api()
+        procs = self.system_processes()
+        if not procs:
+            self.skipTest("no service process is listed")
+        verdicts = {}
+        for pid, name in procs[:25]:
+            try:
+                verdict = app._windows_pid_verdict(api, pid, own)
+            except OSError:
+                continue  # the lookup itself failed: the gate refuses that too (peer-unknown)
+            verdicts.setdefault(verdict, []).append(name)
+        for verdict, names in verdicts.items():
+            self.assertIn(verdict, self.NOT_OURS, names)
+        self.assertNotIn(app.PEER_SAME, verdicts)
 
     def test_a_process_that_is_gone_is_gone_not_ours_and_not_foreign(self):
         api = app._win_api()
