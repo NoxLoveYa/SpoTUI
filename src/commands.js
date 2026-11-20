@@ -2,7 +2,7 @@ import { handleActionsCommand } from "./actions.js";
 import { applyCustomBarState, applyInputButtonsVisibility, applyInputColors, applyLyricColors, applyLyricLineSpacing, applyPanelColors, applyPlayerBarColors, applyPlayerBarVisibility, applyProgressBarColors, applyVisualizerColor, handleColorArgs, isValidLineSpacing, toggleLogo, updateCustomBar } from "./appearance.js";
 import { resetGrid, startAsciiPaintLoop } from "./ascii.js";
 import { initUpdateBanner, showRestartPopup } from "./banner.js";
-import { ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, VISUALIZER_BARS, VISUALIZER_COLOR, VISUALIZER_GAP, VISUALIZER_MODE, VISUALIZER_SMOOTH, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
+import { ANIMATION_KEY, CUSTOM_BAR_ENABLED, CUSTOM_BAR_PROGRESS_STYLE, DEBUG_KEY, INPUT_BG, INPUT_BG_HOVER, INPUT_BORDER, INPUT_BUTTONS, INPUT_TEXT, LYRICS_ANIMATION_KEY, LYRICS_COLOR_ACTIVE, LYRICS_COLOR_INACTIVE, LYRICS_COLOR_LIGHT_INACTIVE, LYRICS_LINE_SPACING, PANEL_BG, PANEL_BORDER, PANEL_TEXT, PLAYER_BAR_BG, PLAYER_BAR_BORDER, PLAYER_BAR_TEXT, PLAYER_BAR_VISIBLE, PROGRESS_BAR_BG, PROGRESS_BAR_FG, PROGRESS_STYLES, UPDATE_BANNER_KEY, VISUALIZER_BARS, VISUALIZER_COLOR, VISUALIZER_GAP, WP_FIT_KEY, WP_OPACITY_KEY, WP_POS_KEY, WP_RICH_KEY, WP_URL_KEY } from "./constants.js";
 import { getAllowedJamGuestCommands, jamCreate, jamJoin, jamLeave, jamSay } from "./jam.js";
 import { getKeybinds, isRestrictedThemeCommand, saveKeybinds, stripCommandPrefix } from "./keybinds.js";
 import { handleLyricsCommand, syncLyricsHighlight } from "./lyrics.js";
@@ -163,13 +163,6 @@ async function executeInner(cmd, opts = {}) {
             return;
         }
         if (argsLower.includes("-wp")) {
-            // Defence in depth behind isSensitiveCommand: a wallpaper loads
-            // from a host that sees the user's IP and never comes from the
-            // relay, whatever the filter let through.
-            if (opts.fromRemote) {
-                dbg("[SpoTUI] remote wallpaper command refused:", cleanedCmd.slice(0, 200));
-                return;
-            }
             // Only the user's own typed/keybound/action commands (no origin
             // flag) may change a wallpaper; a theme goes through the gate below.
             const byUser = !opts.fromTheme;
@@ -430,22 +423,6 @@ async function executeInner(cmd, opts = {}) {
                         storageRemove(VISUALIZER_BARS);
                     } else if (/^\d+$/.test(value)) {
                         storageSet(VISUALIZER_BARS, String(Math.min(Math.max(Number(value), 1), 256)));
-                    }
-                    i++;
-                } else if (argsLower[i] === "-smooth") {
-                    const value = (args[i + 1] || "").toLowerCase();
-                    if (value === "off") {
-                        storageRemove(VISUALIZER_SMOOTH);
-                    } else if (/^\d+$/.test(value)) {
-                        storageSet(VISUALIZER_SMOOTH, String(Math.min(Math.max(Number(value), 1), 100)));
-                    }
-                    i++;
-                } else if (argsLower[i] === "-mode") {
-                    const value = (args[i + 1] || "").toLowerCase();
-                    if (value === "off") {
-                        storageRemove(VISUALIZER_MODE);
-                    } else if (value === "global" || value === "adaptive") {
-                        storageSet(VISUALIZER_MODE, value);
                     }
                     i++;
                 } else {

@@ -1,9 +1,7 @@
-import { showRestartPopup } from "./banner.js";
-import { DISCORD_INVITE_URL, SPOSYNC_GUIDE_URL, VISUALIZER_BARS, VISUALIZER_GAP, VISUALIZER_STORAGE_KEY } from "./constants.js";
-import { getSpotuiAccentColor } from "./jam.js";
+import { VISUALIZER_BARS, VISUALIZER_GAP, VISUALIZER_STORAGE_KEY } from "./constants.js";
+import { jamSay } from "./jam.js";
 import { app } from "./state.js";
 import { storageGet, storageSet } from "./storage.js";
-import { createButton } from "./utils.js";
 
 let bars = [];
 let raf = 0;
@@ -66,6 +64,11 @@ function paint() {
     }
 }
 
+// Nothing feeds the bars right now. While false, "on" is a no-op that says so
+// instead of opening an empty strip. Flip it where setVisualizerBars gets a
+// real source.
+const hasSource = false;
+
 export function setVisualizerBars(next) {
     bars = next || [];
     refreshVisualizer();
@@ -75,23 +78,11 @@ export function refreshVisualizer() {
     if (app.visualizerOpen && !raf) raf = requestAnimationFrame(paint);
 }
 
-export function handleVisualizerCommand(arg, silent) {
+export function handleVisualizerCommand(arg) {
     const mode = String(arg || "").trim().toLowerCase();
     const on = () => {
-        if (!app.sposyncConnected) {
-            if (silent) return;
-            const popup = showRestartPopup("");
-            if (!popup) return;
-            const accent = getSpotuiAccentColor();
-            popup.style.border = `1px solid ${accent}`;
-            popup.style.color = accent;
-            popup.style.maxWidth = "420px";
-            popup.style.lineHeight = "1.45";
-            popup.style.display = "flex";
-            popup.style.flexDirection = "column";
-            popup.style.gap = "12px";
-            popup.innerHTML = `<div>Unable to enable the visualizer: SpoSync is not running.<br><br>SpoSync is a small helper that feeds SpoTUI live audio. Install it with the SpoTUI installer's optional SpoSync step; it then starts with your computer.<br><br>Already installed? It starts at sign-in, or run it once from<br><code>%LOCALAPPDATA%\\SpoTUI\\sposync\\sposync.exe</code> (Windows) or <code>~/.local/share/sposync/sposync --headless</code> (Linux).<br><br>Guide: <a href="${SPOSYNC_GUIDE_URL}" target="_blank" rel="noopener" style="color:inherit">${SPOSYNC_GUIDE_URL}</a><br>Discord: <a href="${DISCORD_INVITE_URL}" target="_blank" rel="noopener" style="color:inherit">${DISCORD_INVITE_URL}</a></div>`;
-            popup.appendChild(createButton("", "spotui-control-btn", "OK", () => popup.remove()));
+        if (!hasSource) {
+            jamSay("visualizer: no audio source available");
             return;
         }
         app.visualizerOpen = true;
@@ -111,6 +102,7 @@ export function handleVisualizerCommand(arg, silent) {
     else on();
 }
 
+// The saved "1" stays untouched; it just is not applied without a source.
 export function restoreVisualizer() {
-    if (storageGet(VISUALIZER_STORAGE_KEY) === "1") handleVisualizerCommand("on", true);
+    if (hasSource && storageGet(VISUALIZER_STORAGE_KEY) === "1") handleVisualizerCommand("on");
 }

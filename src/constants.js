@@ -77,7 +77,6 @@ export const HISTORY_LIMIT = 50;
 export const HISTORY_ENTRY_MAX = 500;
 export const ACTIONS_STORAGE_KEY = "spotui:actions";
 export const DISCORD_INVITE_URL = "https://discord.gg/WTzBEKDeKg";
-export const SPOSYNC_GUIDE_URL = "https://github.com/NoxLoveYa/SpoTUI/tree/live#sposync";
 export const LAUNCHED_KEY = "spotui:launched";
 
 // Theme IDs shown in first-boot onboarding
@@ -192,10 +191,6 @@ export const COMMAND_LIST = [
     { cmd: "tui -viz -gap off", desc: "Reset visualizer bar gap" },
     { cmd: "tui -viz -bars &lt;count&gt;", desc: "Set how many visualizer bars to show" },
     { cmd: "tui -viz -bars off", desc: "Reset visualizer bar count" },
-    { cmd: "tui -viz -smooth &lt;1-100&gt;", desc: "Set visualizer bar smoothing" },
-    { cmd: "tui -viz -smooth off", desc: "Reset visualizer bar smoothing" },
-    { cmd: "tui -viz -mode &lt;adaptive/global&gt;", desc: "Set visualizer reaction mode" },
-    { cmd: "tui -viz -mode off", desc: "Reset visualizer reaction mode" },
     { cmd: "tui -viz off", desc: "Reset visualizer bar color" },
     { cmd: "tui -bar -bg &lt;#hex&gt; -border &lt;#hex&gt; -text &lt;#hex&gt;", desc: "Set player bar colors" },
     { cmd: "tui -bar -v &lt;on/off&gt;", desc: "Toggle play bar visibility" },
@@ -221,7 +216,7 @@ export const COMMAND_LIST = [
     { cmd: "loop / superloop", desc: "Toggle repeat mode" },
     { cmd: "like", desc: "Like/unlike current song" },
     { cmd: "lyrics", desc: "Toggle lyrics panel" },
-    { cmd: "visualizer", desc: "Toggle audio visualizer" },
+    { cmd: "visualizer", desc: "Toggle audio visualizer (currently has no audio source, so it stays off)" },
     { cmd: "dj", desc: "Play the DJ playlist" },
     { cmd: "echo &lt;text&gt;", desc: "Display a message" },
     { cmd: "search &lt;query&gt;", desc: "Search Spotify" },

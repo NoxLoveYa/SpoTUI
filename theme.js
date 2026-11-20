@@ -79,7 +79,6 @@
     const HISTORY_ENTRY_MAX = 500;
     const ACTIONS_STORAGE_KEY = "spotui:actions";
     const DISCORD_INVITE_URL = "https://discord.gg/WTzBEKDeKg";
-    const SPOSYNC_GUIDE_URL = "https://github.com/NoxLoveYa/SpoTUI/tree/live#sposync";
     const LAUNCHED_KEY = "spotui:launched";
 
     // Theme IDs shown in first-boot onboarding
@@ -192,10 +191,6 @@
         { cmd: "tui -viz -gap off", desc: "Reset visualizer bar gap" },
         { cmd: "tui -viz -bars &lt;count&gt;", desc: "Set how many visualizer bars to show" },
         { cmd: "tui -viz -bars off", desc: "Reset visualizer bar count" },
-        { cmd: "tui -viz -smooth &lt;1-100&gt;", desc: "Set visualizer bar smoothing" },
-        { cmd: "tui -viz -smooth off", desc: "Reset visualizer bar smoothing" },
-        { cmd: "tui -viz -mode &lt;adaptive/global&gt;", desc: "Set visualizer reaction mode" },
-        { cmd: "tui -viz -mode off", desc: "Reset visualizer reaction mode" },
         { cmd: "tui -viz off", desc: "Reset visualizer bar color" },
         { cmd: "tui -bar -bg &lt;#hex&gt; -border &lt;#hex&gt; -text &lt;#hex&gt;", desc: "Set player bar colors" },
         { cmd: "tui -bar -v &lt;on/off&gt;", desc: "Toggle play bar visibility" },
@@ -221,7 +216,7 @@
         { cmd: "loop / superloop", desc: "Toggle repeat mode" },
         { cmd: "like", desc: "Like/unlike current song" },
         { cmd: "lyrics", desc: "Toggle lyrics panel" },
-        { cmd: "visualizer", desc: "Toggle audio visualizer" },
+        { cmd: "visualizer", desc: "Toggle audio visualizer (currently has no audio source, so it stays off)" },
         { cmd: "dj", desc: "Play the DJ playlist" },
         { cmd: "echo &lt;text&gt;", desc: "Display a message" },
         { cmd: "search &lt;query&gt;", desc: "Search Spotify" },
@@ -562,10 +557,6 @@ body.spotui-spotify-enabled, body {
         asciiEnabled: true,
         standbyOpen: false,
         lyricsObserver: null,
-        syncIconTimer: null,
-        sposyncConnected: false,
-        // SpoSync window visibility: null = unknown, false = hidden, true = visible.
-        sposyncUi: null,
         djObserver: null,
         djMode: false,
         djPanelOpen: false,
@@ -2218,22 +2209,6 @@ body.spotui-spotify-enabled, body {
         return !THEME_ALLOWED_COMMANDS.has(command);
     }
 
-    // Too powerful for remote/store-and-fire paths: meta commands, secrets,
-    // destructive theme ops, and tracking/defacement URLs. Local bar authoring
-    // stays unrestricted — this gates the relay ingress (sync.js) only.
-    // It must match what executeInner dispatches: those subs act in FIRST position
-    // only, except `-wp`, which executeInner reaches from ANY position (it tests
-    // the whole argument list), so `-wp` is matched as a whole token anywhere
-    // after `tui`. `-poster` is an alias of `-posters` there.
-    const SENSITIVE_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b|tui\s+-(?:pin-token|pin-board|pin-feed|pin-refresh)\b|tui\s+-t\b|tui\s+-posters?\s+(?:add|clear)\b|tui\s(?:[\s\S]*\s)?-wp(?!\S))/;
-
-    // Lowercased first: executeInner lowercases with toLowerCase(), which maps
-    // characters (e.g. KELVIN SIGN for "k") that a /i regex without the u flag does
-    // not fold, so a "-pin-token" spelled with one must not slip past.
-    function isSensitiveCommand(cmd) {
-        return SENSITIVE_CMD_REGEX.test(stripCommandPrefix(cmd).trim().toLowerCase());
-    }
-
     function eventToKeyCombo(e) {
         const mods = [];
         if (e.ctrlKey) mods.push("Ctrl");
@@ -2346,38 +2321,17 @@ body.spotui-spotify-enabled, body {
         }
     }
 
-    function setVisualizerBars(next) {
-        bars = next || [];
-        refreshVisualizer();
-    }
-
     function refreshVisualizer() {
         if (app.visualizerOpen && !raf) raf = requestAnimationFrame(paint);
     }
 
-    function handleVisualizerCommand(arg, silent) {
+    function handleVisualizerCommand(arg) {
         const mode = String(arg || "").trim().toLowerCase();
         const on = () => {
-            if (!app.sposyncConnected) {
-                if (silent) return;
-                const popup = showRestartPopup("");
-                if (!popup) return;
-                const accent = getSpotuiAccentColor();
-                popup.style.border = `1px solid ${accent}`;
-                popup.style.color = accent;
-                popup.style.maxWidth = "420px";
-                popup.style.lineHeight = "1.45";
-                popup.style.display = "flex";
-                popup.style.flexDirection = "column";
-                popup.style.gap = "12px";
-                popup.innerHTML = `<div>Unable to enable the visualizer: SpoSync is not running.<br><br>SpoSync is a small helper that feeds SpoTUI live audio. Install it with the SpoTUI installer's optional SpoSync step; it then starts with your computer.<br><br>Already installed? It starts at sign-in, or run it once from<br><code>%LOCALAPPDATA%\\SpoTUI\\sposync\\sposync.exe</code> (Windows) or <code>~/.local/share/sposync/sposync --headless</code> (Linux).<br><br>Guide: <a href="${SPOSYNC_GUIDE_URL}" target="_blank" rel="noopener" style="color:inherit">${SPOSYNC_GUIDE_URL}</a><br>Discord: <a href="${DISCORD_INVITE_URL}" target="_blank" rel="noopener" style="color:inherit">${DISCORD_INVITE_URL}</a></div>`;
-                popup.appendChild(createButton("", "spotui-control-btn", "OK", () => popup.remove()));
+            {
+                jamSay("visualizer: no audio source available");
                 return;
             }
-            app.visualizerOpen = true;
-            storageSet(VISUALIZER_STORAGE_KEY, "1");
-            document.body.classList.add("spotui-visualizer-on");
-            setVisualizerBars(bars);
         };
         const off = () => {
             app.visualizerOpen = false;
@@ -2391,8 +2345,8 @@ body.spotui-spotify-enabled, body {
         else on();
     }
 
+    // The saved "1" stays untouched; it just is not applied without a source.
     function restoreVisualizer() {
-        if (storageGet(VISUALIZER_STORAGE_KEY) === "1") handleVisualizerCommand("on", true);
     }
 
     const PLAYLIST_SONGS_FETCH_DELAY = 150;
@@ -8434,13 +8388,6 @@ body.spotui-spotify-enabled, body {
                 return;
             }
             if (argsLower.includes("-wp")) {
-                // Defence in depth behind isSensitiveCommand: a wallpaper loads
-                // from a host that sees the user's IP and never comes from the
-                // relay, whatever the filter let through.
-                if (opts.fromRemote) {
-                    dbg("[SpoTUI] remote wallpaper command refused:", cleanedCmd.slice(0, 200));
-                    return;
-                }
                 // Only the user's own typed/keybound/action commands (no origin
                 // flag) may change a wallpaper; a theme goes through the gate below.
                 const byUser = !opts.fromTheme;
@@ -8701,22 +8648,6 @@ body.spotui-spotify-enabled, body {
                             storageRemove(VISUALIZER_BARS);
                         } else if (/^\d+$/.test(value)) {
                             storageSet(VISUALIZER_BARS, String(Math.min(Math.max(Number(value), 1), 256)));
-                        }
-                        i++;
-                    } else if (argsLower[i] === "-smooth") {
-                        const value = (args[i + 1] || "").toLowerCase();
-                        if (value === "off") {
-                            storageRemove(VISUALIZER_SMOOTH);
-                        } else if (/^\d+$/.test(value)) {
-                            storageSet(VISUALIZER_SMOOTH, String(Math.min(Math.max(Number(value), 1), 100)));
-                        }
-                        i++;
-                    } else if (argsLower[i] === "-mode") {
-                        const value = (args[i + 1] || "").toLowerCase();
-                        if (value === "off") {
-                            storageRemove(VISUALIZER_MODE);
-                        } else if (value === "global" || value === "adaptive") {
-                            storageSet(VISUALIZER_MODE, value);
                         }
                         i++;
                     } else {
@@ -11953,41 +11884,6 @@ body.spotui-saves-panel #spotui-saves-panel {
     }
 }
 
-#spotui-sposync-status {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    flex: 0 0 40px;
-    margin-right: 4px;
-    color: currentColor;
-    pointer-events: auto;
-    cursor: default;
-}
-
-#spotui-sposync-status svg {
-    width: 22px;
-    height: 22px;
-    display: block;
-}
-
-#spotui-sposync-tip {
-    position: fixed;
-    transform: translateX(-50%);
-    z-index: 10000;
-    background: rgba(0, 0, 0, 0.92);
-    border: 1px solid var(--spotui-accent, #ff8c42);
-    border-radius: 6px;
-    padding: 8px 10px;
-    color: var(--spotui-accent, #ff8c42);
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-    line-height: 1.35;
-    white-space: pre-line;
-    pointer-events: none;
-}
-
 #spotui-controls {
     display: flex;
     gap: 8px;
@@ -12487,412 +12383,6 @@ body.spotui-spotify-enabled.spotui-video-on .Root__right-sidebar {
         document.head.appendChild(s);
     }
 
-    const WS_URL = "ws://localhost:8765";
-    const HEARTBEAT_MS = 1000;
-    const RECONNECT_MS = 3000;
-    const RECONNECT_MAX_MS = 30000;
-    const STATUS_WAIT_MS = 1000;
-    const SYNC_ICON_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path><circle cx="18.5" cy="18.5" r="4.5" fill="#ef4444" stroke="none"></circle><path d="m16.8 16.8 3.4 3.4m0-3.4-3.4 3.4" stroke="#fff" stroke-width="1.5"></path></svg>`;
-    const SYNC_ICON_ON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path><circle cx="18.5" cy="18.5" r="4.5" fill="#22c55e" stroke="none"></circle><path d="m16.3 18.5 1.4 1.4 3-3" stroke="#fff" stroke-width="1.5"></path></svg>`;
-
-    let reconnectDelay = RECONNECT_MS;
-
-    let socket = null;
-    let reconnectTimer = null;
-    let heartbeatTimer = null;
-    let statusTimer = null;
-    let lyricsToken = 0;
-    let lyricsCache = { uri: "", lines: [], synced: false, instrumental: false, error: "", loading: false };
-
-    function toHex(value, fallback) {
-        const v = String(value || "").trim();
-        if (!v || v === "transparent" || v === "none") return fallback;
-        if (v[0] === "#") {
-            if (v.length === 4 || v.length === 5) return "#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
-            return v.slice(0, 7);
-        }
-        const m = v.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
-        if (!m) return fallback;
-        return "#" + [m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, "0")).join("");
-    }
-
-    function cssVar(style, name, fallback) {
-        return toHex(style.getPropertyValue(name), fallback);
-    }
-
-    function getColors() {
-        // <body>, not <html>: the shade rule defines --spotui-accent on body, and
-        // custom properties only inherit downward. Root inline vars reach body too.
-        const style = getComputedStyle(document.body);
-        // Same chains as the CSS: lyrics active, panel border/text, bar text and
-        // the visualizer fall back to the accent. Inactive/near lyrics and the
-        // backgrounds have fixed CSS fallbacks, so they keep fixed values here.
-        const accent = cssVar(style, "--spotui-accent", "#ff8c42");
-        return {
-            active: cssVar(style, "--lyrics-color-active", accent),
-            inactive: cssVar(style, "--lyrics-color-inactive", "#777777"),
-            near: cssVar(style, "--lyrics-color-light-inactive", "#b3b3b3"),
-            accent,
-            panel_bg: cssVar(style, "--panel-bg-color", "#000000"),
-            panel_border: cssVar(style, "--panel-border-color", accent),
-            panel_text: cssVar(style, "--panel-text-color", accent),
-            bar_bg: cssVar(style, "--player-bar-background", "#000000"),
-            bar_text: cssVar(style, "--player-bar-text-color", accent),
-            visualizer: cssVar(style, "--visualizer-color", accent),
-        };
-    }
-
-    // 9 forced style reads per call — cache for 5s (worst case the relay sees
-    // a recolor a few seconds late).
-    let colorsCache = null;
-    let colorsCacheAt = 0;
-    const COLORS_CACHE_MS = 5000;
-
-    function getCachedColors() {
-        const now = Date.now();
-        if (!colorsCache || now - colorsCacheAt > COLORS_CACHE_MS) {
-            colorsCache = getColors();
-            colorsCacheAt = now;
-        }
-        return colorsCache;
-    }
-
-    function isPlayingNow() {
-        try {
-            if (typeof Spicetify.Player.isPlaying === "function") return Spicetify.Player.isPlaying();
-        } catch {}
-        return !Spicetify.Player.data?.isPaused;
-    }
-
-    function getDurationMs(item) {
-        if (!item) return 0;
-        if (typeof item.duration === "number") return item.duration;
-        if (item.duration?.milliseconds != null) return item.duration.milliseconds;
-        return 0;
-    }
-
-    function getVisualizerBars() {
-        const stored = storageGet(VISUALIZER_BARS);
-        if (stored === null) return 48;
-        const value = Number(stored);
-        return Number.isFinite(value) ? Math.min(256, Math.max(1, Math.floor(value))) : 48;
-    }
-
-    function getVisualizerSmooth() {
-        const stored = storageGet(VISUALIZER_SMOOTH);
-        if (stored === null) return 45;
-        const value = Number(stored);
-        return Number.isFinite(value) ? Math.min(100, Math.max(1, Math.floor(value))) : 45;
-    }
-
-    function getVisualizerMode() {
-        const stored = storageGet(VISUALIZER_MODE);
-        return stored === "global" ? "global" : "adaptive";
-    }
-
-    function getTrackPayload() {
-        const data = Spicetify.Player.data;
-        const item = data?.item ?? data?.track;
-        if (!item) return null;
-        const storedStyle = storageGet(CUSTOM_BAR_PROGRESS_STYLE);
-        const progressStyle = Object.hasOwn(PROGRESS_STYLES, storedStyle) ? storedStyle : "classic-block";
-        return {
-            type: "update",
-            title: item.name ?? item.metadata?.title ?? "",
-            artist: item.artists?.map((a) => a.name).join(", ") ?? item.metadata?.artist_name ?? "",
-            album: item.album?.name ?? item.metadata?.album_title ?? "",
-            uri: item.uri ?? "",
-            duration_ms: getDurationMs(item),
-            position_ms: Spicetify.Player.getProgress() || 0,
-            is_playing: isPlayingNow(),
-            timestamp: Date.now(),
-            colors: getCachedColors(),
-            lyrics: lyricsCache,
-            progress_style: progressStyle,
-            progress_chars: PROGRESS_STYLES[progressStyle],
-            visualizer: app.visualizerOpen,
-            visualizer_bars: getVisualizerBars(),
-            visualizer_smoothing: getVisualizerSmooth(),
-            visualizer_mode: getVisualizerMode(),
-        };
-    }
-
-    function sendJson(obj) {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
-        socket.send(JSON.stringify(obj));
-    }
-
-    function send() {
-        const payload = getTrackPayload();
-        if (payload) sendJson(payload);
-        else sendJson({ type: "update", visualizer: app.visualizerOpen, visualizer_bars: getVisualizerBars(), visualizer_smoothing: getVisualizerSmooth(), visualizer_mode: getVisualizerMode(), colors: getCachedColors(), lyrics: lyricsCache });
-    }
-
-    async function refreshLyrics() {
-        const info = getCurrentTrackLyricsInfo();
-        const token = ++lyricsToken;
-        if (!info) {
-            lyricsCache = { uri: "", lines: [], synced: false, instrumental: false, error: "", loading: false };
-            send();
-            return;
-        }
-        if (lyricsCache.uri === info.uri && (lyricsCache.lines.length || lyricsCache.instrumental || lyricsCache.error) && !lyricsCache.loading) {
-            send();
-            return;
-        }
-        lyricsCache = { uri: info.uri, lines: [], synced: false, instrumental: false, error: "", loading: true };
-        send();
-        const result = await resolveTrackLyrics(info);
-        if (token !== lyricsToken) return;
-        lyricsCache = {
-            uri: info.uri,
-            lines: result.lines || [],
-            synced: Boolean(result.synced),
-            instrumental: Boolean(result.instrumental),
-            error: result.error || "",
-            loading: false,
-        };
-        send();
-    }
-
-    async function sendSongs(uri) {
-        let songs = [];
-        try {
-            const res = await Spicetify.Platform.PlaylistAPI.getContents(uri);
-            songs = (res.items || [])
-                .filter((item) => item && item.uri && item.isPlayable !== false)
-                .map((item, index) => normalizeTrackItem(item, index))
-                .map((s) => ({ name: s.name, artist: s.artist, uri: s.uri }));
-        } catch {}
-        sendJson({ type: "songs", uri, songs });
-    }
-
-    async function handleTuiSearch(query) {
-        sendJson({ type: "search", query, results: [] });
-        try {
-            const { results } = await searchSpotify(query);
-            sendJson({
-                type: "search",
-                query,
-                results: (results || []).map((r) => ({ name: r.name, uri: r.uri, type: r.type || "" })),
-            });
-        } catch {
-            sendJson({ type: "search", query, results: [] });
-        }
-    }
-
-    async function handleTuiPlaylist(argText) {
-        let list = [];
-        try { list = await getPlaylists(); } catch { list = []; }
-        const slim = list.map((p) => ({ name: p.name, uri: p.uri }));
-        if (argText) {
-            const q = argText.toLowerCase();
-            const match = slim.filter((p) => p.name.toLowerCase().includes(q));
-            if (match.length === 1) {
-                playFresh(match[0].uri);
-                return;
-            }
-            if (match.length > 1) {
-                sendJson({ type: "playlists", playlists: match });
-                if (match[0]?.uri) sendSongs(match[0].uri);
-                return;
-            }
-        }
-        sendJson({ type: "playlists", playlists: slim });
-        if (slim[0]?.uri) sendSongs(slim[0].uri);
-    }
-
-    function playUri(uri, context) {
-        if (!uri) return;
-        playFresh(uri, context);
-    }
-
-    function syncTip(show) {
-        let tip = document.getElementById("spotui-sposync-tip");
-        if (!show) { if (tip) tip.hidden = true; return; }
-        const el = document.getElementById("spotui-sposync-status");
-        if (!el) return;
-        if (!tip) {
-            tip = document.createElement("div");
-            tip.id = "spotui-sposync-tip";
-            document.body.appendChild(tip);
-        }
-        const on = socket?.readyState === WebSocket.OPEN;
-        tip.textContent = on ? "SpoSync:\nConnected" : "SpoSync:\nDisconnected";
-        const r = el.getBoundingClientRect();
-        tip.style.left = r.left + r.width / 2 + "px";
-        tip.style.bottom = window.innerHeight - r.top + 8 + "px";
-        tip.hidden = false;
-    }
-
-    function paintSyncIcon() {
-        const el = document.getElementById("spotui-sposync-status");
-        if (!el) return;
-        const on = socket?.readyState === WebSocket.OPEN;
-        app.sposyncConnected = on;
-        const key = on ? "1" : "0";
-        if (el.dataset.sync === key) return;
-        el.dataset.sync = key;
-        el.innerHTML = on ? SYNC_ICON_ON : SYNC_ICON_OFF;
-        el.setAttribute("aria-label", on ? "SpoSync: Connected" : "SpoSync: Disconnected");
-        const tip = document.getElementById("spotui-sposync-tip");
-        if (tip && !tip.hidden) syncTip(true);
-    }
-
-    function mountSyncIcon() {
-        const host = document.querySelector(".main-nowPlayingBar-extraControls");
-        if (!host) return;
-        let el = document.getElementById("spotui-sposync-status");
-        if (el && host.firstChild === el) return;
-        if (!el) {
-            el = document.createElement("span");
-            el.id = "spotui-sposync-status";
-            el.setAttribute("role", "img");
-            el.addEventListener("mouseenter", () => syncTip(true));
-            el.addEventListener("mouseleave", () => syncTip(false));
-        }
-        host.prepend(el);
-        paintSyncIcon();
-    }
-
-    function scheduleReconnect() {
-        clearTimeout(reconnectTimer);
-        // Back off while the relay is down: 3s -> 30s cap, reset on open.
-        reconnectTimer = setTimeout(connect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
-    }
-
-    function connect() {
-        // Never strand a live socket: close before replacing.
-        try { if (socket) socket.close(); } catch {}
-        let ws;
-        try {
-            ws = new WebSocket(WS_URL);
-        } catch {
-            scheduleReconnect();
-            return;
-        }
-        socket = ws;
-        // A replaced socket still fires its events: only the live one may act.
-        ws.onopen = () => {
-            if (ws !== socket) return;
-            reconnectDelay = RECONNECT_MS;
-            app.sposyncConnected = true;
-            paintSyncIcon();
-            // Lyrics are fetched only while the helper's window is visible, which
-            // its "status" message reports. A helper that never sends one (older
-            // versions) is treated as visible after a short wait.
-            app.sposyncUi = null;
-            clearTimeout(statusTimer);
-            statusTimer = setTimeout(() => {
-                if (app.sposyncUi !== null) return;
-                app.sposyncUi = true;
-                refreshLyrics();
-            }, STATUS_WAIT_MS);
-            // A helper that connects after boot turns the saved visualizer back on
-            // (the boot restore ran while it was still offline). Before send() so
-            // the first update already carries the flag.
-            restoreVisualizer();
-            send();
-        };
-        ws.onclose = () => {
-            if (ws !== socket) return;
-            clearTimeout(statusTimer);
-            app.sposyncUi = null;
-            app.sposyncConnected = false;
-            paintSyncIcon();
-            scheduleReconnect();
-        };
-        ws.onerror = () => {
-            if (ws !== socket) return;
-            try { ws.close(); } catch {}
-        };
-        ws.onmessage = (event) => {
-            if (ws !== socket) return;
-            let data;
-            try { data = JSON.parse(event.data); } catch { return; }
-            // The relay is an unauthenticated localhost socket: playback stays,
-            // but guests keep their restrictions and sensitive commands
-            // (binds, secrets, destructive/theme-defacing ops) never run remote.
-            const guestAllowed = getAllowedJamGuestCommands();
-            if (data?.type === "status") {
-                clearTimeout(statusTimer);
-                const was = app.sposyncUi;
-                app.sposyncUi = data.ui === true;
-                if (app.sposyncUi && was !== true) refreshLyrics();
-                return;
-            }
-            if (data?.type === "spectrum") {
-                setVisualizerBars(data.bars);
-                return;
-            }
-            if (data?.type === "play") {
-                if (guestAllowed) return;
-                playUri(data.uri, data.context);
-                return;
-            }
-            if (data?.type === "get_songs" && data.uri) {
-                sendSongs(data.uri);
-                return;
-            }
-            if (data?.type === "command" && data.cmd) {
-                const cleaned = String(data.cmd).trim();
-                const [raw, ...rest] = cleaned.split(/\s+/);
-                const command = (raw || "").toLowerCase();
-                const argText = rest.join(" ").trim();
-                if (guestAllowed && !guestAllowed.has(command)) return;
-                if (command === "search") { handleTuiSearch(argText); return; }
-                if (command === "playlist" || command === "list") { handleTuiPlaylist(argText); return; }
-                if (isSensitiveCommand(cleaned)) {
-                    dbg("[SpoTUI-sync] refused remote sensitive command.");
-                    return;
-                }
-                execute(cleaned, { fromRemote: true }).then(send);
-            }
-        };
-    }
-
-    function initSync() {
-        // Once-guard on window (not module state): a re-evaluated bundle must
-        // not double-register Player listeners or strand a second socket.
-        // Set only after Player exists so boot retries keep working.
-        try {
-            if (window.__spotuiSyncStarted) return;
-        } catch (e) {}
-        if (!Spicetify?.Player || !Spicetify?.Platform) {
-            setTimeout(initSync, 300);
-            return;
-        }
-        try {
-            window.__spotuiSyncStarted = true;
-        } catch (e) {}
-        Spicetify.Player.addEventListener("songchange", () => {
-            lyricsCache = { uri: "", lines: [], synced: false, instrumental: false, error: "", loading: true };
-            send();
-            // refreshLyrics only feeds the SpoSync relay (the in-app lyrics panel
-            // loads its own via lyrics.js), so without a connection nothing
-            // consumes the result and no lyric request should leave the app. The
-            // helper may also stay connected all day, so lyrics for it are fetched
-            // only while its window is visible (app.sposyncUi). When it becomes
-            // visible, the status handler fetches for the current track.
-            if (app.sposyncConnected && app.sposyncUi === true) refreshLyrics();
-        });
-        Spicetify.Player.addEventListener("onplaypause", send);
-        // onprogress fires many times per second; the 1s heartbeat already
-        // covers steady state, so throttle progress sends to 1s.
-        let lastProgressSend = 0;
-        Spicetify.Player.addEventListener("onprogress", () => {
-            const now = Date.now();
-            if (now - lastProgressSend < 1000) return;
-            lastProgressSend = now;
-            send();
-        });
-        if (!heartbeatTimer) heartbeatTimer = setInterval(send, HEARTBEAT_MS);
-        mountSyncIcon();
-        if (!app.syncIconTimer) app.syncIconTimer = setInterval(mountSyncIcon, 2000);
-        connect();
-    }
-
     // Inject styles, set up event listeners, and restore saved state
     initClassMap();
     injectStyle();
@@ -12900,7 +12390,6 @@ body.spotui-spotify-enabled.spotui-video-on .Root__right-sidebar {
     setTimeout(createControlButtons, 500);
     setTimeout(initLyricsBridge, 1000);
     setTimeout(initDjBridge, 1000);
-    setTimeout(initSync, 1000);
 
     // Apply stored logo visibility preference
     if (storageGet("spotui:logo-visible") === "off") {

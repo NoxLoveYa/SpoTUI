@@ -85,10 +85,6 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `tui -viz -gap off` | Reset visualizer bar gap |
 | `tui -viz -bars <count>` | Set how many visualizer bars to show |
 | `tui -viz -bars off` | Reset visualizer bar count |
-| `tui -viz -smooth <1-100>` | Set visualizer bar smoothing |
-| `tui -viz -smooth off` | Reset visualizer bar smoothing |
-| `tui -viz -mode <adaptive/global>` | Set visualizer reaction mode |
-| `tui -viz -mode off` | Reset visualizer reaction mode |
 | `tui -viz off` | Reset visualizer bar color |
 | `tui -bar -bg <#hex> -border <#hex> -text <#hex>` | Set player bar colors |
 | `tui -bar -v <on/off>` | Toggle native play bar visibility |
@@ -115,7 +111,7 @@ Type `help` in the SpoTUI command bar to see a list of available commands.
 | `loop` / `superloop` | Toggle repeat mode |
 | `like` | Like/unlike current song |
 | `lyrics` | Toggle lyrics panel |
-| `visualizer` | Toggle audio visualizer (needs [SpoSync](#sposync)) |
+| `visualizer` | Toggle audio visualizer (currently has no audio source, so it stays off) |
 | `dj` | Play the DJ playlist |
 | `echo <text>` | Display a message |
 | `search <query>` | Search Spotify (on a highlighted result: `Enter` plays, `a` adds it to a playlist, `q` adds it to the queue) |
@@ -313,142 +309,6 @@ To set a progress style, use the command: `tui -bar -c -progress <id>`
 | `pixel` | `█▀█▀█▀█▀░░░░░░░░` | Checkerboard pixel progress |
 | `dashed` | `━━━━━━━╸────────` | Dashed track with end handle |
 
-## SpoSync
-
-SpoSync is an optional helper program that runs next to Spotify. The theme talks to it over a local WebSocket on `localhost:8765`. It does two things:
-
-- It feeds the audio visualizer (`visualizer`) with live audio from your speakers. The theme cannot read audio by itself.
-- It shows a terminal window that mirrors the lyrics, your playlists and search, and lets you type SpoTUI commands.
-
-The theme works without it. Only the `visualizer` command needs it.
-
-> **Where the installer gets SpoSync, in this order:** a binary you pass with `-SpoSyncExe` / `--sposync-bin`; the release binary pinned in the installer (see "Prebuilt binary" under Install), once a release is pinned there; otherwise a build from source, which needs **Python 3.12 to 3.15** (a private virtual environment, about 150 MB of downloads and a few minutes) and a clone of this repository. If none of these is possible, the installer skips SpoSync and says why.
-
-### Privacy
-
-- SpoSync listens on `localhost` only. It accepts only Spotify's page (`https://xpui.app.spotify.com`) and local tools **of the same user**; web pages and other users' programs are refused (HTTP 403).
-- Audio is captured only while the visualizer is on. With it off, SpoSync does not touch your audio device.
-- Lyrics for SpoSync come from the same sources the theme uses: spolyrc first, then Spotify, then [lrclib](https://lrclib.net/). The theme fetches them for the helper only while SpoSync's window is open. A hidden or background SpoSync causes no lyric requests.
-- The log file holds no track titles, lyrics or search text.
-
-### Install
-
-The installers ask `Install SpoSync? [y/N]` after the normal SpoTUI CLI install. The default is No, and with no terminal the answer is No. Flags and environment variables skip the question.
-
-| Windows | Linux | Meaning |
-|---------|-------|---------|
-| `-SpoSync` | `--sposync` | Install SpoSync without asking, together with the CLI |
-| `-NoSpoSync` | `--no-sposync` | Never install or ask |
-| `-SpoSyncOnly` | `--sposync-only` | Install only SpoSync, skip the CLI |
-| `-SpoSyncExe <path>` | `--sposync-bin <path>` | Install this local binary instead of building one |
-| `SPOTUI_SPOSYNC=1` or `0` | `SPOTUI_SPOSYNC=1` or `0` | Same as the yes / no flags (environment variable) |
-| `SPOTUI_SPOSYNC_EXE` | `SPOTUI_SPOSYNC_BIN` | Same as the path flags (environment variable) |
-
-Flags win over environment variables. On Windows, `-NoSpoSync` together with `-SpoSync` or `-SpoSyncOnly` is a contradiction: the installer says so and does nothing.
-
-#### Prebuilt binary
-
-A GitHub Actions workflow (`.github/workflows/build-sposync.yml`) builds SpoSync when a `sposync-vX.Y.Z` tag is pushed, tests every binary, and publishes a release with `sposync-win64.exe`, `sposync-linux-amd64` and `sposync-linux-arm64` (the Linux ones are built on Ubuntu 22.04, so they need a 64-bit system with glibc 2.35 or newer), a `SHA256SUMS` file, a `pip freeze` list of each build environment (`sposync-*-requirements.txt`) and a build attestation for every one of these files.
-
-A release is used by the installers only after it is **pinned** in them: the constants at the top of the SpoSync section of `scripts/install/windows/install.ps1` and `scripts/install/linux/install.sh` hold the release tag and the SHA256 of each binary. When they are set, the installer downloads the file for your system over HTTPS from that release, compares its SHA256 with the pinned value **before** it copies or runs anything, and stops without installing on a mismatch. When the tag is empty, the installer uses a local binary or a source build as described below. The Linux installer supports x86_64 and aarch64 only: on another CPU it stops with "SpoSync cannot be built for this CPU architecture", it does not try a source build. If the downloaded file does not run on your Linux (a 32-bit system, or glibc older than 2.35), the installer says so; pass `--sposync-bin <path>` with a binary you built, or build from a clone of this repository. Look at those constants to see which release, if any, your installer would download.
-
-**From a clone (uses the pinned release when there is one, otherwise builds from source if you have Python 3.12 to 3.15; it asks `[y/N]` before a build, and with no terminal the answer is No):**
-
-```powershell
-git clone -b live https://github.com/NoxLoveYa/SpoTUI.git
-cd SpoTUI
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install\windows\install.ps1 -SpoSyncOnly
-```
-
-```bash
-git clone -b live https://github.com/NoxLoveYa/SpoTUI.git
-cd SpoTUI
-bash scripts/install/linux/install.sh --sposync-only
-```
-
-**One line, with a binary you already have:**
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/NoxLoveYa/SpoTUI/live/scripts/install/windows/install.ps1))) -SpoSyncOnly -SpoSyncExe C:\path\to\sposync-win64.exe
-```
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/NoxLoveYa/SpoTUI/live/scripts/install/linux/install.sh | bash -s -- --sposync-only --sposync-bin /path/to/sposync-linux-amd64
-```
-
-When a release is pinned in the installer (see "Prebuilt binary"), these one-liners do not need a binary of your own: leave out `-SpoSyncExe` / `--sposync-bin` and the installer downloads and checks the release binary. Without a pinned release, a one-line download has no source to build from, so it needs a binary. On Windows you can pass it with the environment variables instead of flags: `$env:SPOTUI_SPOSYNC='1'; $env:SPOTUI_SPOSYNC_EXE='C:\path\to\sposync-win64.exe'; irm https://raw.githubusercontent.com/NoxLoveYa/SpoTUI/live/scripts/install/windows/install.ps1 | iex`. That also installs the SpoTUI CLI; without `SPOTUI_SPOSYNC_EXE` and without a pinned release it ends in "SpoSync skipped". On Linux, run the installer as your normal user, not with `sudo`: it refuses to install SpoSync as root, because SpoSync is a per-user helper. The Linux installer exits `2` on an unknown argument or on contradicting flags (`--sposync` or `--sposync-only` together with `--no-sposync`) and `1` when the CLI install fails; with `--sposync-only` it also exits `1` unless SpoSync ends up installed, running or not.
-
-Run the installer again to update. It asks the old helper to exit, replaces the binary and starts the new one.
-
-#### Verify a download yourself
-
-Every release has a `SHA256SUMS` file. `SHA256SUMS` and each binary have a build attestation, made by this repository's workflow (`gh attestation verify <file> -R NoxLoveYa/SpoTUI`). The maintainer's pin script, `scripts/release/pin-sposync.ps1`, checks both the hashes and the attestations before it writes the pins into the installers. Download the binary and `SHA256SUMS` from the release page, then:
-
-```bash
-sha256sum -c SHA256SUMS --ignore-missing
-gh attestation verify sposync-linux-amd64 -R NoxLoveYa/SpoTUI
-```
-
-On Windows, compare `(Get-FileHash .\sposync-win64.exe -Algorithm SHA256).Hash` with the line for `sposync-win64.exe` in `SHA256SUMS`, and run `gh attestation verify .\sposync-win64.exe -R NoxLoveYa/SpoTUI`. The attestation proves the file was built by this repository's workflow; the installer itself needs no `gh`, it only compares the pinned SHA256. The builds are not reproducible, so a build of your own never matches a release hash.
-
-### Where files go
-
-| Item | Windows | Linux |
-|------|---------|-------|
-| Binary | `%LOCALAPPDATA%\SpoTUI\sposync\sposync.exe` | `${XDG_DATA_HOME:-~/.local/share}/sposync/sposync` |
-| Log | `%LOCALAPPDATA%\SpoTUI\sposync\sposync.log` | `${XDG_STATE_HOME:-~/.local/state}/sposync/sposync.log` |
-| Autostart | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value `SpoSync` = `"<Windows folder>\System32\conhost.exe" "<exe>" --tray` | `${XDG_CONFIG_HOME:-~/.config}/autostart/sposync.desktop`, runs `<binary> --headless` |
-| Starts | At sign-in, hidden in the system tray | At graphical login, in the background with no window |
-
-Windows uses `conhost.exe` so the window can be hidden and shown even when Windows Terminal is your default terminal. The Run value is a plain string with both paths written out in full (for example `C:\Windows\System32\conhost.exe`), not `%SystemRoot%`.
-
-### Using it
-
-- **Windows:** SpoSync sits in the tray. Choose **Show** in the tray icon's menu to open the window and **Quit** to exit. Closing the window with `q` offers **Hide to tray**. Running `sposync.exe` again brings the running window forward. If you start it yourself from Windows Terminal, the helper cannot hide to the tray: it offers **Run in background** instead. Autostart at sign-in always uses the tray.
-- **Linux:** there is no tray. Open the window in a terminal with `~/.local/share/sposync/sposync --replace`. Closing it with `q` and choosing **Run in background** hands back to the background helper.
-- **Both:** `sposync --quit` asks the running helper to exit (exit code `0` done, `1` nothing was running, `2` the port is held by another program or by another user's SpoSync, or the helper did not exit within 10 seconds). `sposync --version` prints the version.
-- **Flag `--no-peer-check`:** turns off the check that a connecting program belongs to the same signed-in user as SpoSync (see "Shared computers" under Troubleshooting). Use it only to find out why Spotify stays disconnected. The installer never sets it, and SpoSync logs `peer check disabled by --no-peer-check` at start.
-
-### Logs
-
-The log records start and stop, connections, rejected origins and audio problems. It rotates at 256 KiB and keeps one backup. Paths are in the table above. If the Windows installer's source build fails, it keeps the build log at `%LOCALAPPDATA%\SpoTUI\sposync\build.log` (the uninstaller removes it).
-
-### Build from source
-
-```powershell
-sposync\build-win.cmd
-```
-
-```bash
-bash sposync/build-linux.sh
-```
-
-Both create a private virtual environment under `sposync/venv`, install the packages from `sposync/requirements-build.txt` (wheels only, `pip --only-binary=:all:`), run PyInstaller, and print the SHA256 of the result as the last line. Only the top-level packages are pinned; their dependencies are not, so two builds made at different times can differ and builds are not reproducible. Output goes to `sposync/bin/` (`sposync-win64.exe` or `sposync-linux-<arch>`). They need Python 3.12 to 3.15: the pinned numpy, pillow and websockets need 3.12 or newer, and PyInstaller does not support 3.16 yet. On Debian and Ubuntu the Linux build also needs `python3-venv` (or `python3.X-venv` for the version used). Both scripts recreate a venv that was made with a Python outside that range. A Linux binary runs on the glibc it was built against or newer, so build on the oldest system you want to support.
-
-### Uninstall
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\uninstall\windows\uninstall.ps1 -SpoSyncOnly
-```
-
-```bash
-bash scripts/uninstall/linux/uninstall.sh --sposync-only
-```
-
-`-SpoSyncOnly` / `--sposync-only` removes SpoSync and keeps the CLI. The normal uninstall scripts remove SpoSync as well. Both stop the helper and delete the autostart entry, the binary and the log.
-
-### Troubleshooting
-
-- **Port 8765 is busy:** another program holds it. A program that answers on the port makes SpoSync exit at once with code `2` and `port 8765 in use by another program`. A holder that does not answer, or a port that cannot be bound, is retried for 10 seconds first. The installer names the program when it can see it: on Windows always, on Linux only when it belongs to the same user (otherwise it says the owner may be another user). Close that program, then start SpoSync again or sign in again.
-- **The log says `port 8765 cannot be bound (reserved or blocked by the system)`:** Windows can reserve port ranges for other components. List them with `netsh int ipv4 show excludedportrange protocol=tcp` and `netsh int ipv6 show excludedportrange protocol=tcp`. If 8765 is inside a listed range, SpoSync cannot use it until that range is released, which often happens after a restart.
-- **Shared computers:** SpoSync checks that every connecting program belongs to the same signed-in user as the helper. A program of another user is refused (HTTP 403), for Spotify and for local control (`--quit`, Show) alike, so a second person's Spotify cannot use your SpoSync or quit it. Only one signed-in user at a time can run SpoSync: while yours holds port 8765, the second person's SpoSync exits with `port 8765 held by another user's SpoSync` in its log, and their SpoTUI shows SpoSync as disconnected (no visualizer). To switch, the first person quits SpoSync (tray menu Quit, or `sposync --quit`), then the second starts theirs. Programs running as the same user can still talk to the helper; web pages cannot.
-- **Spotify stays disconnected:** open the log (paths in the table above). If it has `rejected peer unknown (...)` lines, the user check could not tell who is connecting. Run SpoSync by hand with `--no-peer-check` to confirm that this is the cause (on Windows, run the exe from a terminal; do not edit the registry autostart value), then report the issue. If the log has `peer check self-test failed (...); peer check off for this run` (Windows) or `peer check unavailable (...)` (Linux), SpoSync has already turned the check off by itself and accepts local clients as before; the cause is then elsewhere, for example the port problems above. If the log says `port 8765 held by another user's SpoSync`, see "Shared computers".
-- **Flat bars and `no loopback audio device` in the log:** SpoSync found no output device to listen to. On Windows check that a playback device is enabled. On Linux it needs PulseAudio or PipeWire (with `pipewire-pulse`) and a `.monitor` source, which `pactl list short sources` lists. SpoSync keeps running and retries every few seconds.
-- **Windows: autostart does not run:** open Task Manager, **Startup apps**, and enable SpoSync. The installer never changes that setting.
-- **Linux: nothing starts at login:** some sessions (i3, sway and other bare window managers) do not run XDG autostart entries. Add `exec "$HOME/.local/share/sposync/sposync" --headless` to your session config.
-- **Windows: Show does nothing or opens the wrong window:** in Windows settings, search for "default terminal application" and set it to **Windows Console Host**.
-- **Antivirus flags `sposync.exe`:** PyInstaller one-file programs are sometimes reported as false positives. Build it yourself from source if you prefer.
-
 ## Bundling from Source
 
 The theme's JavaScript lives as ES modules in `src/` and must be bundled into a single `theme.js` before it can be loaded by Spicetify.
@@ -521,8 +381,6 @@ SkenS - https://github.com/SkenSMasteR
   </table>
   > Note: If you are using Spicetify v3, follow the guide in the "spotui@&lt;version&gt;" release.
 
-  > Optional: install the SpoSync helper (needed for the visualizer), see [SpoSync](#sposync).
-
 </details>
 
 ## Windows
@@ -543,8 +401,6 @@ SkenS - https://github.com/SkenSMasteR
     </tr>
   </table>
   > Note: If you are using Spicetify v3, follow the guide in the "spotui@&lt;version&gt;" release.
-
-  > Optional: install the SpoSync helper (needed for the visualizer), see [SpoSync](#sposync).
 
 </details>
 

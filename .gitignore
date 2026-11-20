@@ -1,8 +1,2 @@
 node_modules/
-venv/
 .dev/
-__pycache__
-bin
-build
-dist
-*.spec

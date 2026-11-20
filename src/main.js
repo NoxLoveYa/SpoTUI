@@ -11,7 +11,6 @@ import { storageGet } from "./storage.js";
 import { getBoardCounts, getPosterImages, isPostersEnabled, maybeAutoshuffle, renderPosters, startRotateTimer } from "./posters.js";
 import { applyShade } from "./shade.js";
 import { injectStyle } from "./styles.js";
-import { initSync } from "./sync.js";
 import { createTerminal } from "./terminal.js";
 import { initVideoMode } from "./videomode.js";
 import { restoreVisualizer } from "./visualizer.js";
@@ -26,7 +25,6 @@ document.addEventListener("keydown", handleKeybindKeydown, true);
 setTimeout(createControlButtons, 500);
 setTimeout(initLyricsBridge, 1000);
 setTimeout(initDjBridge, 1000);
-setTimeout(initSync, 1000);
 
 // Apply stored logo visibility preference
 if (storageGet("spotui:logo-visible") === "off") {

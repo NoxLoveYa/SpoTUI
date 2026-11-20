@@ -84,7 +84,7 @@ export function getLyricsEls() {
 }
 
 // Extract current playing track metadata for lyrics fetching
-export function getCurrentTrackLyricsInfo() {
+function getCurrentTrackLyricsInfo() {
     const item = Spicetify.Player?.data?.item;
     if (!item?.uri || !String(item.uri).includes(":track:")) return null;
 
@@ -250,7 +250,7 @@ export async function fetchSpolyrcLyrics(info) {
 
 // Fetch lyrics from all available sources
 // Tries spolyrc first, then Spotify, then lrclib as fallback
-export async function resolveTrackLyrics(info) {
+async function resolveTrackLyrics(info) {
     const spolyrc = await fetchSpolyrcLyrics(info);
     if (spolyrc) return spolyrc;
     const spotify = await fetchSpotifyColorLyrics(info.uri);

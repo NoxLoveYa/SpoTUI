@@ -57,22 +57,6 @@ export function isRestrictedThemeCommand(cmd) {
     return !THEME_ALLOWED_COMMANDS.has(command);
 }
 
-// Too powerful for remote/store-and-fire paths: meta commands, secrets,
-// destructive theme ops, and tracking/defacement URLs. Local bar authoring
-// stays unrestricted — this gates the relay ingress (sync.js) only.
-// It must match what executeInner dispatches: those subs act in FIRST position
-// only, except `-wp`, which executeInner reaches from ANY position (it tests
-// the whole argument list), so `-wp` is matched as a whole token anywhere
-// after `tui`. `-poster` is an alias of `-posters` there.
-const SENSITIVE_CMD_REGEX = /^(?:tui\s+(?:bind|unbind|actions|restore)\b|jam\b|tui\s+-(?:pin-token|pin-board|pin-feed|pin-refresh)\b|tui\s+-t\b|tui\s+-posters?\s+(?:add|clear)\b|tui\s(?:[\s\S]*\s)?-wp(?!\S))/;
-
-// Lowercased first: executeInner lowercases with toLowerCase(), which maps
-// characters (e.g. KELVIN SIGN for "k") that a /i regex without the u flag does
-// not fold, so a "-pin-token" spelled with one must not slip past.
-export function isSensitiveCommand(cmd) {
-    return SENSITIVE_CMD_REGEX.test(stripCommandPrefix(cmd).trim().toLowerCase());
-}
-
 // Normalize keyboard shortcuts to canonical format
 export function normalizeKeyCombo(comboStr) {
     const parts = String(comboStr).split("+").map((p) => p.trim()).filter(Boolean);

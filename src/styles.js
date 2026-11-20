@@ -1053,41 +1053,6 @@ body.spotui-saves-panel #spotui-saves-panel {
     }
 }
 
-#spotui-sposync-status {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    flex: 0 0 40px;
-    margin-right: 4px;
-    color: currentColor;
-    pointer-events: auto;
-    cursor: default;
-}
-
-#spotui-sposync-status svg {
-    width: 22px;
-    height: 22px;
-    display: block;
-}
-
-#spotui-sposync-tip {
-    position: fixed;
-    transform: translateX(-50%);
-    z-index: 10000;
-    background: rgba(0, 0, 0, 0.92);
-    border: 1px solid var(--spotui-accent, #ff8c42);
-    border-radius: 6px;
-    padding: 8px 10px;
-    color: var(--spotui-accent, #ff8c42);
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-    line-height: 1.35;
-    white-space: pre-line;
-    pointer-events: none;
-}
-
 #spotui-controls {
     display: flex;
     gap: 8px;
